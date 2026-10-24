@@ -22,9 +22,9 @@ import {
 } from "./services/native-runtime/native-workspace-sync-retention.js";
 import { markGitRestorePointExpired } from "./services/git-restore-point-storage.js";
 import {
-  MANAGED_CLAUDE_TRANSCRIPT_EXPIRATION_INTERVAL_MS,
-  MANAGED_CLAUDE_TRANSCRIPT_EXPIRATION_STARTUP_DELAY_MS,
   managedClaudeTranscriptExpirationService,
+  managedClaudeTranscriptRetentionEnabled,
+  registerManagedClaudeTranscriptCleanupWork,
 } from "./services/managed-claude-transcripts.js";
 import { subscribeAllCompanyLiveEvents } from "./services/live-events.js";
 import { DELIVERY_QUEUES } from "./services/delivery-work-notifications.js";
@@ -1308,32 +1308,6 @@ async function startServerWithDatabaseTeardown(
   nativeHarnessBackupExpirationInterval.unref?.();
   const nativeHarnessBackupExpirationStartup = setTimeout(sweepNativeHarnessBackups, NATIVE_HARNESS_BACKUP_EXPIRATION_STARTUP_DELAY_MS);
   nativeHarnessBackupExpirationStartup.unref?.();
-  const managedClaudeTranscriptExpiration = managedClaudeTranscriptExpirationService(db as any, {
-    retentionDays: config.managedClaudeTranscriptRetentionDays,
-    shouldContinue: () => !heartbeatSchedulerStopped && !isIdleTaskDrainActive() && !isWarmStandby(),
-  });
-  let managedClaudeTranscriptExpirationInFlight = false;
-  let managedClaudeTranscriptExpirationContinuation: ReturnType<typeof setTimeout> | undefined;
-  const sweepManagedClaudeTranscripts = () => {
-    if (managedClaudeTranscriptExpirationInFlight || isIdleTaskDrainActive() || heartbeatSchedulerStopped || isWarmStandby()) return;
-    managedClaudeTranscriptExpirationInFlight = true;
-    trackHeartbeatSchedulerWork(managedClaudeTranscriptExpiration.tick()
-      .then((result) => {
-        if (result.expired > 0 || result.failed > 0) logger.info({ ...result }, "managed Claude transcript expiration");
-        if (result.truncated && !heartbeatSchedulerStopped) {
-          managedClaudeTranscriptExpirationContinuation = setTimeout(sweepManagedClaudeTranscripts, 1000);
-          managedClaudeTranscriptExpirationContinuation.unref?.();
-        }
-      })
-      .catch((err) => {
-        logger.error({ err }, "managed Claude transcript expiration failed");
-      })
-      .finally(() => { managedClaudeTranscriptExpirationInFlight = false; }));
-  };
-  const managedClaudeTranscriptExpirationInterval = setInterval(sweepManagedClaudeTranscripts, MANAGED_CLAUDE_TRANSCRIPT_EXPIRATION_INTERVAL_MS);
-  managedClaudeTranscriptExpirationInterval.unref?.();
-  const managedClaudeTranscriptExpirationStartup = setTimeout(sweepManagedClaudeTranscripts, MANAGED_CLAUDE_TRANSCRIPT_EXPIRATION_STARTUP_DELAY_MS);
-  managedClaudeTranscriptExpirationStartup.unref?.();
   const externalObjects = externalObjectService(db as any, {
     pluginWorkerManager,
     enabled: async () => (await instanceSettingsService(db).getExperimental()).enableExternalObjects === true,
@@ -1397,6 +1371,15 @@ async function startServerWithDatabaseTeardown(
   });
   const accountingWorker = registerCostAccountingWork(db, deliveryWork, accountingHeartbeat.reconcileCostAccounting);
   server.on("close", accountingWorker.stop);
+  if (managedClaudeTranscriptRetentionEnabled()) {
+    registerManagedClaudeTranscriptCleanupWork(
+      deliveryWork,
+      managedClaudeTranscriptExpirationService(db as any, { retentionDays: config.managedClaudeTranscriptRetentionDays }),
+      (result) => {
+        if (result.expired > 0 || result.failed > 0) logger.info({ ...result }, "managed Claude transcript expiration");
+      },
+    );
+  }
   skillSourceSync.start(deliveryWork);
   const caseHandoffDeliveries = caseHandoffDeliveryService(db as any, { heartbeat: environmentLeaseCleanupHeartbeat });
   deliveryWork.register(DELIVERY_QUEUES.caseHandoffs, {
@@ -2140,9 +2123,6 @@ async function startServerWithDatabaseTeardown(
     clearTimeout(nativeHarnessBackupExpirationStartup);
     clearTimeout(nativeHarnessBackupExpirationContinuation);
     unsubscribeNativeRunnerEvidence();
-    clearInterval(managedClaudeTranscriptExpirationInterval);
-    clearTimeout(managedClaudeTranscriptExpirationStartup);
-    clearTimeout(managedClaudeTranscriptExpirationContinuation);
     await skillVersionRetention.dispose();
     await skillSourceSync.stop();
     unsubscribeChatCompletions();
