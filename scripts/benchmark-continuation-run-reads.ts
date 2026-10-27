@@ -13,6 +13,8 @@ type Query = { sql: string; params: unknown[] };
 const baselineRef = process.argv.find(arg => arg.startsWith("--baseline-ref="))?.slice(15);
 assert.ok(baselineRef, "Pass a pinned pre-fix --baseline-ref");
 const baselineRevision = execFileSync("git", ["rev-parse", "--verify", `${baselineRef}^{commit}`], { encoding: "utf8" }).trim();
+const treatmentRevision = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+const treatmentDiff = execFileSync("git", ["diff", "HEAD", "--", "server/src/services/explicit-native-continuation.ts"], { encoding: "utf8" });
 const keepAlive = setInterval(() => {}, 1000);
 let database: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | undefined;
 let db: Db | undefined;
@@ -51,6 +53,7 @@ try {
   await db.$client.unsafe("ANALYZE");
   async function capture(invoke: typeof admitExplicitNativeContinuation) {
     const queries: Query[] = [];
+    const reads: Array<Array<Record<string, unknown>>> = [];
     const recorded = new Proxy(db!, { get(target, key) {
       if (key !== "select") return Reflect.get(target, key);
       return (...fields: Parameters<Db["select"]>) => {
@@ -59,8 +62,11 @@ try {
           const query = from(...args), execute = query.execute.bind(query);
           if (args[0] === heartbeatRuns) query.execute = async (...executeArgs: Parameters<typeof execute>) => {
             const statement = query.toSQL();
-            if (statement.sql.includes('"id"::text') || statement.sql.endsWith("for update")) queries.push(statement);
-            return execute(...executeArgs);
+            const admissionRead = statement.sql.includes('"id"::text') || statement.sql.endsWith("for update");
+            if (admissionRead) queries.push(statement);
+            const rows = await execute(...executeArgs);
+            if (admissionRead) reads.push(rows);
+            return rows;
           };
           return query;
         }) as typeof builder.from;
@@ -72,12 +78,20 @@ try {
       actorType: "user", actorId: "board", reason: "issue_commented", successorRunId: randomUUID(), dryRun: true,
       onBlocked: reason => blocked.push(reason) });
     assert.equal(queries.length, 2);
-    return { queries, result, blocked };
+    return { queries, reads, result, blocked };
   }
   const before = await capture(baseline.admitExplicitNativeContinuation), after = await capture(admitExplicitNativeContinuation);
   assert.ok(before.result);
   assert.deepEqual(after.result, before.result);
   assert.deepEqual(after.blocked, before.blocked);
+  for (let index = 0; index < before.reads.length; index++) {
+    assert.equal(after.reads[index].length, before.reads[index].length);
+    for (const [key, value] of Object.entries(after.reads[index][0])) {
+      if (key === "contextSnapshot") assert.deepEqual(value, { issueId });
+      else if (key === "runnerProfileJson" && index === 0) assert.deepEqual(value, { adapterDispatch: { adapterType: "paperclip_runner" } });
+      else assert.deepEqual(value, before.reads[index][0][key], `Changed selected column ${key}`);
+    }
+  }
   const measurements = [];
   for (let index = 0; index < 2; index++) {
     const pair = [before.queries[index], after.queries[index]];
@@ -101,7 +115,13 @@ try {
       baselineDataRowBytes: bytes[0], treatmentDataRowBytes: bytes[1], reduction: 1 - bytes[1] / bytes[0],
       baselineMedianMs: median(samples[0]), treatmentMedianMs: median(samples[1]), samples, plans });
   }
-  console.log(JSON.stringify({ baselineRevision, postgres: await db.$client.unsafe("select version()"),
+  const baselineBytes = measurements.reduce((sum, row) => sum + row.baselineDataRowBytes, 0);
+  const treatmentBytes = measurements.reduce((sum, row) => sum + row.treatmentDataRowBytes, 0);
+  assert.ok(treatmentBytes < baselineBytes / 2, "The fixture must remove more than half of the two reads' DataRow bytes");
+  console.log(JSON.stringify({ baselineRevision, treatmentRevision, treatmentDiff,
+    byteBoundary: "Exact text-format DataRow frames; excludes RowDescription, command metadata, TLS and TCP",
+    acceptance: { equalSelectedColumns: true, equalAdmission: true, lessThanHalfDataRowBytes: true },
+    postgres: await db.$client.unsafe("select version()"),
     fixture: { contextBytes: Buffer.byteLength(contextBytes), profileCopies: 2, profileCopyBytes: Buffer.byteLength(profileBytes) },
     equalAdmission: true, measurements }, null, 2));
 } finally {
