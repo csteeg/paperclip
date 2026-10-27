@@ -10,11 +10,12 @@ import { admitExplicitNativeContinuation } from "../server/src/services/explicit
 import { resolveExternalTestDatabaseUrl } from "../server/src/__tests__/helpers/external-test-database.js";
 
 type Query = { sql: string; params: unknown[] };
+const repoRoot = fileURLToPath(new URL("../", import.meta.url));
 const baselineRef = process.argv.find(arg => arg.startsWith("--baseline-ref="))?.slice(15);
 assert.ok(baselineRef, "Pass a pinned pre-fix --baseline-ref");
-const baselineRevision = execFileSync("git", ["rev-parse", "--verify", `${baselineRef}^{commit}`], { encoding: "utf8" }).trim();
-const treatmentRevision = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-const treatmentDiff = execFileSync("git", ["diff", "HEAD", "--", "server/src/services/explicit-native-continuation.ts"], { encoding: "utf8" });
+const baselineRevision = execFileSync("git", ["rev-parse", "--verify", `${baselineRef}^{commit}`], { cwd: repoRoot, encoding: "utf8" }).trim();
+const treatmentRevision = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot, encoding: "utf8" }).trim();
+const treatmentDiff = execFileSync("git", ["diff", "HEAD", "--", "server/src/services/explicit-native-continuation.ts"], { cwd: repoRoot, encoding: "utf8" });
 const keepAlive = setInterval(() => {}, 1000);
 let database: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | undefined;
 let db: Db | undefined;
@@ -28,7 +29,7 @@ try {
   db = createDb(database.connectionString);
   const original = new URL("../server/src/services/explicit-native-continuation.ts", import.meta.url);
   baselineDir = await fs.mkdtemp(path.join(fileURLToPath(new URL("../server/scripts/", import.meta.url)), ".continuation-baseline-"));
-  const baselineSource = execFileSync("git", ["show", `${baselineRevision}:server/src/services/explicit-native-continuation.ts`], { encoding: "utf8" });
+  const baselineSource = execFileSync("git", ["show", `${baselineRevision}:server/src/services/explicit-native-continuation.ts`], { cwd: repoRoot, encoding: "utf8" });
   await fs.writeFile(path.join(baselineDir, "continuation.ts"), baselineSource.replace(/(from |import\()"(\.{1,2}\/[^\"]+)"/g,
     (_match, prefix: string, specifier: string) => `${prefix}${JSON.stringify(fileURLToPath(new URL(specifier, original)))}`));
   const baseline = await import(pathToFileURL(path.join(baselineDir, "continuation.ts")).href) as { admitExplicitNativeContinuation: typeof admitExplicitNativeContinuation };
