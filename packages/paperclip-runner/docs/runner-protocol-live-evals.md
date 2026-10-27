@@ -334,8 +334,8 @@ private `prepare_controlled_campaign.py` command prepares requests with the
 existing case compiler and rejects duplicate or missing matrix cells. Independent
 budgets, a second workflow run, or duplicate first-attempt jobs are not authorized
 by this guard. Pack and report commands remain usable offline after the run, so
-expired or failed attempts can still be retained and reconciled. The current
-live workflow has not yet been connected to this contract.
+expired or failed attempts can still be retained and reconciled. Controlled
+workflow mode now prepares and distributes this shared manifest.
 
 Use `requestBindingSha256` from `controlled-evals/manifest.mjs` to bind the
 complete compiled request. It excludes only the temporary working directory
@@ -428,12 +428,10 @@ not release historical holds or claim invoice
 settlement. Existing provider usage is retained separately; do not add the
 provider and controller cost observations as if they were separate charges.
 
-This local controller is not yet wired into the hosted matrix. Its durable
-attempt-directory guard applies to one shared filesystem, not independent
-GitHub workers. Hosted integration must bind unique cells to the prepared
-allocation, reject workflow/job reruns, and preserve the controller evidence
-before enabling paid work. Hosted tracing, destination readback, vendor
-metering bounds, and actual paid qualification remain separate gates.
+Controlled workflow mode now binds each independent worker to one allocation
+in the prepared shared manifest, rejects job reruns, and archives its evidence
+privately. Destination readback, vendor metering bounds and actual paid route
+qualification remain separate gates before paid recurrence.
 
 ### Portable controller runtime
 
@@ -477,8 +475,8 @@ Use the copied `controlled-evals/run.mjs` as `--runner-cli` and its sibling
 manifest is still required. Its executable paths and digests bind the actual
 Runner build, not this controller wrapper. The artifact does not authorize paid
 work, coordinate worker allocations, or prevent a workflow rerun by itself.
-The hosted matrix still needs the shared manifest and per-worker admission
-checks described above.
+Controlled workflow mode supplies the shared manifest and per-worker admission
+checks described above; the runtime artifact alone does not replace them.
 
 ## Controller tracing allocations and retained proof
 
@@ -534,7 +532,7 @@ Runner artifact.
 
 ## Hosted campaign
 
-Use the `Runner Direct Live Protocol Evals` workflow. Dispatch the workflow
+Use the `Runner Live Protocol Evals` workflow. Dispatch the workflow
 from the default branch and provide:
 
 - `target_branch`: the Paperclip branch to build and test;
@@ -545,8 +543,11 @@ from the default branch and provide:
   Disabled lanes remain available only through an explicit diagnostic
   selection; `all` never spends against a lane that the eval program has
   marked disabled;
-- `max_infrastructure_retries`: zero through three, applied only when an
-  attempt explicitly reports a retryable infrastructure failure.
+- `accounting_mode`: `controlled` by default; `legacy` is an explicit manual
+  qualification path. Controlled mode supports native Codex and ACPX Claude.
+- `max_infrastructure_retries`: zero by default and required for controlled
+  mode. Legacy mode allows up to three retries only when an attempt explicitly
+  reports a retryable infrastructure failure.
 
 Native suspension failures are non-retryable infrastructure failures. The CLI
 retains only allowlisted close diagnostics: suspension and provider-drain
