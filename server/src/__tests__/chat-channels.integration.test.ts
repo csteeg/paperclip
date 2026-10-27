@@ -61813,7 +61813,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
   });
 
   it.each([
-    ...(["real_budget_ingress", "legacy_budget_ingress", "legacy_prior_response", "legacy_execution", "legacy_execution_log", "legacy_execution_lease", "legacy_execution_profile", "legacy_execution_event", "legacy_execution_controller", "legacy_execution_intent", "legacy_no_prior", "legacy_prior_late", "legacy_prior_unprocessed", "legacy_prior_delivery_unprocessed", "legacy_prior_numeric_app", "legacy_response_conflict", "legacy_prior_wrong_app", "legacy_prior_wrong_agent", "legacy_prior_unlinked", "legacy_prior_retargeted", "legacy_explicit_null", "legacy_explicit_empty", "legacy_explicit_malformed", "legacy_explicit_mismatch", "legacy_current_app_changed", "source_app_changed", "source_destination_changed", "accepted", "multiple_saved", "real_queue", "committed_succeeded", "committed_consumed", "committed_failure", "committed_failed_publication", "committed_unknown_publication", "committed_pending_publication", "committed_mixed_publication", "committed_consumed_publication", "committed_succeeded_publication", "committed_delayed_cleanup", "committed_board", "committed_board_existing", "committed_board_existing_coalesced", "committed_board_existing_source_edited", "committed_board_existing_board_edited", "committed_board_existing_controller", "committed_board_existing_allocation", "committed_board_existing_receipt", "committed_board_existing_delivered", "committed_unknown_cleanup", "committed_live_controller", "unreconciled", "source_edited", "source_claimed", "malformed_previous", "endpoint_paused", "principal_revoked", "still_budget_blocked"] as const)
+    ...(["real_budget_ingress", "legacy_budget_ingress", "legacy_prior_response", "legacy_execution", "legacy_execution_log", "legacy_execution_lease", "legacy_execution_profile", "legacy_execution_event", "legacy_execution_controller", "legacy_execution_intent", "legacy_no_prior", "legacy_prior_late", "legacy_prior_unprocessed", "legacy_prior_delivery_unprocessed", "legacy_prior_numeric_app", "legacy_response_conflict", "legacy_prior_wrong_app", "legacy_prior_wrong_agent", "legacy_prior_unlinked", "legacy_prior_retargeted", "legacy_explicit_null", "legacy_explicit_empty", "legacy_explicit_malformed", "legacy_explicit_mismatch", "legacy_current_app_changed", "source_app_changed", "source_destination_changed", "accepted", "multiple_saved", "real_queue", "committed_succeeded", "committed_consumed", "committed_failure", "committed_failed_publication", "committed_unknown_publication", "committed_pending_publication", "committed_mixed_publication", "committed_consumed_publication", "committed_succeeded_publication", "committed_delayed_cleanup", "committed_board", "committed_board_existing", "committed_board_existing_coalesced", "committed_board_existing_source_edited", "committed_board_existing_board_edited", "committed_board_existing_controller", "committed_board_existing_allocation", "committed_board_existing_receipt", "committed_board_existing_delivered", "committed_board_existing_source_owner", "committed_board_existing_source_delivered", "committed_unknown_cleanup", "committed_live_controller", "unreconciled", "source_edited", "source_claimed", "malformed_previous", "endpoint_paused", "principal_revoked", "still_budget_blocked"] as const)
       .map(mode => ({ provider: "github" as const, mode })),
   ])("retries the newer saved $provider request instead of the failed request after a budget hold: $mode", async ({ provider, mode }) => {
     const queuedBoard = mode === "committed_board" || mode.startsWith("committed_board_existing");
@@ -62268,14 +62268,30 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
                   }).where(inArray(agentWakeupRequests.id, savedInputs.map(source => source.id)));
                 }
                 const mixedIds = [boardComment!.id, ...expectedComments];
-                await db.update(heartbeatRuns).set({ contextSnapshot: { ...queued.contextSnapshot,
-                  wakeCommentIds: mixedIds, queuedCommentSourceWakeIds: [boardWake.id] } })
-                  .where(eq(heartbeatRuns.id, queued.id));
-                await db.update(agentWakeupRequests).set({ payload: { ...resumed.payload,
-                  _paperclipWakeContext: { ...(resumed.payload?._paperclipWakeContext as object),
-                    wakeCommentIds: mixedIds } } }).where(eq(agentWakeupRequests.id, resumed.id));
-                await db.update(agentWakeupRequests).set({ status: "coalesced", runId: queued.id,
-                  finishedAt: new Date() }).where(eq(agentWakeupRequests.id, boardWake.id));
+                // Replaying this test with the queue fix reverted uses the old
+                // producer's actual persisted merge. With the fixed producer,
+                // retain historical state using its shared serializers.
+                if (!(queued.contextSnapshot?.wakeCommentIds as string[])?.includes(boardComment!.id)) {
+                  const { withQueuedCommentIdsInRunContext, withQueuedCommentIdsInWakePayload } =
+                    await import("../services/issue-queued-comment-queue.js");
+                  await db.update(heartbeatRuns).set({ contextSnapshot:
+                    withQueuedCommentIdsInRunContext(queued.contextSnapshot, mixedIds, [boardWake.id]) })
+                    .where(eq(heartbeatRuns.id, queued.id));
+                  await db.update(agentWakeupRequests).set({ payload:
+                    withQueuedCommentIdsInWakePayload(resumed.payload, mixedIds) })
+                    .where(eq(agentWakeupRequests.id, resumed.id));
+                  await db.update(agentWakeupRequests).set({ status: "coalesced", runId: queued.id,
+                    finishedAt: new Date() }).where(eq(agentWakeupRequests.id, boardWake.id));
+                }
+                expect((await readHeartbeatRunsById(queued.id))[0].contextSnapshot).toMatchObject({
+                  wakeCommentId: expectedComments.at(-1), wakeCommentIds: mixedIds,
+                  queuedCommentSourceWakeIds: [boardWake.id],
+                });
+                expect((await readAgentWakeupRequestsById(boardWake.id))[0]).toMatchObject({
+                  status: "coalesced", runId: queued.id, payload: { issueId: context.issue.id },
+                });
+                expect((await readAgentWakeupRequestsById(boardWake.id))[0].payload)
+                  .not.toHaveProperty("coalescedIntoWakeupRequestId");
                 await db.update(heartbeatRuns).set({ status: "cancelled", finishedAt: new Date() }).where(and(
                   eq(heartbeatRuns.companyId, companyId), eq(heartbeatRuns.status, "running"), isNull(heartbeatRuns.wakeupRequestId)));
                 await db.update(agents).set({ status: "idle" }).where(eq(agents.id, context.fixture.assignedAgentId));
@@ -62300,10 +62316,15 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
                   status: "active", leasePolicy: "ephemeral" });
                 if (mode.endsWith("receipt")) await db.update(agentWakeupRequests).set({ status: "claimed" })
                   .where(eq(agentWakeupRequests.id, boardWake.id));
+                if (mode.endsWith("source_owner")) await db.update(agentWakeupRequests).set({
+                  status: "coalesced", runId: context.runId,
+                  payload: sql`${agentWakeupRequests.payload} || ${JSON.stringify({ coalescedIntoWakeupRequestId: resumed.id })}::jsonb`,
+                }).where(eq(agentWakeupRequests.id, saved.id));
                 if (mode.endsWith("delivered")) await db.insert(heartbeatRuns).values({ companyId,
                   agentId: context.fixture.assignedAgentId, status: "succeeded", finishedAt: new Date(),
                   createdAt: new Date(failed.createdAt.getTime() - 1),
-                  contextSnapshot: { issueId: context.issue.id, wakeCommentIds: [boardComment!.id] },
+                  contextSnapshot: { issueId: context.issue.id, wakeCommentIds:
+                    [mode.endsWith("source_delivered") ? saved.payload.commentId : boardComment!.id] },
                 });
                 const inputIds = [boardWake.id, ...savedInputs.map(source => source.id)];
                 const before = await db.select().from(agentWakeupRequests).where(inArray(agentWakeupRequests.id, inputIds)).orderBy(asc(agentWakeupRequests.id));

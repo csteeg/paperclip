@@ -1417,7 +1417,9 @@ export function createChatFailedRunRetry(db: Db, options: ChatFailedRunRetryOpti
       eq(heartbeatRuns.companyId, input.companyId), eq(heartbeatRuns.agentId, input.agentId), ne(heartbeatRuns.id, run.id),
       sql`${heartbeatRuns.contextSnapshot}->>'issueId' = ${input.issueId}`,
       sql`not (${heartbeatRuns.status} = 'cancelled' and ${heartbeatRuns.startedAt} is null)`,
-      or(...boardIds.map(id => or(sql`${heartbeatRuns.contextSnapshot}->>'wakeCommentId' = ${id}`,
+      // Budget-skipped source receipts remain immutable even after a later
+      // Retry delivers them. Check run history for both input authorities.
+      or(...[...boardIds, ...source.commentIds].map(id => or(sql`${heartbeatRuns.contextSnapshot}->>'wakeCommentId' = ${id}`,
         sql`${heartbeatRuns.contextSnapshot}->'wakeCommentIds' @> ${JSON.stringify([id])}::jsonb`))),
     )).limit(1);
     if (delivered) throw failedChatRetryDenied();
