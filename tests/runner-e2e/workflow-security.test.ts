@@ -948,3 +948,23 @@ describe("public repository paid workflow security", () => {
     }
   });
 });
+
+it("keeps dependency resolution and shared caches out of Runner protocol archive jobs", async () => {
+  const workflow = await readFile(path.join(repositoryRoot, ".github/workflows/runner-protocol-live-evals.yml"), "utf8");
+  const jobs = workflow.split(/\n(?=  [A-Za-z0-9_]+:)/u);
+  const privileged = jobs.filter(job => job.includes("id-token: write"));
+  expect(privileged.length).toBeGreaterThanOrEqual(4);
+  for (const job of privileged) {
+    expect(job).not.toMatch(/--no-frozen-lockfile|cache:\s*(?:pnpm|npm|yarn)|actions\/cache/u);
+    for (const install of job.matchAll(/pnpm install[^\n]*/gu)) {
+      expect(install[0]).toContain("--frozen-lockfile");
+      expect(install[0]).toContain("--ignore-scripts");
+      expect(install[0]).toContain("--store-dir");
+    }
+  }
+  const builder = jobs.find(job => job.startsWith("  build_controller:"))!;
+  expect(builder).not.toMatch(/id-token: write|environment:|secrets\./u);
+  const preparer = jobs.find(job => job.startsWith("  prepare_controller:"))!;
+  expect(preparer).not.toMatch(/pnpm install/u);
+  expect(preparer.indexOf("verify-runtime.mjs")).toBeLessThan(preparer.indexOf('hosted.mjs" prepare'));
+});

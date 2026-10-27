@@ -236,9 +236,8 @@ test("report preparation stays on the trusted lock and install mode", async () =
   assert.match(report, /ref: \$\{\{ github\.sha \}\}/u);
   assert.doesNotMatch(report, /Download resolved target lockfile/u);
   assert.doesNotMatch(report, /Restore resolved target lockfile/u);
-  assert.match(report, /Resolve trusted report lockfile without lifecycle scripts/u);
-  assert.match(report, /pnpm install --ignore-scripts --no-frozen-lockfile --lockfile-only/u);
-  assert.match(report, /pnpm install --frozen-lockfile --ignore-scripts\n/u);
+  assert.doesNotMatch(report, /--no-frozen-lockfile|cache: pnpm/u);
+  assert.match(report, /pnpm install --frozen-lockfile --ignore-scripts --store-dir "\$RUNNER_TEMP\/runner-report-pnpm-store"/u);
 });
 
 test("trusted catalog, direct eval, and report orchestration stay on workflow revision", async () => {
@@ -353,5 +352,24 @@ test('Braintrust-controlled workers do not require an unused direct provider cre
       ACCOUNTING_MODE: mode, CREDENTIAL_NAME: 'OPENAI_API_KEY', OPENAI_API_KEY: credential,
     } });
     assert.equal(result.status, status, result.stderr);
+  }
+});
+
+test('private archive jobs consume verified controller code without resolving dependencies', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const builder = workflow.slice(workflow.indexOf('  build_controller:'), workflow.indexOf('  prepare_controller:'));
+  const preparer = workflow.slice(workflow.indexOf('  prepare_controller:'), workflow.indexOf('  eval_shard_0:'));
+  assert.doesNotMatch(builder, /id-token: write|environment:|secrets\./u);
+  assert.match(builder, /build-runtime.mjs/u);
+  assert.doesNotMatch(preparer, /pnpm install|build-runtime.mjs|cache: pnpm/u);
+  assert.ok(preparer.indexOf('verify-runtime.mjs') < preparer.indexOf('hosted.mjs" prepare'));
+  assert.match(preparer, /needs\.build_controller\.outputs\.runtime_receipt_sha256/u);
+  for (const job of workflow.split(/\n(?=  [A-Za-z0-9_]+:)/u).filter(value => value.includes('id-token: write'))) {
+    assert.doesNotMatch(job, /--no-frozen-lockfile|cache: pnpm|actions\/cache/u);
+    for (const install of job.matchAll(/pnpm install[^\n]*/gu)) {
+      assert.match(install[0], /--frozen-lockfile/u);
+      assert.match(install[0], /--ignore-scripts/u);
+      assert.match(install[0], /--store-dir/u);
+    }
   }
 });

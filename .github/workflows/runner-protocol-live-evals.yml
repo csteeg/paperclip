@@ -447,9 +447,62 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
+  build_controller:
+    name: Build trusted controller without private archive access
+    needs: authorize
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      runtime_receipt_sha256: ${{ steps.build.outputs.runtime_receipt_sha256 }}
+    steps:
+      - name: Select accounting mode
+        run: test '${{ needs.authorize.outputs.accounting_mode }}' = controlled || test '${{ needs.authorize.outputs.accounting_mode }}' = legacy
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        if: needs.authorize.outputs.accounting_mode == 'controlled'
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        if: needs.authorize.outputs.accounting_mode == 'controlled'
+        with:
+          node-version: 24
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        if: needs.authorize.outputs.accounting_mode == 'controlled'
+        env:
+          NPM_CONFIG_AUDIT: "false"
+          NPM_CONFIG_FUND: "false"
+          NPM_CONFIG_UPDATE_NOTIFIER: "false"
+        with:
+          version: 9.15.4
+
+      - name: Build portable controller in an unprivileged job
+        if: needs.authorize.outputs.accounting_mode == 'controlled'
+        id: build
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          pnpm install --ignore-scripts --no-frozen-lockfile --store-dir "$RUNNER_TEMP/runner-controller-pnpm-store"
+          node packages/paperclip-runner/scripts/controlled-evals/build-runtime.mjs \
+            "$RUNNER_TEMP/runner-protocol-runtime" "$GITHUB_SHA" > "$RUNNER_TEMP/controller-runtime-receipt.json"
+          echo "runtime_receipt_sha256=$(jq -r .receiptSha256 "$RUNNER_TEMP/controller-runtime-receipt.json")" >> "$GITHUB_OUTPUT"
+
+      - name: Retain the trusted controller code for every worker
+        if: needs.authorize.outputs.accounting_mode == 'controlled'
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: runner-protocol-runtime-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/runner-protocol-runtime/
+          retention-days: 30
+          if-no-files-found: error
+
   prepare_controller:
     name: Prepare one shared cost and trace manifest
-    needs: [authorize, catalog, build_runner]
+    needs: [authorize, catalog, build_runner, build_controller]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -457,9 +510,9 @@ jobs:
       id-token: write
     environment: ${{ needs.authorize.outputs.accounting_mode == 'controlled' && 'runner-e2e-private-history' || '' }}
     outputs:
-      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_id: ${{ needs.build_controller.outputs.artifact_id }}
       manifest_sha256: ${{ steps.prepare.outputs.manifest_sha256 }}
-      runtime_receipt_sha256: ${{ steps.prepare.outputs.runtime_receipt_sha256 }}
+      runtime_receipt_sha256: ${{ needs.build_controller.outputs.runtime_receipt_sha256 }}
     steps:
       - name: Select accounting mode
         run: test '${{ needs.authorize.outputs.accounting_mode }}' = controlled || test '${{ needs.authorize.outputs.accounting_mode }}' = legacy
@@ -495,15 +548,6 @@ jobs:
         with:
           node-version: 24
 
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
-        if: needs.authorize.outputs.accounting_mode == 'controlled'
-        env:
-          NPM_CONFIG_AUDIT: "false"
-          NPM_CONFIG_FUND: "false"
-          NPM_CONFIG_UPDATE_NOTIFIER: "false"
-        with:
-          version: 9.15.4
-
       - name: Download the complete campaign catalog
         if: needs.authorize.outputs.accounting_mode == 'controlled'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -517,6 +561,19 @@ jobs:
         with:
           name: runner-protocol-build-${{ needs.authorize.outputs.target_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: runner-protocol-build
+
+      - name: Download trusted controller built without archive permissions
+        if: needs.authorize.outputs.accounting_mode == 'controlled'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ needs.build_controller.outputs.artifact_id }}
+          path: ${{ runner.temp }}/runner-protocol-runtime
+
+      - name: Verify copied controller before private preparation
+        if: needs.authorize.outputs.accounting_mode == 'controlled'
+        env:
+          RUNTIME_RECEIPT_SHA256: ${{ needs.build_controller.outputs.runtime_receipt_sha256 }}
+        run: node packages/paperclip-runner/scripts/controlled-evals/verify-runtime.mjs "$RUNNER_TEMP/runner-protocol-runtime" "$GITHUB_SHA" "$RUNTIME_RECEIPT_SHA256"
 
       - name: Compile requests and bind the reviewed operating policy
         if: needs.authorize.outputs.accounting_mode == 'controlled'
@@ -533,7 +590,6 @@ jobs:
           (cd runner-protocol-build && sha256sum --check runner-protocol-build.tar.gz.sha256)
           mkdir runner-protocol-build/extracted
           tar -xzf runner-protocol-build/runner-protocol-build.tar.gz -C runner-protocol-build/extracted
-          pnpm install --ignore-scripts --no-frozen-lockfile
           policy="$RUNNER_TEMP/runner-controller-policy.json"
           POLICY_PATH="$policy" python3 - <<'PYTHON'
           import os
@@ -548,24 +604,11 @@ jobs:
             --github-run-id "$GITHUB_RUN_ID" --definitions-revision "$PAPERCLIP_PROTOCOL_EVALS_SHA" \
             --output "$RUNNER_TEMP/prepared-requests.json"
           control="$RUNNER_TEMP/runner-protocol-control"
-          node packages/paperclip-runner/scripts/controlled-evals/hosted.mjs prepare \
+          node "$RUNNER_TEMP/runner-protocol-runtime/controlled-evals/hosted.mjs" prepare \
             runner-protocol-catalog/runner-protocol-eval-catalog.json "$RUNNER_TEMP/prepared-requests.json" \
             "$policy" runner-protocol-build/extracted "$control" > "$RUNNER_TEMP/control-preparation.json"
-          node packages/paperclip-runner/scripts/controlled-evals/build-runtime.mjs \
-            "$RUNNER_TEMP/runner-protocol-runtime" "$GITHUB_SHA" > "$RUNNER_TEMP/controller-runtime-receipt.json"
           cp "$policy" "$control/hosted-policy.json"
           echo "manifest_sha256=$(jq -r .manifestSha256 "$RUNNER_TEMP/control-preparation.json")" >> "$GITHUB_OUTPUT"
-          echo "runtime_receipt_sha256=$(jq -r .receiptSha256 "$RUNNER_TEMP/controller-runtime-receipt.json")" >> "$GITHUB_OUTPUT"
-
-      - name: Retain the trusted controller code for every worker
-        if: needs.authorize.outputs.accounting_mode == 'controlled'
-        id: upload
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: runner-protocol-runtime-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/runner-protocol-runtime/
-          retention-days: 30
-          if-no-files-found: error
 
       - name: Obtain private archive credentials for transfer steps only
         if: needs.authorize.outputs.accounting_mode == 'controlled'
@@ -972,17 +1015,6 @@ jobs:
         with:
           version: 9.15.4
 
-      - name: Resolve trusted report lockfile without lifecycle scripts
-        run: |
-          set -euo pipefail
-          pnpm install --ignore-scripts --no-frozen-lockfile --lockfile-only
-          test -s pnpm-lock.yaml
-
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: 24
-          cache: pnpm
-
       - name: Download immutable campaign catalog
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -1136,7 +1168,7 @@ jobs:
       - name: Verify the actual chat viewer before publication
         if: needs.authorize.outputs.accounting_mode == 'legacy'
         run: |
-          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm install --frozen-lockfile --ignore-scripts --store-dir "$RUNNER_TEMP/runner-report-pnpm-store"
           pnpm --filter @paperclipai/paperclip-runner exec playwright install --with-deps chromium
           node packages/paperclip-runner/scripts/verify-runner-evalbook-viewer.mjs --report-root runner-protocol-merged/public-report --screenshots runner-protocol-merged/viewer-proof
           node packages/paperclip-runner/scripts/verify-runner-evalbook-viewer.mjs --report-root runner-protocol-merged/report

@@ -858,7 +858,13 @@ A changed prompt, fixture or compiled request fails the worker's binding check.
 The sum of all selected allocations and once-only overhead must fit `maxUsd`.
 This campaign cap does not replace the separate daily/weekly allowance gates.
 
-The portable runtime contains only trusted code and dependencies. A same-run
+The portable runtime contains only trusted code and dependencies. Dependency
+resolution and runtime construction run in a separate job with no provider
+secrets, private-history environment or OIDC permission. Private preparation
+consumes only that verified artifact and uses no dependency install. Archive
+jobs use no shared dependency cache. Legacy browser report verification uses
+the committed frozen lockfile, disabled install scripts and a job-local store;
+a stale lockfile fails closed. A same-run
 GitHub artifact distributes it; workers verify its separate receipt digest and
 workflow revision. Manifest and policy bytes use private S3 instead. Workers
 check the manifest's separate preparer digest before model credentials are used.
