@@ -11,15 +11,17 @@ import { captureIngressQueries, cleanupIngressFixture, githubIngressFixture, typ
 import { resolveExternalTestDatabaseUrl } from "../server/src/__tests__/helpers/external-test-database.js";
 import { PROVIDER_EFFECT_STALE_MS } from "../server/src/services/chat-action-work.js";
 
+const root = fileURLToPath(new URL("../", import.meta.url));
 const ref = process.argv.find(argument => argument.startsWith("--baseline-ref="))?.slice(15);
 assert.ok(ref, "Pass --baseline-ref=<verified pre-fix commit>");
-const baselineRevision = execFileSync("git", ["rev-parse", `${ref}^{commit}`], { encoding: "utf8" }).trim();
-const treatmentRevision = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-const root = fileURLToPath(new URL("../", import.meta.url));
+const baselineRevision = execFileSync("git", ["rev-parse", `${ref}^{commit}`], { cwd: root, encoding: "utf8" }).trim();
+const treatmentRevision = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
 const sourcePath = "server/src/services/chat-channels/github/webhook-ingress.ts";
+const uncommittedChanges = execFileSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" }).trim();
+const treatmentSourceSha256 = createHash("sha256").update(readFileSync(new URL(`../${sourcePath}`, import.meta.url))).digest("hex");
 const directory = await fs.mkdtemp(path.join(root, "server/scripts/.github-ingress-baseline-"));
 const baselinePath = path.join(directory, "webhook-ingress.ts");
-const source = execFileSync("git", ["show", `${baselineRevision}:${sourcePath}`], { encoding: "utf8" });
+const source = execFileSync("git", ["show", `${baselineRevision}:${sourcePath}`], { cwd: root, encoding: "utf8" });
 // This PR changes no imported helper. Keep dependency code and database settings
 // identical and load only the actual pre-fix service from the pinned commit.
 await fs.writeFile(baselinePath, source.replace(/(from\s+|import\()(["'])(\.{1,2}\/[^"']+)\2/g,
@@ -97,9 +99,9 @@ try {
   await cleanupIngressFixture(db, f.companyId);
   const [version] = await db.$client.unsafe("select version() as version");
   const settings = await db.$client.unsafe("select name,setting,unit from pg_settings where name in ('shared_buffers','work_mem','jit') order by name");
-  console.log(JSON.stringify({ baselineRevision, treatmentRevision, sourcePath,
-    treatmentSourceSha256: createHash("sha256").update(readFileSync(new URL(`../${sourcePath}`, import.meta.url))).digest("hex"),
-    uncommittedChanges: execFileSync("git", ["status", "--porcelain"], { encoding: "utf8" }).trim(),
+  assert.equal(createHash("sha256").update(readFileSync(new URL(`../${sourcePath}`, import.meta.url))).digest("hex"), treatmentSourceSha256,
+    "Treatment source must remain unchanged during the benchmark");
+  console.log(JSON.stringify({ baselineRevision, treatmentRevision, sourcePath, treatmentSourceSha256, uncommittedChanges,
     note: "Synthetic local service timings; provider calls are captured locally. Response-value byte estimates exclude PG protocol/TLS overhead and JSONB whitespace. No hosted service or database was changed.",
     node: process.version, postgres: version.version, settings, bodyBytes: Buffer.byteLength(f.payload.body), results }, null, 2));
 } finally {
