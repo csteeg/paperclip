@@ -873,7 +873,10 @@ rejects unsafe archives, uses conditional immutable writes and does not retry.
 Each archive is at most 264 MiB (256 MiB source). The reviewed operating bound
 must cover up to `maxCells` cell archives, one controller archive, one report
 archive, their download/receipt traffic and the GitHub code/build artifacts.
-AWS credentials are action outputs used only by transfer steps.
+Each shared manifest downloader supplies its worker cell ID or `report` as
+a receipt identity. Receipts use distinct immutable keys while all workers
+read the same manifest object. AWS credentials are action outputs used only
+by transfer steps.
 
 Private keys share the existing bounded prefix:
 

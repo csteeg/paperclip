@@ -738,12 +738,13 @@ jobs:
       - name: Download the identical private campaign manifest
         if: needs.authorize.outputs.accounting_mode == 'controlled'
         env:
+          CELL_ID: ${{ matrix.cellId }}
           AWS_ACCESS_KEY_ID: ${{ steps.private_history_credentials.outputs.aws-access-key-id }}
           AWS_SECRET_ACCESS_KEY: ${{ steps.private_history_credentials.outputs.aws-secret-access-key }}
           AWS_SESSION_TOKEN: ${{ steps.private_history_credentials.outputs.aws-session-token }}
           AWS_REGION: ${{ vars.RUNNER_E2E_PRIVATE_HISTORY_AWS_REGION }}
           RUNNER_E2E_PRIVATE_HISTORY_S3_BUCKET: ${{ vars.RUNNER_E2E_PRIVATE_HISTORY_S3_BUCKET }}
-        run: node "/tmp/paperclip-runner-controlled-${GITHUB_RUN_ID}/runtime/private-history.mjs" download protocol-control "$GITHUB_RUN_ID" "/tmp/paperclip-runner-controlled-${GITHUB_RUN_ID}/control"
+        run: node "/tmp/paperclip-runner-controlled-${GITHUB_RUN_ID}/runtime/private-history.mjs" download protocol-control "$GITHUB_RUN_ID" "/tmp/paperclip-runner-controlled-${GITHUB_RUN_ID}/control" "$CELL_ID"
 
       - name: Verify current worker admission before provider credentials
         if: needs.authorize.outputs.accounting_mode == 'controlled'
@@ -1034,7 +1035,7 @@ jobs:
           set -euo pipefail
           archive="$RUNNER_TEMP/runner-protocol-runtime/private-history.mjs"
           control="$RUNNER_TEMP/runner-protocol-control"
-          node "$archive" download protocol-control "$GITHUB_RUN_ID" "$control"
+          node "$archive" download protocol-control "$GITHUB_RUN_ID" "$control" report
           test "$(sha256sum "$control/controller-manifest.json" | cut -d ' ' -f 1)" = "$MANIFEST_SHA256"
           mkdir -p downloaded-runner-protocol-evals
           while IFS= read -r cell; do
