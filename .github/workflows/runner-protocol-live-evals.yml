@@ -821,7 +821,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p cell-output/runs
-          if [ "$CREDENTIAL_NAME" != "AWS_AGENTCORE_OIDC" ]; then
+          if [ "$ACCOUNTING_MODE" != controlled ] && [ "$CREDENTIAL_NAME" != "AWS_AGENTCORE_OIDC" ]; then
             test -n "${!CREDENTIAL_NAME:-}"
           fi
           if [ "$PROVIDER" = "claude_managed" ]; then

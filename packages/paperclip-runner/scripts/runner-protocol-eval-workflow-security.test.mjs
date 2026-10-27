@@ -342,3 +342,16 @@ test('controlled evidence uses private storage and cloud credentials stay out of
   assert.match(workflow, /upload protocol-report/u);
   assert.match(workflow, /--controller-manifest "\$PAPERCLIP_RUNNER_EVAL_CONTROL_MANIFEST"/u);
 });
+
+test('Braintrust-controlled workers do not require an unused direct provider credential', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const script = workflowShell(workflow, 'Run one immutable direct protocol cell');
+  const credentialCheck = script.slice(script.indexOf('if [ "$ACCOUNTING_MODE"'), script.indexOf('if [ "$PROVIDER"'));
+  assert.ok(credentialCheck.includes('test -n "${!CREDENTIAL_NAME:-}"'));
+  for (const [mode, credential, status] of [['controlled', '', 0], ['legacy', '', 1], ['legacy', 'synthetic-only', 0]]) {
+    const result = spawnSync('bash', ['-euc', credentialCheck], { encoding: 'utf8', env: {
+      ACCOUNTING_MODE: mode, CREDENTIAL_NAME: 'OPENAI_API_KEY', OPENAI_API_KEY: credential,
+    } });
+    assert.equal(result.status, status, result.stderr);
+  }
+});
