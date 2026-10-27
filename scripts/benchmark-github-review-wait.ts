@@ -107,7 +107,7 @@ try {
     return result!["QUERY PLAN"];
   }
   console.log(JSON.stringify({ baselineRevision, treatmentRevision,
-    treatmentDiff: execFileSync("git", ["diff", "--", modulePath], { encoding: "utf8" }),
+    treatmentDiff: execFileSync("git", ["diff", "HEAD", "--", modulePath], { cwd: root, encoding: "utf8" }),
     postgresVersion: (await db.$client.unsafe("SELECT version()"))[0]!.version,
     settings: await db.$client.unsafe("SELECT name, setting FROM pg_settings WHERE name IN ('block_size','shared_buffers','work_mem','jit') ORDER BY name"),
     fixture: { reviews: 1, assessmentSummaryBytes: Buffer.byteLength(summary), synthetic: true },
