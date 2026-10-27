@@ -51,8 +51,8 @@ export function prepareHostedManifest({ catalog, catalogSha256, prepared, policy
     if (!expected || seen.has(cell.cellId) || !allocation || cell.runId !== `gha-${runId}-1-${cell.cellId}`
         || request.schema !== 'paperclip-runner/eval-session-request/v1'
         || !(request.provider === 'codex' && !request.acpxAgent || request.provider === 'acpx' && request.acpxAgent === 'claude')
-        || request.provider !== expected.provider || request.acpxAgent !== expected.acpxAgent || request.model !== expected.model
-        || request.runnerd?.path !== join(paths.runner, 'paperclip-runnerd') || request.runnerd.sha256 !== artifacts.runnerd.sha256
+        || request.provider !== expected.provider || (request.acpxAgent ?? null) !== (expected.acpxAgent ?? null) || request.model !== expected.model
+        || request.runnerd?.path !== join(paths.runner, 'paperclip-runnerd') || request.runnerd.sha256?.replace(/^sha256:/, '') !== artifacts.runnerd.sha256
         || prepared.runnerd?.path !== request.runnerd.path || prepared.runnerd.sha256 !== request.runnerd.sha256) throw new Error('Unsupported or mismatched controlled cell');
     seen.add(cell.cellId);
     return { ...allocation, executionId: cell.cellId, attemptId: request.attemptId, requestSha256: requestBindingSha256(request) };

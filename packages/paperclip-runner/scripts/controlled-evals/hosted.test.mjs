@@ -24,9 +24,9 @@ async function campaign(t) {
     source: { paperclipSha: f.manifest.sourceRevision, evalsSha: f.manifest.definitionsRevision },
     cells, matrices: cells.map(cell => ({ include: [cell] })) };
   const catalogSha256 = sha256(canonical(catalog));
-  for (const item of f.requests) { item.request.runnerd = artifacts.runnerd; await writeFile(item.requestPath, JSON.stringify(item.request)); }
+  for (const item of f.requests) { item.request.runnerd = { ...artifacts.runnerd, sha256: `sha256:${artifacts.runnerd.sha256}` }; item.request.acpxAgent = null; await writeFile(item.requestPath, JSON.stringify(item.request)); }
   const prepared = { schema: 'paperclip.runner-eval.prepared-requests/v1', campaignId: catalog.campaignId, githubRunId: runId, githubRunAttempt: 1,
-    sourceRevision: f.manifest.sourceRevision, definitionsRevision: f.manifest.definitionsRevision, catalogSha256, runnerd: artifacts.runnerd,
+    sourceRevision: f.manifest.sourceRevision, definitionsRevision: f.manifest.definitionsRevision, catalogSha256, runnerd: f.requests[0].request.runnerd,
     cells: cells.map((cell, index) => ({ cellId: cell.cellId, runId: `${catalog.campaignId}-${cell.cellId}`, request: f.requests[index].request })) };
   const { provisionalBound, ...observability } = f.manifest.observability;
   const { executionId, attemptId, requestSha256, ...allocation } = f.manifest.attempts[0];
@@ -70,6 +70,7 @@ test('hosted preparation rejects selection drift, unsupported cells and unreview
     input => { input.catalog.matrices[1].include = input.catalog.matrices[0].include; },
     input => { input.prepared.cells[1] = input.prepared.cells[0]; },
     input => { input.prepared.cells[0].request.provider = 'opencode'; },
+    input => { input.prepared.cells[0].request.runnerd.sha256 = 'sha256:' + '0'.repeat(64); },
     input => { input.policy.maxUsd = '0.01'; },
     input => { input.environment.GITHUB_RUN_ATTEMPT = '2'; },
     input => { input.environment.GITHUB_SHA = 'wrong'; },
