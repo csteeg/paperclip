@@ -60,6 +60,7 @@ jobs:
     outputs:
       accounting_mode: ${{ steps.mode.outputs.mode }}
       retry_count: ${{ steps.mode.outputs.retries }}
+      controller_lock_sha256: ${{ steps.mode.outputs.controller_lock_sha256 }}
       test_runner: ${{ steps.runner.outputs.runner }}
       max_parallel_default: ${{ steps.runner.outputs.max_parallel_default }}
       max_parallel_limit: ${{ steps.runner.outputs.max_parallel_limit }}
@@ -169,6 +170,8 @@ jobs:
                 echo 'Controlled runs require a reviewed RUNNER_PROTOCOL_EVAL_CONTROLLER_POLICY_JSON; no provider work started.' >&2
                 exit 1
               fi
+              lock_sha="$(jq -er '.controllerLockSha256 | select(type == "string" and test("^[a-f0-9]{64}$"))' <<< "$CONTROLLER_POLICY_JSON")"
+              echo "controller_lock_sha256=$lock_sha" >> "$GITHUB_OUTPUT"
               ;;
             legacy) test "$EVENT_NAME" = workflow_dispatch ;;
             *) exit 1 ;;
@@ -449,7 +452,7 @@ jobs:
 
   build_controller:
     name: Build trusted controller without private archive access
-    needs: authorize
+    needs: [authorize, target_lock]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -479,13 +482,27 @@ jobs:
         with:
           version: 9.15.4
 
+      - name: Download resolved lockfile for review binding
+        if: needs.authorize.outputs.accounting_mode == 'controlled'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ needs.target_lock.outputs.artifact_id }}
+          path: ${{ runner.temp }}/runner-controller-lock
+
       - name: Build portable controller in an unprivileged job
         if: needs.authorize.outputs.accounting_mode == 'controlled'
         id: build
+        env:
+          EXPECTED_LOCK_SHA256: ${{ needs.authorize.outputs.controller_lock_sha256 }}
+          RESOLVED_LOCK_SHA256: ${{ needs.target_lock.outputs.lock_sha256 }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          pnpm install --ignore-scripts --no-frozen-lockfile --store-dir "$RUNNER_TEMP/runner-controller-pnpm-store"
+          test "$RESOLVED_LOCK_SHA256" = "$EXPECTED_LOCK_SHA256"
+          lock="$RUNNER_TEMP/runner-controller-lock/pnpm-lock.yaml"
+          test "$(sha256sum "$lock" | cut -d ' ' -f 1)" = "$EXPECTED_LOCK_SHA256"
+          cp "$lock" pnpm-lock.yaml
+          pnpm install --frozen-lockfile --ignore-scripts --store-dir "$RUNNER_TEMP/runner-controller-pnpm-store"
           node packages/paperclip-runner/scripts/controlled-evals/build-runtime.mjs \
             "$RUNNER_TEMP/runner-protocol-runtime" "$GITHUB_SHA" > "$RUNNER_TEMP/controller-runtime-receipt.json"
           echo "runtime_receipt_sha256=$(jq -r .receiptSha256 "$RUNNER_TEMP/controller-runtime-receipt.json")" >> "$GITHUB_OUTPUT"
@@ -572,8 +589,12 @@ jobs:
       - name: Verify copied controller before private preparation
         if: needs.authorize.outputs.accounting_mode == 'controlled'
         env:
+          EXPECTED_LOCK_SHA256: ${{ needs.authorize.outputs.controller_lock_sha256 }}
           RUNTIME_RECEIPT_SHA256: ${{ needs.build_controller.outputs.runtime_receipt_sha256 }}
-        run: node packages/paperclip-runner/scripts/controlled-evals/verify-runtime.mjs "$RUNNER_TEMP/runner-protocol-runtime" "$GITHUB_SHA" "$RUNTIME_RECEIPT_SHA256"
+        run: |
+          set -euo pipefail
+          node packages/paperclip-runner/scripts/controlled-evals/verify-runtime.mjs "$RUNNER_TEMP/runner-protocol-runtime" "$GITHUB_SHA" "$RUNTIME_RECEIPT_SHA256"
+          test "$(jq -r '.inputs["pnpm-lock.yaml"]' "$RUNNER_TEMP/runner-protocol-runtime/runtime.json")" = "$EXPECTED_LOCK_SHA256"
 
       - name: Compile requests and bind the reviewed operating policy
         if: needs.authorize.outputs.accounting_mode == 'controlled'

@@ -17,11 +17,12 @@ export function hostedPolicyConfiguration(policy) {
 }
 
 export function prepareHostedManifest({ catalog, catalogSha256, prepared, policy, artifacts, environment, now = Date.now() }) {
-  fields(policy, ['schema', 'maxUsd', 'durationMs', 'pricingVerifiedAt', 'pricingExpiresAt', 'route', 'projectId', 'models', 'overhead', 'observability', 'allocations', 'maxCells', 'capacityBound']);
+  fields(policy, ['schema', 'maxUsd', 'durationMs', 'pricingVerifiedAt', 'pricingExpiresAt', 'route', 'projectId', 'models', 'overhead', 'observability', 'allocations', 'maxCells', 'capacityBound', 'controllerLockSha256']);
   if (policy.schema !== 'paperclip.runner-eval.hosted-policy/v1' || !policy.observability
       || !Number.isSafeInteger(policy.durationMs) || policy.durationMs < 1 || policy.durationMs > 4 * 3_600_000
       || !Number.isSafeInteger(policy.maxCells) || policy.maxCells < 1 || policy.maxCells > 512
       || !Array.isArray(policy.allocations) || !policy.allocations.length) throw new Error('A bounded hosted policy with tracing is required');
+  if (!/^[a-f0-9]{64}$/.test(policy.controllerLockSha256 ?? '')) throw new Error('Invalid hosted controller lock binding');
   costRuntime.reservationBound('operating_allowance', policy.capacityBound, hostedPolicyConfiguration(policy));
   fields(policy.observability, ['projectId', 'capture', 'nativeLimits']);
   const runId = environment.GITHUB_RUN_ID, paths = hostedPaths(runId);
@@ -63,7 +64,7 @@ export function prepareHostedManifest({ catalog, catalogSha256, prepared, policy
     pricingExpiresAt: policy.pricingExpiresAt, route: policy.route, ...(policy.projectId ? { projectId: policy.projectId } : {}),
     models: policy.models, overhead: policy.overhead, observability: { ...policy.observability },
     sourceRevision: prepared.sourceRevision, definitionsRevision: prepared.definitionsRevision, ...artifacts,
-    outputDirectory: paths.evidence, hosted: { repository: environment.GITHUB_REPOSITORY, runId, runAttempt: 1, workflowRevision: environment.GITHUB_SHA, policySha256: sha256(canonical(policy)) }, attempts };
+    outputDirectory: paths.evidence, hosted: { repository: environment.GITHUB_REPOSITORY, runId, runAttempt: 1, workflowRevision: environment.GITHUB_SHA, controllerLockSha256: policy.controllerLockSha256, policySha256: sha256(canonical(policy)) }, attempts };
   manifest.observability.provisionalBound = { ...policy.capacityBound, configurationSha256: sha256(canonical(observabilityBoundConfiguration(manifest))) };
   const validated = validateManifest(manifest, now);
   assertHostedAdmission(manifest, attempts[0], { ...environment, PAPERCLIP_RUNNER_EVAL_EXECUTION_ID: attempts[0].executionId });
@@ -81,7 +82,7 @@ export async function verifyHostedCell({ manifestPath, manifestSha256, cellId, e
 }
 
 const safeAdmissionReasons = new Set([
-  'Invalid hosted run ID', 'Invalid controller fields', 'A bounded hosted policy with tracing is required',
+  'Invalid hosted run ID', 'Invalid hosted controller lock binding', 'Invalid controller fields', 'A bounded hosted policy with tracing is required',
   'Invalid reviewed cost bound evidence', 'Reviewed cost bound configuration changed',
   'Prepared selection does not match the authorized catalog', 'Every selected cell must occur exactly once',
   'Duplicate hosted allocation policy', 'Unsupported or mismatched controlled cell',

@@ -834,6 +834,13 @@ Set `RUNNER_PROTOCOL_EVAL_CONTROLLER_POLICY_JSON` only after its operating
 bounds have been reviewed. An absent, stale or invalid policy stops before
 provider work. The policy schema is `paperclip.runner-eval.hosted-policy/v1`:
 
+- `controllerLockSha256`, the SHA-256 of the explicitly reviewed compatible
+  workspace lockfile. The existing unprivileged target-lock job resolves it;
+  inspect that immutable artifact before setting the policy. The controller
+  build requires its digest to match, installs with `--frozen-lockfile` and a
+  job-local store, and records the digest in the runtime receipt. Private
+  preparation checks that receipt binding again. A changed lockfile requires a
+  policy review. No lockfile is committed by this workflow integration.
 - `maxUsd`, `maxCells` (1–512), `durationMs` (at most four hours), current
   `pricingVerifiedAt` and `pricingExpiresAt`.
 - `route`, optional gateway `projectId`, exact `models`, and the same

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -306,10 +307,10 @@ test('controlled admission rejects missing policy, automatic retries and job rer
   try {
     for (const [mode, event, attempt, retries, policy, status] of [
       ['controlled', 'workflow_dispatch', '1', '0', '', 1],
-      ['controlled', 'workflow_dispatch', '2', '0', '{"schema":"paperclip.runner-eval.hosted-policy/v1"}', 1],
-      ['controlled', 'workflow_dispatch', '1', '1', '{"schema":"paperclip.runner-eval.hosted-policy/v1"}', 1],
+      ['controlled', 'workflow_dispatch', '2', '0', JSON.stringify({schema:'paperclip.runner-eval.hosted-policy/v1',controllerLockSha256:'e'.repeat(64)}), 1],
+      ['controlled', 'workflow_dispatch', '1', '1', JSON.stringify({schema:'paperclip.runner-eval.hosted-policy/v1',controllerLockSha256:'e'.repeat(64)}), 1],
       ['legacy', 'schedule', '1', '1', '', 1],
-      ['controlled', 'workflow_dispatch', '1', '0', '{"schema":"paperclip.runner-eval.hosted-policy/v1"}', 0],
+      ['controlled', 'workflow_dispatch', '1', '0', JSON.stringify({schema:'paperclip.runner-eval.hosted-policy/v1',controllerLockSha256:'e'.repeat(64)}), 0],
       ['legacy', 'workflow_dispatch', '1', '1', '', 0],
     ]) {
       const result = spawnSync('bash', ['-c', script], { encoding: 'utf8', env: { PATH: process.env.PATH,
@@ -361,6 +362,9 @@ test('private archive jobs consume verified controller code without resolving de
   const preparer = workflow.slice(workflow.indexOf('  prepare_controller:'), workflow.indexOf('  eval_shard_0:'));
   assert.doesNotMatch(builder, /id-token: write|environment:|secrets\./u);
   assert.match(builder, /build-runtime.mjs/u);
+  assert.doesNotMatch(builder, /--no-frozen-lockfile/u);
+  assert.match(builder, /test "\$RESOLVED_LOCK_SHA256" = "\$EXPECTED_LOCK_SHA256"/u);
+  assert.match(builder, /pnpm install --frozen-lockfile --ignore-scripts --store-dir/u);
   assert.doesNotMatch(preparer, /pnpm install|build-runtime.mjs|cache: pnpm/u);
   assert.ok(preparer.indexOf('verify-runtime.mjs') < preparer.indexOf('hosted.mjs" prepare'));
   assert.match(preparer, /needs\.build_controller\.outputs\.runtime_receipt_sha256/u);
@@ -372,4 +376,25 @@ test('private archive jobs consume verified controller code without resolving de
       assert.match(install[0], /--store-dir/u);
     }
   }
+});
+
+test('controller dependency lock rejects resolution or byte drift before installation', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const script = workflowShell(workflow, 'Build portable controller in an unprivileged job');
+  const pin = script.slice(script.indexOf('test "$RESOLVED_LOCK_SHA256"'), script.indexOf('pnpm install'));
+  const root = await mkdtemp(resolve(tmpdir(), 'runner-reviewed-lock-'));
+  const digest = createHash('sha256').update('reviewed dependencies').digest('hex');
+  try {
+    await mkdir(resolve(root, 'runner-controller-lock'));
+    for (const [index, resolved, bytes, status] of [[0, digest, 'reviewed dependencies', 0], [1, 'f'.repeat(64), 'reviewed dependencies', 1], [2, digest, 'changed dependencies', 1]]) {
+      const cwd = resolve(root, `worker-${index}`); await mkdir(cwd);
+      await writeFile(resolve(root, 'runner-controller-lock/pnpm-lock.yaml'), bytes);
+      const result = spawnSync('bash', ['-euc', pin], { cwd, encoding: 'utf8', env: {
+        PATH: process.env.PATH, RUNNER_TEMP: root, EXPECTED_LOCK_SHA256: digest, RESOLVED_LOCK_SHA256: resolved,
+      } });
+      assert.equal(result.status, status, result.stderr);
+      if (status === 0) assert.equal(await readFile(resolve(cwd, 'pnpm-lock.yaml'), 'utf8'), bytes);
+      else await assert.rejects(readFile(resolve(cwd, 'pnpm-lock.yaml')), { code: 'ENOENT' });
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

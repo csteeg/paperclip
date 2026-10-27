@@ -65,7 +65,7 @@ export async function buildControllerRuntime({ outputDirectory, sourceRevision }
   await writeFile(join(server, 'package.json'), '{"private":true}\n', { flag: 'wx', mode: 0o600 });
   await copyPackage('protobufjs', require, server);
   await writeFile(join(controller, 'runtime.mjs'), "export * as costRuntime from '../tests/runner-e2e/shared-runtime.mjs';\n", { flag: 'wx', mode: 0o600 });
-  const inputs = {};
+  const inputs = { 'pnpm-lock.yaml': sha256(await readFile(join(repository, 'pnpm-lock.yaml'))) };
   for (const path of Object.keys({ ...result.metafile.inputs, ...history.metafile.inputs })) {
     const absolute = resolve(path);
     inputs[relative(repository, absolute).split('\\').join('/')] = sha256(await readFile(absolute));

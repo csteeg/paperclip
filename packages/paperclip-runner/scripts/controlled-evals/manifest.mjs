@@ -86,10 +86,11 @@ export function validateManifest(value, now = Date.now(), { admission = true } =
 function validateHostedIdentity(manifest) {
   const hosted = manifest.hosted;
   if (hosted === undefined) return;
-  fields(hosted, ['repository', 'runId', 'runAttempt', 'workflowRevision', 'policySha256']);
+  fields(hosted, ['repository', 'runId', 'runAttempt', 'workflowRevision', 'policySha256', 'controllerLockSha256']);
   if (typeof hosted.repository !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/.test(hosted.repository)
       || typeof hosted.runId !== 'string' || !/^[1-9][0-9]{0,19}$/.test(hosted.runId)
       || hosted.policySha256 !== undefined && !hash(hosted.policySha256)
+      || hosted.controllerLockSha256 !== undefined && !hash(hosted.controllerLockSha256)
       || hosted.runAttempt !== 1 || typeof hosted.workflowRevision !== 'string' || !/^[a-f0-9]{40}$/.test(hosted.workflowRevision)
       || manifest.campaignId !== `gha-${hosted.runId}-1`) throw new Error('Invalid hosted controller identity');
 }

@@ -33,7 +33,7 @@ async function campaign(t) {
   for (const component of f.manifest.overhead.components) component.provisionalBound.evidenceSha256 = sha256(component.component);
   const { provisionalBound, ...observability } = f.manifest.observability;
   const { executionId, attemptId, requestSha256, ...allocation } = f.manifest.attempts[0];
-  const policy = { schema: 'paperclip.runner-eval.hosted-policy/v1', maxUsd: f.manifest.maxUsd, maxCells: 2, durationMs: 60000,
+  const policy = { schema: 'paperclip.runner-eval.hosted-policy/v1', controllerLockSha256: 'e'.repeat(64), maxUsd: f.manifest.maxUsd, maxCells: 2, durationMs: 60000,
     pricingVerifiedAt: f.manifest.pricingVerifiedAt, pricingExpiresAt: f.manifest.pricingExpiresAt,
     route: 'direct', models: f.manifest.models, overhead: f.manifest.overhead, observability, allocations: [allocation] };
   policy.capacityBound = { version: 1, scope: 'full_lifecycle', evidenceSha256: f.manifest.overhead.components.find(component => component.component === 'observability').provisionalBound.evidenceSha256, configurationSha256: sha256(canonical(hostedPolicyConfiguration(policy))) };
@@ -81,6 +81,8 @@ test('hosted preparation rejects selection drift, unsupported cells and unreview
     input => { input.environment.GITHUB_SHA = 'wrong'; },
     input => { input.environment.GITHUB_SHA = 'c'.repeat(40); },
     input => { delete input.policy.observability; },
+    input => { delete input.policy.controllerLockSha256; },
+    input => { input.policy.controllerLockSha256 = 'f'.repeat(64); },
   ];
   for (const change of changes) {
     const input = structuredClone(c.input); change(input);
