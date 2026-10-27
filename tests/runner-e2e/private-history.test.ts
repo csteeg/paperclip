@@ -160,3 +160,13 @@ it.each([false, true])("retains an unknown transfer without retrying it when rec
   expect(JSON.parse(await readFile(`${receipt}.retention.json`, "utf8")).requests[0].status)
     .toBe(receiptFails ? "failed_or_unknown" : "accepted");
 });
+
+it("keeps protocol controller, report and cell archives disjoint inside the existing private prefix", () => {
+  const kinds = ["evidence", "report", "protocol-control", "protocol-report", "protocol-cell-native-codex--get-task-context"];
+  const keys = kinds.map(kind => privateArtifactKey(kind, "12345"));
+  expect(new Set(keys).size).toBe(kinds.length);
+  expect(keys.every(key => key.startsWith(`${PRIVATE_HISTORY_PREFIX}/campaigns/gha-12345-1/`))).toBe(true);
+  for (const kind of ["protocol-cell-", "protocol-cell-../report", "protocol-cell-a/b", `protocol-cell-${"a".repeat(201)}`]) {
+    expect(() => privateArtifactKey(kind, "12345")).toThrow();
+  }
+});

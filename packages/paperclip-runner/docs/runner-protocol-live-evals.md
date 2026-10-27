@@ -20,7 +20,9 @@ fail generation. Build with
 `pnpm --filter @paperclipai/paperclip-runner build:issue-thread` and provide
 `--viewer-root` or `PAPERCLIP_EVAL_VIEWER_ROOT` to the canonical Python renderer.
 
-The Actions artifact contains full evidence. S3 uses the same viewer with a
+Legacy manual runs place full evidence in Actions artifacts. These artifacts
+are readable by authenticated public GitHub users. Controlled runs keep full
+evidence in private S3 storage. The optional legacy public S3 report uses a
 closed public DTO: only isolated mock-run conversation text, scrubbed private
 references, named tool outcomes, and checks. Tool arguments/results, reasoning,
 provider identities, and company snapshots stay private. The public notice
@@ -231,12 +233,10 @@ not release historical holds or claim invoice
 settlement. Existing provider usage is retained separately; do not add the
 provider and controller cost observations as if they were separate charges.
 
-This local controller is not yet wired into the hosted matrix. Its durable
-attempt-directory guard applies to one shared filesystem, not independent
-GitHub workers. Hosted integration must bind unique cells to the prepared
-allocation, reject workflow/job reruns, and preserve the controller evidence
-before enabling paid work. Native OTLP routing, report integration, vendor
-metering bounds, and actual paid qualification remain separate gates.
+The hosted workflow now assembles one manifest and gives each independent
+worker a disjoint allocation. It checks the current GitHub run and first-attempt
+identity before provider access. Vendor metering bounds and actual paid route
+qualification remain separate gates. See the controlled workflow section below.
 ## Controller-assigned native observability
 
 The same CLI accepts `--observability-config /absolute/path/observability.json`
@@ -695,8 +695,9 @@ and the pinned `RUNNER_PROTOCOL_EVALS_SHA` repository variable.
 
 ## Reports and history
 
-Each cell uploads its immutable run directory to an access-controlled Actions
-artifact. The trusted report job merges all expected cells, represents missing
+Each legacy cell uploads its immutable run directory to an Actions artifact.
+These artifacts are public to authenticated GitHub readers in this repository.
+Controlled cells use the private transport below. The trusted report job merges all expected cells, represents missing
 cell artifacts as infrastructure failures, and invokes the report program from
 the pinned eval commit. The full artifact contains the canonical Evalbook grid,
 read-only Runner issue-thread attempt pages, and raw immutable run records.
@@ -809,3 +810,101 @@ full allocation.
 On cancellation, the controller keeps the scheduled process-group SIGKILL until
 any remaining owned descendants receive it, even if the CLI exits first. A
 forced stop still leaves cleanup unverified and retains the full allocation.
+
+## Controlled hosted workflow
+
+`accounting_mode=controlled` is the default for manual dispatch and the only
+scheduled mode. It supports explicitly selected native Codex and ACPX Claude
+rosters. `all` still means the entire maintained suite; unsupported cells fail
+admission rather than being omitted. Use `accounting_mode=legacy` explicitly
+for a manual qualification of other providers. Legacy runs retain their
+existing public artifact and publication behavior and do not claim complete
+controller cost coverage.
+
+Controlled runs require the evaluated target SHA to equal the trusted workflow
+revision on the default branch. This keeps target-branch code out of jobs with
+private archive access. Use explicit legacy mode for other branch diagnostics.
+Controlled runs require `max_infrastructure_retries=0` and GitHub run attempt 1.
+Re-running even one job is rejected at that worker before provider access.
+The existing nightly enable gate and exact eval SHA pin remain required.
+This change does not set either variable or enable paid recurrence.
+
+Set `RUNNER_PROTOCOL_EVAL_CONTROLLER_POLICY_JSON` only after its operating
+bounds have been reviewed. An absent, stale or invalid policy stops before
+provider work. The policy schema is `paperclip.runner-eval.hosted-policy/v1`:
+
+- `maxUsd`, `maxCells` (1–512), `durationMs` (at most four hours), current
+  `pricingVerifiedAt` and `pricingExpiresAt`.
+- `route`, optional gateway `projectId`, exact `models`, and the same
+  four-component `overhead` contract used by the controller.
+- `observability` with `projectId`, `capture` and `nativeLimits`. Tracing is
+  required for this mode. `BRAINTRUST_API_KEY` is delivered only to the
+  trusted controller step, even when model requests use the direct route.
+- `allocations`, one entry per provider/agent/model profile, each with
+  `maxUsd`, `maxRequests`, `maxConcurrent` and `timeoutMs`.
+- `capacityBound`, a reviewed full-lifecycle proof. Its `configurationSha256`
+  hashes `canonical(hostedPolicyConfiguration(policy))`, which excludes only
+  the proof itself. The proof must cover every selected cell up to `maxCells`,
+  trace and gateway processing, retained data, private archive transfers,
+  workflow setup/build/reporting and the full retention window. A policy
+  digest is a binding to evidence, not independent proof of vendor charges.
+
+The preparer compiles every selected private request once. It validates exact
+catalog membership, source and definition revisions, executable digests and
+profile allocations. It adds campaign identities to the reviewed capacity
+bound, retains the policy digest, and emits one manifest with no provider calls.
+A changed prompt, fixture or compiled request fails the worker's binding check.
+The sum of all selected allocations and once-only overhead must fit `maxUsd`.
+This campaign cap does not replace the separate daily/weekly allowance gates.
+
+The portable runtime contains only trusted code and dependencies. A same-run
+GitHub artifact distributes it; workers verify its separate receipt digest and
+workflow revision. Manifest and policy bytes use private S3 instead. Workers
+check the manifest's separate preparer digest before model credentials are used.
+Model children receive proxy/relay credentials, never the provider, Braintrust
+or AWS archive credentials.
+
+Private retention reuses the existing `runner-e2e-private-paid` and
+`runner-e2e-private-history` environments and `RUNNER_E2E_PRIVATE_HISTORY_*`
+role, region and bucket variables. The role and bucket policy are unchanged.
+The transfer helper verifies bucket privacy and 30-day bounded retention,
+rejects unsafe archives, uses conditional immutable writes and does not retry.
+Each archive is at most 264 MiB (256 MiB source). The reviewed operating bound
+must cover up to `maxCells` cell archives, one controller archive, one report
+archive, their download/receipt traffic and the GitHub code/build artifacts.
+AWS credentials are action outputs used only by transfer steps.
+
+Private keys share the existing bounded prefix:
+
+```text
+runner-e2e-private/bounded-v1/campaigns/gha-RUN_ID-1/
+  protocol-control.zip
+  protocol-cell-CELL_ID.zip
+  protocol-report.zip
+```
+
+Each immutable attempt includes replayable controller evidence. The report uses
+the retained full manifest even when no cell archive is available. Missing,
+failed, cancelled or unreadable evidence retains its allocation; known partial
+charges remain visible. Overhead is held once per campaign. A workflow-wide
+cancellation may prevent report generation, but the manifest was already
+retained before model work and remains the reconciliation starting point.
+Full reports and trace/ledger evidence are never uploaded as GitHub artifacts
+in controlled mode. Public report projection and automatic publication are
+skipped. Selective publication requires a separate reviewed projection.
+
+To restore a report with an authorized private-history session, use the
+portable runtime's `private-history.mjs download protocol-report RUN_ID NEW_DIR`
+or `node cli/node_modules/tsx/dist/cli.mjs tests/runner-e2e/private-history.ts`
+with the same arguments. Supply the private bucket and AWS region through the
+existing environment variables. Read retained reports without rerunning models.
+The report command accepts `--controller-manifest` and
+`--controller-archive-cli` together; it rejects `--public-viewer` with those
+options. The pinned private eval revision must include these flags. The
+preparer checks that support before any paid cell.
+
+Synthetic tests prove request admission, proxy and OTLP receipt handling,
+portable runtime isolation, private archive replay, and complete/partial/empty
+campaign accounting. They do not establish current vendor prices, future
+retention charges, live Braintrust attribution or invoice settlement. Keep
+paid recurrence disabled until these independent gates are qualified.

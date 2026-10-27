@@ -13,8 +13,9 @@ export const PRIVATE_HISTORY_PREFIX = "runner-e2e-private/bounded-v1";
 export const PRIVATE_ARCHIVE_BYTES = 264 * 1024 * 1024;
 
 export function privateArtifactKey(kind: string, runId: string) {
-  if (!["evidence", "report"].includes(kind) || !/^[1-9][0-9]{0,19}$/.test(runId)) {
-    throw new Error("Private history needs an evidence/report kind and numeric workflow run ID");
+  if (!(["evidence", "report", "protocol-control", "protocol-report"].includes(kind)
+      || /^protocol-cell-[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(kind)) || !/^[1-9][0-9]{0,19}$/.test(runId)) {
+    throw new Error("Private history needs a supported artifact kind and numeric workflow run ID");
   }
   return `${PRIVATE_HISTORY_PREFIX}/campaigns/gha-${runId}-1/${kind}.zip`;
 }
@@ -46,7 +47,7 @@ export async function verifyPrivateHistory(publisher: BoundedHistoryPublisher, b
 
 type TransferOptions = {
   operation: "upload" | "download";
-  kind: "evidence" | "report";
+  kind: string;
   runId: string;
   directory: string;
   bucket: string;
@@ -113,7 +114,7 @@ export async function retainPrivateTransfer(options: TransferOptions, receipt: s
 async function main() {
   const [operation, kind, runId, directory] = process.argv.slice(2);
   if (!["verify", "upload", "download"].includes(operation ?? "") || !kind || !runId || !directory) {
-    throw new Error("Usage: private-history.ts verify|upload|download evidence|report RUN_ID DIRECTORY");
+    throw new Error("Usage: private-history.ts verify|upload|download KIND RUN_ID DIRECTORY");
   }
   privateArtifactKey(kind, runId);
   if (process.env.GITHUB_ACTIONS === "true" && (process.env.GITHUB_RUN_ATTEMPT !== "1" || process.env.GITHUB_RUN_ID !== runId)) {
@@ -130,7 +131,7 @@ async function main() {
   }
   const receiptPublisher = operation === "upload" || process.env.GITHUB_ACTIONS === "true"
     ? () => new BoundedHistoryPublisher(`${receipt}.retention.json`) : undefined;
-  const result = await retainPrivateTransfer({ operation: operation as "upload" | "download", kind: kind as "evidence" | "report", runId, directory, bucket, publisher }, receipt, receiptPublisher);
+  const result = await retainPrivateTransfer({ operation: operation as "upload" | "download", kind, runId, directory, bucket, publisher }, receipt, receiptPublisher);
   console.log(JSON.stringify(process.env.GITHUB_ACTIONS === "true" ? { version: 1, privateTransferCompleted: true } : result));
 }
 

@@ -41,7 +41,7 @@ test("direct live eval workflow keeps paid execution behind stable actor authori
   const copilotCredential = "COPILOT_GITHUB_TOKEN: ${{ matrix.credentialName == 'COPILOT_GITHUB_TOKEN' && secrets.COPILOT_GITHUB_TOKEN || '' }}";
   assert.equal(workflow.split(copilotCredential).length - 1, 1);
   const paid = workflow.slice(workflow.indexOf("  eval_shard_0:"), workflow.indexOf("  eval_shard_1:"));
-  assert.ok(paid.includes("name: runner-e2e-paid"));
+  assert.ok(paid.includes("'runner-e2e-private-paid' || 'runner-e2e-paid'"));
   assert.ok(paid.includes(copilotCredential));
   const reauthorizationIndex = paid.indexOf("Reauthorize paid execution before provider access");
   assert.ok(reauthorizationIndex >= 0);
@@ -121,13 +121,13 @@ test("resolves both repositories immutably and bounds total matrix concurrency",
       /repository: paperclipai\/paperclip-evals[\s\S]*?persist-credentials: false/gmu,
     ),
   ];
-  assert.equal(privateCheckouts.length, 3);
+  assert.equal(privateCheckouts.length, 4);
   const privateTokenSteps = [
     ...workflow.matchAll(
       /^      - name: Generate private eval-repository token\n(?<body>(?:^ {8,}.*\n?)*)/gmu,
     ),
   ];
-  assert.equal(privateTokenSteps.length, 4);
+  assert.equal(privateTokenSteps.length, 5);
   for (const tokenStep of privateTokenSteps) {
     assert.match(
       tokenStep.groups.body,
@@ -149,7 +149,7 @@ test("resolves both repositories immutably and bounds total matrix concurrency",
   );
   assert.match(
     workflow,
-    /--runner-cli runner-protocol-build\/extracted\/portable\/dist\/cli\/eval-session\.js/u,
+    /runner_cli=runner-protocol-build\/extracted\/portable\/dist\/cli\/eval-session\.js/u,
   );
   assert.doesNotMatch(workflow, /npm install --prefix/u);
 });
@@ -171,7 +171,7 @@ test("publishes only the separately sanitized Evalbook through trusted OIDC code
   assert.match(report, /runner-protocol-eval-campaign\.mjs sanitize/u);
   assert.match(
     report,
-    /Upload access-controlled canonical Evalbook and raw attempts/u,
+    /Upload legacy canonical Evalbook and raw attempts/u,
   );
   assert.match(report, /Upload publisher-only sanitized Evalbook/u);
   assert.match(
@@ -290,4 +290,55 @@ test("authentication failures retain cell metadata without leaking malformed sum
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+function workflowShell(workflow, name) {
+  const step = workflow.slice(workflow.indexOf(`      - name: ${name}\n`)).split(/\n      - /u)[0];
+  assert.ok(step.startsWith(`      - name: ${name}\n`));
+  const script = step.split('        run: |\n')[1];
+  assert.ok(script);
+  return script.split('\n').map(line => line.slice(10)).join('\n');
+}
+
+test('controlled admission rejects missing policy, automatic retries and job reruns before paid work', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const script = workflowShell(workflow, 'Validate accounting mode and retry envelope');
+  const root = await mkdtemp(resolve(tmpdir(), 'runner-workflow-admission-'));
+  try {
+    for (const [mode, event, attempt, retries, policy, status] of [
+      ['controlled', 'workflow_dispatch', '1', '0', '', 1],
+      ['controlled', 'workflow_dispatch', '2', '0', '{"schema":"paperclip.runner-eval.hosted-policy/v1"}', 1],
+      ['controlled', 'workflow_dispatch', '1', '1', '{"schema":"paperclip.runner-eval.hosted-policy/v1"}', 1],
+      ['legacy', 'schedule', '1', '1', '', 1],
+      ['controlled', 'workflow_dispatch', '1', '0', '{"schema":"paperclip.runner-eval.hosted-policy/v1"}', 0],
+      ['legacy', 'workflow_dispatch', '1', '1', '', 0],
+    ]) {
+      const result = spawnSync('bash', ['-c', script], { encoding: 'utf8', env: { PATH: process.env.PATH,
+        ACCOUNTING_MODE: mode, EVENT_NAME: event, GITHUB_RUN_ATTEMPT: attempt, RETRIES: retries,
+        CONTROLLER_POLICY_JSON: policy, TARGET_SHA: 'a'.repeat(40), GITHUB_SHA: 'a'.repeat(40), GITHUB_OUTPUT: resolve(root, 'output') } });
+      assert.equal(result.status, status, `${mode}/${event}/${attempt}/${retries}: ${result.stderr}`);
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('controlled evidence uses private storage and cloud credentials stay out of provider execution', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const paid = workflow.slice(workflow.indexOf('    steps: &direct_eval_steps'), workflow.indexOf('  eval_shard_1:'));
+  const model = paid.slice(paid.indexOf('      - name: Run one immutable direct protocol cell'), paid.indexOf('      - name: Retain controlled cell evidence'));
+  assert.ok(paid.indexOf('Verify current worker admission before provider credentials') < paid.indexOf('Run one immutable direct protocol cell'));
+  assert.ok(paid.indexOf('Provision Codex sandbox') < paid.indexOf('Obtain private archive credentials'));
+  assert.doesNotMatch(model, /AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN/u);
+  assert.match(model, /runner_cli="\$root\/runtime\/controlled-evals\/run.mjs"/u);
+  for (const step of workflow.split(/\n      - /u).filter(step => /uses: actions\/upload-artifact/u.test(step))) {
+    if (/path: (?:cell-output|runner-protocol-merged)\//u.test(step)) assert.match(step, /accounting_mode == 'legacy'/u);
+    assert.doesNotMatch(step, /path: .*runner-protocol-control\//u);
+  }
+  for (const step of workflow.split(/\n      - /u).filter(step => /uses: aws-actions\/configure-aws-credentials/u.test(step) && step.includes('id: private_history_credentials'))) {
+    assert.match(step, /output-env-credentials: false/u);
+    assert.match(step, /disable-retry: true/u);
+  }
+  assert.match(workflow, /upload protocol-control/u);
+  assert.match(workflow, /upload "protocol-cell-\$CELL_ID"/u);
+  assert.match(workflow, /upload protocol-report/u);
+  assert.match(workflow, /--controller-manifest "\$PAPERCLIP_RUNNER_EVAL_CONTROL_MANIFEST"/u);
 });

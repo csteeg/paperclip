@@ -66,9 +66,18 @@ test('copied controller runs without source dependencies, retains native evidenc
   const probe = join(root, 'probe.mjs'); await writeFile(probe, isolatedProbe);
   const isolated = await exec(process.execPath, [probe, directory], { cwd: root, env: environment, timeout: 20_000 });
   assert.match(isolated.stdout, /preserves 64-bit values/);
+  const privateArchive = exec(process.execPath, ['--input-type=module', '-'], { cwd: root, env: environment, timeout: 10000 });
+  privateArchive.child.stdin.end(`
+    const { archivePrivateEvidence } = await import(${JSON.stringify(pathToFileURL(join(directory, 'private-history.mjs')).href)});
+    await archivePrivateEvidence('pack', ${JSON.stringify(join(directory, 'controlled-evals'))}, ${JSON.stringify(join(root, 'private.zip'))});
+    await archivePrivateEvidence('unpack', ${JSON.stringify(join(root, 'private.zip'))}, ${JSON.stringify(join(root, 'restored'))});
+    console.log('portable private archive round trip');
+  `);
+  assert.match((await privateArchive).stdout, /portable private archive round trip/);
+  assert.equal(await readFile(join(root, 'restored/hosted.mjs'), 'utf8'), await readFile(join(directory, 'controlled-evals/hosted.mjs'), 'utf8'));
   const stdin = exec(process.execPath, ['--input-type=module', '-'], { cwd: root, env: environment, timeout: 10_000 });
   stdin.child.stdin.end(`
-    for (const name of ['run.mjs', 'archive.mjs', 'report.mjs', 'verify-runtime.mjs']) await import(${JSON.stringify(pathToFileURL(join(directory, 'controlled-evals') + '/').href)} + name);
+    for (const name of ['run.mjs', 'archive.mjs', 'report.mjs', 'hosted.mjs', 'verify-runtime.mjs']) await import(${JSON.stringify(pathToFileURL(join(directory, 'controlled-evals') + '/').href)} + name);
     await import(${JSON.stringify(pathToFileURL(join(source, 'build-runtime.mjs')).href)});
     const { isEntrypoint } = await import(${JSON.stringify(pathToFileURL(join(directory, 'controlled-evals/entrypoint.mjs')).href)});
     if (await isEntrypoint(import.meta.url, '/missing/entrypoint.mjs')) throw new Error('Missing entrypoint was accepted');
@@ -80,6 +89,10 @@ test('copied controller runs without source dependencies, retains native evidenc
     cwd: root, env: { ...environment, PAPERCLIP_CONTROLLER_TEST_RUNTIME: join(directory, 'controlled-evals') }, timeout: 80_000, maxBuffer: 1_048_576,
   });
   assert.match(behavioral.stdout, /# pass 11\b/);
+  const hosted = await exec(process.execPath, ['--test', '--test-reporter=tap', join(source, 'hosted.test.mjs')], {
+    cwd: root, env: { ...environment, PAPERCLIP_CONTROLLER_TEST_RUNTIME: join(directory, 'controlled-evals') }, timeout: 30000, maxBuffer: 1_048_576,
+  });
+  assert.match(hosted.stdout, /# pass 3\b/);
 
 
   const cli = await exec(process.execPath, [join(directory, 'controlled-evals/archive.mjs'), 'report-attempts', join(root, 'empty-attempts')], {
