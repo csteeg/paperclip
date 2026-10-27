@@ -261,6 +261,13 @@ After successful admission, reload and verify that the prior skipped receipt doe
 not strand a later real provider reply or tree resume. Provider fixtures support
 this behavior; live fixed-source runtime and destination proof remain separate.
 
+Also defer Retry behind cleanup, queue an independent board message, then
+complete cleanup. Verify one run receives the exact GitHub batch and the board
+message enters its own turn. For an older mixed batch rejected before provider
+startup, ordinary task Retry must recover only certified undelivered receipts.
+Changed input, active ownership, allocations and prior delivery must keep the
+refusal effective. Check the restoration audit and unchanged failed-run history.
+
 ### `delegated-configuration`
 
 Endpoint activity hides private-task events while retaining a next-page cursor across private-only windows, so older readable history stays reachable. Actual-JWT fixtures verify this separately from live provider delivery.

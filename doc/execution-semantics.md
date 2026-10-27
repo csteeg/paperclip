@@ -1573,6 +1573,14 @@ delta when attaching a new run. Other stale-event and authority checks remain.
 
 ### Explicit user continuation after execution failure
 
+A deferred chat Retry retains its authorized source batch when it resumes.
+Separate board queues do not join that batch. For a historical mixed batch
+refused before provider startup, a new task Retry can restore the undelivered
+receipts only after certifying the exact bootstrap failure, source authority,
+unchanged board comments and absence of execution, allocation or prior delivery.
+The restoration is audited. Historical runs and budget-skipped receipts remain
+unchanged; each input still passes its ordinary admission and dispatch checks.
+
 When a user's comment also assigns the task back to its agent, the assignment
 wake retains that comment's continuation intent. Admission validates the saved
 comment, its author, task, timing and delivery receipt through the same checks as

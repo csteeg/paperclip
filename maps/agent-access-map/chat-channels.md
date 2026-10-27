@@ -1016,3 +1016,10 @@ comment, session generation, and admitted instruction snapshot. A separate retry
 receipt preserves the original skipped receipt and older failed native result.
 Current access and normal native stop/cleanup guards still govern execution;
 board wake metadata alone cannot manufacture chat authority or replay old work.
+
+Deferred chat Retry excludes independent board queues from its pinned batch.
+An explicit board Retry can restore a historical mixed batch only with exact
+never-started evidence, current source authority, unchanged board comments and
+no prior delivery or allocation. The server records the restoration in activity;
+failed runs and original skipped receipts remain history. This grants no new
+agent retry capability and does not weaken execution-time source validation.
