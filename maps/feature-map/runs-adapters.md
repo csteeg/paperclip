@@ -26,6 +26,13 @@ Agent access: [companion](../agent-access-map/runs-adapters.md).
 
 Open an agent’s model/adapter configuration or the instance adapter settings page when permitted.
 
+### `managed-account-setup`
+
+Ask an authorized agent to save or connect a managed AI account. Open its saved
+`aiLogin` setup link as the responsible human when sign-in or a code is required.
+The agent can inspect the saved attempt and manage authorized account/pool
+bindings; human authentication and raw host administration retain their gates.
+
 ### `run-history`
 
 Open an agent run at `/agents/:agentId/runs/:runId` from the agent or task activity.
@@ -49,6 +56,21 @@ turn; do not count a nested discovery interval twice.
 ## Driving it with Playwright and the Paperclip CLI
 
 Preconditions: follow the [baseline](./README.md#before-driving-a-journey). Record adapter, model, account, native/legacy runtime, and environment. Capabilities vary; one harness result is not a matrix-wide qualification.
+
+### `managed-account-setup`
+
+Automated: [actual-auth connection integration](../../server/src/__tests__/connection-management.integration.test.ts)
+exercises account/pool persistence, responsible-user ownership, agent attribution,
+saved local-login access and native secret-response protection with provider fixtures.
+[Saved handoff UI tests](../../ui/src/pages/apps/AppsConnect.test.tsx)
+exercise setup routing with mocked APIs. Neither establishes live provider sign-in.
+
+Manual: Start delegated managed-account setup, reload the exact saved human
+handoff, finish the required login, and inspect the saved account and original
+task continuation. Bind the account or pool only to authorized agents, reload
+their configuration, and verify the selected owner and account remain correct.
+Reject a different user's saved attempt, revoked management authority and Ask/Plan
+mutations. Qualify a useful model task separately from saving the account.
 
 ### `session`
 

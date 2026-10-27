@@ -4,6 +4,13 @@ Product map: [app-permissions](../feature-map/app-permissions.md).
 
 Feature ID: `app-permissions`.
 
+Delegated native entries inherit the [native admission and work-mode limits](README.md#native-rest-transport).
+Explicitly requested policy administration may target the acting agent when its
+management grants, resolved resources and responsible-user authority permit it.
+A denied tool call does not authorize silently relaxing policy. Governed-action
+self-approval and editing one's own principal permissions remain prohibited;
+see [shared guidance](../../packages/shared/src/connection-intent-guidance.ts).
+
 Review date: 2026-10-26. Source base: `a1f77821b9cd5c9c846fdf7a0fa5cc620ad2b6bb`; implementation: [#17737](https://github.com/paperclipai/paperclip/pull/17737).
 
 Connection operations reviewed in this working tree. The inventory was reconciled

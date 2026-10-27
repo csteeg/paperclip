@@ -40,6 +40,9 @@ Agent access: [companion](../agent-access-map/recovery.md).
   for the same stop-and-save workflow before Retry admits another executor.
   Retry reconstructs missing preservation for historical failures only from an
   exact prepared source without a live finalization owner.
+  New messages and orphan cleanup can register missing preservation automatically
+  and wake the existing worker. Saved input still waits for verified stop and file
+  persistence, then enters ordinary admission once.
 - `unknown-outcome`: `recovery/unknown-outcome` — uncertain external side effects require inspection and
   an explicit decision, not automatic replay.
 - `user-continuation`: `recovery/user-continuation` — saved user messages after a stop are reconsidered once

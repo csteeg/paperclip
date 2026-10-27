@@ -181,6 +181,15 @@ covers these views, pending/failure/success, mobile, and light theme with simula
 provider responses. Verify actual credential validity and restored delivery
 separately against GitHub; a Storybook success does not establish live recovery.
 
+For an agent-requested GitHub credential handoff, open the saved link as the
+addressed human and verify it asks for exactly the requested fields and all/any
+completion mode. A fresh App opens import; a configured App opens replacement
+through reconnect and retains credentials omitted from the request. Interrupt
+the response after a successful rotation, reload, and verify the saved rotation
+resumes without replacing the key again. Wrong-user access, unchanged credentials
+and missing verification must not complete the request. After OAuth, confirm the
+addressed user's exact endpoint identity before expecting task continuation.
+
 For GitHub, submit a disposable PR and verify the summary heading uses the bot's
 display name and the check remains **Paperclip Review**. For two separate bots on one PR, verify
 their App-scoped checks and comments remain independent.

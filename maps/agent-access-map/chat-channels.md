@@ -4,6 +4,8 @@ Product map: [chat-channels](../feature-map/chat-channels.md).
 
 Feature ID: `chat-channels`.
 
+Delegated native entries inherit the [native admission and work-mode limits](README.md#native-rest-transport).
+
 Review date: 2026-10-26. Source base: `a1f77821b9cd5c9c846fdf7a0fa5cc620ad2b6bb`; implementation: [#17737](https://github.com/paperclipai/paperclip/pull/17737).
 
 Connection operations reviewed in this working tree. The inventory was reconciled
@@ -175,7 +177,7 @@ Gaps: This individual operation has source review but no recorded HTTP verificat
 ### `post-chat-endpoints-github-registration`
 
 API: `present` — `POST /api/chat-endpoints/{endpointId}/github/registration`; JSON REST.
-Agent access: `available` — agent REST and default native `search_api` / `call_api`.
+Agent access: `available` — agent REST and admitted native `search_api` / `call_api` return the saved `requiredUserAction` for human App registration and consent.
 Policy: `tools:manage_connections`; [shared management policy](../../doc/plans/2026-10-13-connection-api-parity.md#authorization-contract). Resolved resources and every affected target are checked; personal ownership remains the responsible user.
 Evidence: `verified` — [route](../../server/src/routes/chat-channels.ts); reviewed in the working tree based on the source commit above. [Authenticated fixtures](../../server/src/__tests__/connection-management.integration.test.ts) passed with database persistence and actual bearer/session middleware.
 Verification: `passed` — deterministic provider fixtures / local assembled server; no live provider qualification.
@@ -202,7 +204,7 @@ Gaps: This individual operation has source review but no recorded HTTP verificat
 ### `post-chat-endpoints-github-setup`
 
 API: `present` — `POST /api/chat-endpoints/{endpointId}/github/setup`; JSON REST.
-Agent access: `available` — agent REST and default native `search_api` / `call_api`.
+Agent access: `available` — agent REST and admitted native `search_api` / `call_api` advance saved setup. Install and identity steps return `requiredUserAction` for the addressed human. Registration returns `state: "create"` without that handoff; use [the registration operation](#post-chat-endpoints-github-registration) to obtain the saved human setup link.
 Policy: `tools:manage_connections`; [shared management policy](../../doc/plans/2026-10-13-connection-api-parity.md#authorization-contract). Resolved resources and every affected target are checked; personal ownership remains the responsible user.
 Evidence: `source-only` — [route](../../server/src/routes/chat-channels.ts); reviewed in the working tree based on the source commit above.
 Verification: `not-run` — individual operation not executed in this audit; shared authorization and representative family flows are exercised by the authenticated integration suite. Follow the route schema, inspect persistence/audit, and assert owner, scope and revoked-authority denial.
@@ -510,9 +512,9 @@ Gaps: Fixture evidence does not qualify live provider behavior or an empirical m
 
 API: `present` — `GET /api/chat-endpoints/{endpointId}/conversations`; JSON REST.
 Agent access: `available` — agent REST and default native `search_api` / `call_api`.
-Policy: `tools:manage_connections`; [shared management policy](../../doc/plans/2026-10-13-connection-api-parity.md#authorization-contract). Resolved resources and every affected target are checked; personal ownership remains the responsible user.
+Policy: `tools:manage_connections`; [shared management policy](../../doc/plans/2026-10-13-connection-api-parity.md#authorization-contract). Resolved resources and every affected target are checked; personal ownership remains the responsible user. Every conversation row is filtered by current access to its linked task, in addition to endpoint access.
 Evidence: `source-only` — [route](../../server/src/routes/chat-channels.ts); reviewed in the working tree based on the source commit above.
-Verification: `not-run` — individual operation not executed in this audit; shared authorization and representative family flows are exercised by the authenticated integration suite. Follow the route schema, inspect persistence/audit, and assert owner, scope and revoked-authority denial.
+Verification: `not-run` — list conversations with an actual agent that can manage the endpoint but cannot read one linked private task; omit that conversation while retaining readable rows. Revoke endpoint authority and assert denial.
 Gaps: This individual operation has source review but no recorded HTTP verification. Provider availability and live setup remain unqualified.
 
 ### `post-chat-endpoints-conversations-publications`
@@ -845,9 +847,9 @@ Gaps: This individual operation has source review but no recorded HTTP verificat
 
 API: `present` — `GET /api/chat-endpoints/{endpointId}/test-status`; JSON REST.
 Agent access: `available` — agent REST and default native `search_api` / `call_api`.
-Policy: `tools:manage_connections`; [shared management policy](../../doc/plans/2026-10-13-connection-api-parity.md#authorization-contract). Resolved resources and every affected target are checked; personal ownership remains the responsible user.
+Policy: `tools:manage_connections`; [shared management policy](../../doc/plans/2026-10-13-connection-api-parity.md#authorization-contract). Endpoint access remains required. The responsible human's linked external principals bound the result: only the earliest qualifying received timestamp since test start is returned, or null, with no message body. See [setup probes](../../server/src/services/chat-channels/setup-probes.ts).
 Evidence: `source-only` — [route](../../server/src/routes/chat-channels.ts); reviewed in the working tree based on the source commit above.
-Verification: `not-run` — individual operation not executed in this audit; shared authorization and representative family flows are exercised by the authenticated integration suite. Follow the route schema, inspect persistence/audit, and assert owner, scope and revoked-authority denial.
+Verification: `not-run` — check a permitted agent's responsible-human link, another user's received message, and no linked principal. Only the matching human's qualifying timestamp may appear; the other cases return null without content. Revoke endpoint access and assert denial.
 Gaps: This individual operation has source review but no recorded HTTP verification. Provider availability and live setup remain unqualified.
 
 ### `get-chat-endpoints-activity`

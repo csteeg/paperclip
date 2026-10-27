@@ -1402,6 +1402,15 @@ replay: the provider stop receipt, saved-file receipt, current execution authori
 and effect fences still control successor admission. Repeated clicks retain the
 same recovery generation and request.
 
+An authenticated new message also registers that missing obligation before it
+waits for cleanup. Orphan cleanup reconstructs it for a failed native run that
+still owns an exact prepared remote workspace, including historical saved input.
+Both paths wake the existing preservation worker at commit instead of waiting
+indefinitely for an export that has no owner. A live executor or finalizer, accepted result, or mismatched source
+remains protected. Cleanup never interprets this registration as a stop receipt
+or permission to replay provider work. Repeated cleanup visits register the source
+once; settled sources add no continuing discovery or new maintenance timer.
+
 Every continuation carries the triggering request, ordered user direction, interaction outcomes, completed work, and explicit history coverage. A delivered message remains part of the task's request after its connection or approval resolves. The original title is background; a completed Notion read does not satisfy a later Gmail request. Author and source-trust boundaries survive rendering into both native and legacy prompts. Missing required history must be fetched before dispatch rather than described as complete.
 
 ### Remote runner process evidence

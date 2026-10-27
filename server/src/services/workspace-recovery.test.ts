@@ -137,7 +137,7 @@ describe("automatic retained workspace recovery", () => {
   const action = async (id: string) => (await db.select().from(issueRecoveryActions).where(eq(issueRecoveryActions.id, id)))[0]!;
   const run = async (id: string) => (await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, id)))[0]!;
 
-  it("repairs an unregistered historical deadline failure through HTTP Retry without admitting work before verified stop", async () => {
+  it.each(["HTTP Retry", "new comment", "automatic cleanup"] as const)("repairs an unregistered historical deadline failure through %s without admitting work before verified stop", async entry => {
     const f = await seed("native", true, "keep_running");
     const source = await run(f.runId);
     await db.update(heartbeatRuns).set({ resultJson: null, errorCode: "execution_finalization_deadline_exceeded" })
@@ -155,7 +155,7 @@ describe("automatic retained workspace recovery", () => {
       await stopped;
       return { providerLeaseId: f.providerLeaseId, state: "stopped" };
     });
-    const errors = vi.fn(), heartbeat = heartbeatService(db);
+    const errors = vi.fn(), heartbeat = heartbeatService(db, { environmentRuntime: f.environmentRuntime });
     const coordinator = createDeliveryWorkCoordinator({ owner: db, canRun: () => true, canReconcile: () => true, onError: errors });
     const worker = registerWorkspaceRecoveryWork(db, coordinator, f.environmentRuntime, heartbeat.resumeRemoteStopComments);
     const successors = () => db.select().from(heartbeatRuns).where(and(eq(heartbeatRuns.companyId, f.companyId), eq(heartbeatRuns.status, "queued")));
@@ -166,11 +166,39 @@ describe("automatic retained workspace recovery", () => {
       app.use((req, _res, next) => { req.actor = { type: "board", source: "local_implicit", userId: "board" }; next(); });
       app.use("/api", issueRoutes(db, {} as Parameters<typeof issueRoutes>[1]));
       app.use(errorHandler);
-      const body = { idempotencyKey: randomUUID(), observedRunId: f.runId };
-      const retry = await request(app).post(`/api/issues/${f.issueId}/retry`).send(body).expect(202);
-      expect((await request(app).post(`/api/issues/${f.issueId}/retry`).send(body).expect(202)).body.requestId).toBe(retry.body.requestId);
+      let requestId: string | undefined;
+      let commentId: string | undefined;
+      if (entry === "HTTP Retry") {
+        const body = { idempotencyKey: randomUUID(), observedRunId: f.runId };
+        const retry = await request(app).post(`/api/issues/${f.issueId}/retry`).send(body).expect(202);
+        requestId = retry.body.requestId;
+        expect((await request(app).post(`/api/issues/${f.issueId}/retry`).send(body).expect(202)).body.requestId).toBe(requestId);
+      } else if (entry === "new comment") {
+        const response = await request(app).post(`/api/issues/${f.issueId}/comments`)
+          .send({ body: "Is this fixed?" }).expect(201);
+        commentId = response.body.id;
+        expect(await successors()).toHaveLength(0);
+      } else {
+        const [comment] = await db.insert(issueComments).values({ companyId: f.companyId, issueId: f.issueId,
+          authorType: "user", authorUserId: "board", body: "Is this fixed?" }).returning();
+        commentId = comment.id;
+        const wake = { source: "automation" as const, triggerDetail: "system" as const,
+          reason: "issue_reopened_via_comment", requestedByActorType: "user" as const, requestedByActorId: "board",
+          payload: { issueId: f.issueId, commentId: comment.id, mutation: "comment" },
+          contextSnapshot: { source: "issue.comment.reopen", issueId: f.issueId, wakeCommentId: comment.id },
+        };
+        await db.insert(agentWakeupRequests).values({ companyId: f.companyId, agentId: source.agentId,
+          source: wake.source, triggerDetail: wake.triggerDetail, reason: wake.reason,
+          requestedByActorType: "user", requestedByActorId: "board", status: "deferred_issue_execution",
+          payload: { ...wake.payload, _paperclipWakeContext: { ...wake.contextSnapshot, wakeReason: wake.reason,
+            wakeSource: wake.source, wakeTriggerDetail: wake.triggerDetail, wakeCommentIds: [comment.id] } },
+        });
+        expect(await successors()).toHaveLength(0);
+        if (entry === "automatic cleanup") await heartbeat.sweepOrphanedActiveLeases({ backoffMs: 0 });
+      }
       await expect.poll(() => f.runtime.retryPendingSandboxTeardown.mock.calls.length, { timeout: 20_000 }).toBe(1);
-      await heartbeat.resumeTaskRetry(f.companyId, retry.body.requestId);
+      if (requestId) await heartbeat.resumeTaskRetry(f.companyId, requestId);
+      else await heartbeat.resumeQueuedRuns();
       expect(await successors()).toHaveLength(0);
       expect(await hasVerifiedWorkspaceRepair(db, await run(f.runId))).toBe(false);
       expect((await db.select().from(environmentLeases).where(eq(environmentLeases.id, f.lease.id)))[0].metadata)
@@ -179,11 +207,14 @@ describe("automatic retained workspace recovery", () => {
       releaseStop();
       await expect.poll(async () => (await successors()).length, { timeout: 20_000 }).toBe(1);
       const [successor] = await successors();
+      if (commentId) expect(successor.contextSnapshot?.wakeCommentIds).toContain(commentId);
       expect(await hasVerifiedWorkspaceRepair(db, await run(f.runId))).toBe(true);
       expect(await readFile(path.join(f.host, "saved.txt"), "utf8")).toBe("finished work\n");
       expect(await readFile(path.join(f.host, "newer.txt"), "utf8")).toBe("newer local work\n");
-      expect(await readFreshWorkspaceReadiness(db, successor)).toMatchObject({ mode: "resume_preserved_workspace" });
-      await Promise.all([heartbeat.resumeTaskRetry(f.companyId, retry.body.requestId), heartbeat.resumeRemoteStopComments(await run(f.runId))]);
+      if (requestId) expect(await readFreshWorkspaceReadiness(db, successor)).toMatchObject({ mode: "resume_preserved_workspace" });
+      else expect(successor.contextSnapshot?.previousRunId).toBe(f.runId);
+      await Promise.all([requestId ? heartbeat.resumeTaskRetry(f.companyId, requestId) : heartbeat.resumeQueuedRuns(),
+        heartbeat.resumeRemoteStopComments(await run(f.runId))]);
       expect(await successors()).toHaveLength(1);
       expect(f.runtime.resumeRunLease).toHaveBeenCalledOnce();
       expect((await run(f.runId)).status).toBe("failed");
