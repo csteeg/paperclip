@@ -868,8 +868,13 @@ a stale lockfile fails closed. A same-run
 GitHub artifact distributes it; workers verify its separate receipt digest and
 workflow revision. Manifest and policy bytes use private S3 instead. Workers
 check the manifest's separate preparer digest before model credentials are used.
-Model children receive proxy/relay credentials, never the provider, Braintrust
-or AWS archive credentials.
+Controlled aggregation and Python reporting both use the archive module from
+that verified runtime through `PAPERCLIP_RUNNER_EVAL_ARCHIVE_CLI`. They need no
+source checkout dependencies or `tsx`. Model children receive proxy/relay
+credentials, never the provider, Braintrust or AWS archive credentials.
+The catalog and preparer require `codex_app_server` for native Codex and
+`acpx_runtime` for ACPX Claude before model work. Admission errors report
+known safe reasons; malformed inputs and private paths are not echoed.
 
 Private retention reuses the existing `runner-e2e-private-paid` and
 `runner-e2e-private-history` environments and `RUNNER_E2E_PRIVATE_HISTORY_*`

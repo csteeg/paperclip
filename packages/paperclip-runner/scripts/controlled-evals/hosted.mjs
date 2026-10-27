@@ -51,6 +51,7 @@ export function prepareHostedManifest({ catalog, catalogSha256, prepared, policy
     if (!expected || seen.has(cell.cellId) || !allocation || cell.runId !== `gha-${runId}-1-${cell.cellId}`
         || request.schema !== 'paperclip-runner/eval-session-request/v1'
         || !(request.provider === 'codex' && !request.acpxAgent || request.provider === 'acpx' && request.acpxAgent === 'claude')
+        || request.driver !== (request.provider === 'codex' ? 'codex_app_server' : 'acpx_runtime') || request.driver !== expected.driver
         || request.provider !== expected.provider || (request.acpxAgent ?? null) !== (expected.acpxAgent ?? null) || request.model !== expected.model
         || request.runnerd?.path !== join(paths.runner, 'paperclip-runnerd') || request.runnerd.sha256?.replace(/^sha256:/, '') !== artifacts.runnerd.sha256
         || prepared.runnerd?.path !== request.runnerd.path || prepared.runnerd.sha256 !== request.runnerd.sha256) throw new Error('Unsupported or mismatched controlled cell');
@@ -79,6 +80,26 @@ export async function verifyHostedCell({ manifestPath, manifestSha256, cellId, e
   return { manifest, attempt };
 }
 
+const safeAdmissionReasons = new Set([
+  'Invalid hosted run ID', 'Invalid controller fields', 'A bounded hosted policy with tracing is required',
+  'Invalid reviewed cost bound evidence', 'Reviewed cost bound configuration changed',
+  'Prepared selection does not match the authorized catalog', 'Every selected cell must occur exactly once',
+  'Duplicate hosted allocation policy', 'Unsupported or mismatched controlled cell',
+  'Invalid controller campaign identity or validity window', 'Controller requires current full-lifecycle operating bounds',
+  'Invalid controlled campaign selection', 'Invalid controller executable provenance', 'Invalid hosted controller identity',
+  'Invalid controller model pricing', 'Invalid controlled attempt allocation', 'Controlled allocations exceed the campaign budget',
+  'Incomplete operating overhead allowance', 'Operating overhead leaves no model allowance',
+  'Invalid operating overhead component', 'Invalid operating overhead fields', 'Invalid controller observability allocation',
+  'Observability capacity requires its operating bound evidence', 'Hosted manifest bytes changed',
+  'Cell is outside the controlled selection', 'Hosted controller admission does not match the current first-attempt worker',
+]);
+export function hostedAdmissionDiagnostic(error) {
+  if (error instanceof Error && safeAdmissionReasons.has(error.message)) return error.message;
+  if (error?.code === 'ENOENT') return 'A required hosted input file is missing';
+  if (error instanceof SyntaxError) return 'A hosted input is not valid JSON';
+  return 'Invalid or unreadable hosted input; check the catalog, policy and runtime bindings';
+}
+
 if (await isEntrypoint(import.meta.url)) {
   try {
     const [command, ...args] = process.argv.slice(2);
@@ -99,7 +120,7 @@ if (await isEntrypoint(import.meta.url)) {
     } else if (command === 'verify' && args.length === 3) {
       await verifyHostedCell({ manifestPath: args[0], manifestSha256: args[1], cellId: args[2], environment: process.env });
     } else throw new Error('Usage: hosted.mjs <prepare catalog prepared policy runner output | verify manifest digest cell>');
-  } catch {
-    console.error('Hosted campaign admission failed; no provider work was started by this command.'); process.exitCode = 2;
+  } catch (error) {
+    console.error(`Hosted campaign admission failed: ${hostedAdmissionDiagnostic(error)}. No provider work was started by this command.`); process.exitCode = 2;
   }
 }

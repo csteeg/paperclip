@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { test } from 'node:test';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, mkdir, open, readFile, readdir, rm, stat, symlink, truncate, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, mkdir, open, readFile, readdir, rm, stat, symlink, truncate, writeFile } from 'node:fs/promises';
 import { writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -410,13 +410,30 @@ test('campaign collection retains and audits private archives, while public proj
   await rm(f.manifest.outputDirectory, { recursive: true });
   const input = { catalogPath, downloadsRoot: join(f.root, 'downloads'), evalsRoot: f.root,
     runsOut: join(f.root, 'collected'), campaignOut: join(f.root, 'campaign.json'),
-    source: { paperclip: { sha: f.manifest.sourceRevision }, evals: { sha: f.manifest.definitionsRevision } } };
+    source: { paperclip: { sha: f.manifest.sourceRevision }, evals: { sha: f.manifest.definitionsRevision } },
+    controllerArchiveCli: process.env.PAPERCLIP_CONTROLLER_TEST_RUNTIME ? join(process.env.PAPERCLIP_CONTROLLER_TEST_RUNTIME, 'archive.mjs') : undefined };
   const result = await aggregateProtocolEvalCampaign(input);
   assert.equal(result.controlledCosts.knownUsd, '0.000068000');
   assert.equal(result.controlledCosts.costStatus, 'incomplete');
   assert.equal(result.controlledCosts.committedUsd, '0.014068000');
   assert.equal(result.controlledCosts.incompleteAttempts, 1);
   assert.deepEqual(JSON.parse(await readFile(join(input.runsOut, 'attempt-0', 'controller-evidence.json'), 'utf8')), bundle);
+  const isolated = join(f.root, 'isolated-reporter'); await mkdir(join(isolated, 'controlled-evals'), { recursive: true });
+  for (const file of ['runner-protocol-eval-campaign.mjs', 'runner-protocol-eval-metrics.mjs', 'public-eval-chat.mjs']) {
+    await cp(new URL('../' + file, import.meta.url), join(isolated, file));
+  }
+  await writeFile(join(isolated, 'controlled-evals/archive.mjs'), "throw new Error('Source dependencies must not be loaded by the reporter');");
+  const isolatedInput = join(f.root, 'isolated-input.json');
+  await writeFile(isolatedInput, JSON.stringify({ ...input, controllerArchiveCli: undefined, runsOut: join(f.root, 'isolated-collected'), campaignOut: join(f.root, 'isolated-campaign.json') }));
+  const isolatedResult = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', `
+    import {readFile} from 'node:fs/promises';
+    const {aggregateProtocolEvalCampaign}=await import(${JSON.stringify(pathToFileURL(join(isolated, 'runner-protocol-eval-campaign.mjs')).href)});
+    const result=await aggregateProtocolEvalCampaign(JSON.parse(await readFile(${JSON.stringify(isolatedInput)},'utf8')));
+    console.log(JSON.stringify(result.controlledCosts));
+  `], { cwd: isolated, env: { PATH: process.env.PATH,
+    PAPERCLIP_RUNNER_EVAL_ARCHIVE_CLI: input.controllerArchiveCli ?? fileURLToPath(new URL('./archive.mjs', import.meta.url)) }, timeout: 20000 });
+  assert.equal(JSON.parse(isolatedResult.stdout).knownUsd, result.controlledCosts.knownUsd);
+  assert.equal(JSON.parse(isolatedResult.stdout).heldUsd, result.controlledCosts.heldUsd);
   const publicRoot = join(f.root, 'public');
   await sanitizeProtocolEvalRuns({ runsRoot: input.runsOut, publicRunsRoot: publicRoot });
   assert.deepEqual((await readdir(join(publicRoot, 'attempt-0'))).sort(), ['artifact.json', 'case.json', 'config.json', 'score.json']);

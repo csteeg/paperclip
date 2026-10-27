@@ -84,15 +84,15 @@ test('copied controller runs without source dependencies, retains native evidenc
     console.log('stdin imports are side-effect free');
   `);
   assert.match((await stdin).stdout, /stdin imports are side-effect free/);
-  const cases = 'real child requests|disjoint concurrent|controller owns native|cancellation during root export|native post-child otlp-native.jsonl rejects fifo|credential redaction replaces|missing provider artifacts|hosted workers reject reruns|hosted context requires a manifest|failed final OTLP receipt';
+  const cases = 'real child requests|disjoint concurrent|controller owns native|cancellation during root export|campaign collection retains and audits private archives|native post-child otlp-native.jsonl rejects fifo|credential redaction replaces|missing provider artifacts|hosted workers reject reruns|hosted context requires a manifest|failed final OTLP receipt';
   const behavioral = await exec(process.execPath, ['--test', '--test-reporter=tap', '--test-name-pattern', cases, join(source, 'controller.test.mjs')], {
     cwd: root, env: { ...environment, PAPERCLIP_CONTROLLER_TEST_RUNTIME: join(directory, 'controlled-evals') }, timeout: 80_000, maxBuffer: 1_048_576,
   });
-  assert.match(behavioral.stdout, /# pass 11\b/);
+  assert.match(behavioral.stdout, /# pass 12\b/);
   const hosted = await exec(process.execPath, ['--test', '--test-reporter=tap', join(source, 'hosted.test.mjs')], {
     cwd: root, env: { ...environment, PAPERCLIP_CONTROLLER_TEST_RUNTIME: join(directory, 'controlled-evals') }, timeout: 30000, maxBuffer: 1_048_576,
   });
-  assert.match(hosted.stdout, /# pass 3\b/);
+  assert.match(hosted.stdout, /# pass 4\b/);
 
 
   const cli = await exec(process.execPath, [join(directory, 'controlled-evals/archive.mjs'), 'report-attempts', join(root, 'empty-attempts')], {

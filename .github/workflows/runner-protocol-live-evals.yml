@@ -318,7 +318,7 @@ jobs:
             --max-parallel "$MAX_PARALLEL" \
             --output runner-protocol-eval-catalog.json
           if [ "$ACCOUNTING_MODE" = controlled ]; then
-            jq -e 'all(.cells[]; (.provider == "codex" and (.acpxAgent // "") == "") or (.provider == "acpx" and .acpxAgent == "claude"))' runner-protocol-eval-catalog.json >/dev/null || {
+            jq -e 'all(.cells[]; (.provider == "codex" and (.acpxAgent // "") == "" and .driver == "codex_app_server") or (.provider == "acpx" and .acpxAgent == "claude" and .driver == "acpx_runtime"))' runner-protocol-eval-catalog.json >/dev/null || {
               echo 'Controlled selection supports native Codex and ACPX Claude only; select their rosters explicitly.' >&2; exit 1;
             }
             maximum="$(jq -er '.maxCells | select(type == "number" and floor == . and . > 0 and . <= 512)' <<< "$CONTROLLER_POLICY_JSON")"

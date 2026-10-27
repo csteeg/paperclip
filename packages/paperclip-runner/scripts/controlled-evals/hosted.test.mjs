@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { fixture, success } from './controller-fixture.mjs';
 import { canonical, sha256 } from './manifest.mjs';
 const runtime = process.env.PAPERCLIP_CONTROLLER_TEST_RUNTIME ? pathToFileURL(resolve(process.env.PAPERCLIP_CONTROLLER_TEST_RUNTIME) + '/') : import.meta.url;
-const { hostedPaths, hostedPolicyConfiguration, prepareHostedManifest, verifyHostedCell } = await import(new URL('./hosted.mjs', runtime));
+const { hostedPaths, hostedPolicyConfiguration, prepareHostedManifest, verifyHostedCell, hostedAdmissionDiagnostic } = await import(new URL('./hosted.mjs', runtime));
 const { packControlledAttempt, summarizeControlledManifest } = await import(new URL('./archive.mjs', runtime));
 
 async function campaign(t) {
@@ -19,21 +21,22 @@ async function campaign(t) {
     artifacts[name] = { ...f.manifest[name], path: join(paths.runner, relative) };
     await cp(f.manifest[name].path, artifacts[name].path);
   }
-  const cells = f.requests.map(({ request }, index) => ({ cellId: `execution-${index}`, provider: request.provider, model: request.model }));
+  const cells = f.requests.map(({ request }, index) => ({ cellId: `execution-${index}`, provider: request.provider, driver: 'codex_app_server', model: request.model }));
   const catalog = { schema: 'paperclip.runner-protocol-eval.catalog/v1', campaignId: `gha-${runId}-1`,
     source: { paperclipSha: f.manifest.sourceRevision, evalsSha: f.manifest.definitionsRevision },
     cells, matrices: cells.map(cell => ({ include: [cell] })) };
   const catalogSha256 = sha256(canonical(catalog));
-  for (const item of f.requests) { item.request.runnerd = { ...artifacts.runnerd, sha256: `sha256:${artifacts.runnerd.sha256}` }; item.request.acpxAgent = null; await writeFile(item.requestPath, JSON.stringify(item.request)); }
+  for (const item of f.requests) { item.request.runnerd = { ...artifacts.runnerd, sha256: `sha256:${artifacts.runnerd.sha256}` }; item.request.acpxAgent = null; item.request.driver = 'codex_app_server'; await writeFile(item.requestPath, JSON.stringify(item.request)); }
   const prepared = { schema: 'paperclip.runner-eval.prepared-requests/v1', campaignId: catalog.campaignId, githubRunId: runId, githubRunAttempt: 1,
     sourceRevision: f.manifest.sourceRevision, definitionsRevision: f.manifest.definitionsRevision, catalogSha256, runnerd: f.requests[0].request.runnerd,
     cells: cells.map((cell, index) => ({ cellId: cell.cellId, runId: `${catalog.campaignId}-${cell.cellId}`, request: f.requests[index].request })) };
+  for (const component of f.manifest.overhead.components) component.provisionalBound.evidenceSha256 = sha256(component.component);
   const { provisionalBound, ...observability } = f.manifest.observability;
   const { executionId, attemptId, requestSha256, ...allocation } = f.manifest.attempts[0];
   const policy = { schema: 'paperclip.runner-eval.hosted-policy/v1', maxUsd: f.manifest.maxUsd, maxCells: 2, durationMs: 60000,
     pricingVerifiedAt: f.manifest.pricingVerifiedAt, pricingExpiresAt: f.manifest.pricingExpiresAt,
     route: 'direct', models: f.manifest.models, overhead: f.manifest.overhead, observability, allocations: [allocation] };
-  policy.capacityBound = { version: 1, scope: 'full_lifecycle', evidenceSha256: 'a'.repeat(64), configurationSha256: sha256(canonical(hostedPolicyConfiguration(policy))) };
+  policy.capacityBound = { version: 1, scope: 'full_lifecycle', evidenceSha256: f.manifest.overhead.components.find(component => component.component === 'observability').provisionalBound.evidenceSha256, configurationSha256: sha256(canonical(hostedPolicyConfiguration(policy))) };
   const environment = { ...f.environment, GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: 'paperclipai/paperclip', GITHUB_RUN_ID: runId,
     GITHUB_RUN_ATTEMPT: '1', GITHUB_SHA: f.manifest.sourceRevision, PAPERCLIP_PROTOCOL_EVAL_SOURCE_SHA: prepared.sourceRevision, PAPERCLIP_PROTOCOL_EVALS_SHA: prepared.definitionsRevision };
   const input = { catalog, catalogSha256, prepared, policy, artifacts, environment };
@@ -70,6 +73,8 @@ test('hosted preparation rejects selection drift, unsupported cells and unreview
     input => { input.catalog.matrices[1].include = input.catalog.matrices[0].include; },
     input => { input.prepared.cells[1] = input.prepared.cells[0]; },
     input => { input.prepared.cells[0].request.provider = 'opencode'; },
+    input => { input.prepared.cells[0].request.driver = 'unsupported'; },
+    input => { input.catalog.cells[0].driver = 'unsupported'; input.catalog.matrices[0].include[0].driver = 'unsupported'; },
     input => { input.prepared.cells[0].request.runnerd.sha256 = 'sha256:' + '0'.repeat(64); },
     input => { input.policy.maxUsd = '0.01'; },
     input => { input.environment.GITHUB_RUN_ATTEMPT = '2'; },
@@ -81,6 +86,9 @@ test('hosted preparation rejects selection drift, unsupported cells and unreview
     const input = structuredClone(c.input); change(input);
     assert.throws(() => prepareHostedManifest(input));
   }
+  const mixed = structuredClone(c.input);
+  mixed.policy.capacityBound.evidenceSha256 = mixed.policy.overhead.components.find(component => component.component !== 'observability').provisionalBound.evidenceSha256;
+  assert.throws(() => prepareHostedManifest(mixed), /Observability capacity requires its operating bound evidence/);
   const input = structuredClone(c.input); input.policy.maxUsd = '0.01';
   input.policy.capacityBound.configurationSha256 = sha256(canonical(hostedPolicyConfiguration(input.policy)));
   assert.throws(() => prepareHostedManifest(input), /budget/);
@@ -96,4 +104,16 @@ test('worker preflight verifies identical manifest bytes and current cell/run be
   await assert.rejects(verifyHostedCell({ ...input, environment: { ...input.environment, GITHUB_RUN_ATTEMPT: '2' } }), /first-attempt/);
   await writeFile(c.paths.manifest, canonical(manifest) + '\n');
   await assert.rejects(verifyHostedCell(input), /bytes changed/);
+});
+
+test('hosted CLI reports safe admission reasons without echoing private paths or malformed input', async () => {
+  assert.equal(hostedAdmissionDiagnostic(new Error('Reviewed cost bound configuration changed')), 'Reviewed cost bound configuration changed');
+  assert.equal(hostedAdmissionDiagnostic(new SyntaxError('SENSITIVE_SENTINEL')), 'A hosted input is not valid JSON');
+  assert.doesNotMatch(hostedAdmissionDiagnostic(new Error('private SENSITIVE_SENTINEL')), /SENSITIVE_SENTINEL/);
+  const result = await promisify(execFile)(process.execPath, [fileURLToPath(new URL('./hosted.mjs', runtime)), 'verify', '/nonexistent/SENSITIVE_SENTINEL', 'a'.repeat(64), 'cell'], {
+    env: { PATH: process.env.PATH, OPENAI_API_KEY: 'SENSITIVE_SENTINEL' }, timeout: 10000,
+  }).then(value => value, error => error);
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /A required hosted input file is missing/);
+  assert.doesNotMatch(result.stderr + result.stdout, /SENSITIVE_SENTINEL/);
 });
