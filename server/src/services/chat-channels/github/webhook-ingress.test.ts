@@ -88,13 +88,27 @@ describe.skipIf(!support.supported)("GitHub webhook ingress claim PostgreSQL beh
     expect(await f.readAction(action.id)).toMatchObject({ status: "processed", result: { attempts: 3, httpStatus: 202 } });
   });
 
-  it("lets only one concurrent worker claim and replay the delivery", async () => {
+  it.each(["received", "failed", "processing"])("lets only one concurrent worker claim and replay a %s delivery", async status => {
     const f = await githubIngressFixture(db);
-    const action = await f.insertAction();
+    const previousAttempts = status === "received" ? 0 : 2;
+    const action = await f.insertAction({ status,
+      result: { attempts: previousAttempts, retryable: true, retryAt: new Date(0).toISOString() },
+      updatedAt: new Date(0),
+    });
+    // All workers must observe the same eligible attempt before any can claim it.
+    let arrived = 0;
+    let release!: () => void;
+    const ready = new Promise<void>(resolve => { release = resolve; });
+    const transaction = db.transaction.bind(db);
+    vi.spyOn(db, "transaction").mockImplementation(async (callback, config) => {
+      if (++arrived === 12) release();
+      await ready;
+      return transaction(callback, config);
+    });
     const responses = await Promise.all(Array.from({ length: 12 }, () => f.service.processGitHubWebhookIngress(action.id)));
     expect(responses.some(response => response?.status === 202)).toBe(true);
     expect(f.calls).toHaveLength(1);
-    expect(await f.readAction(action.id)).toMatchObject({ status: "processed", result: { attempts: 1 } });
+    expect(await f.readAction(action.id)).toMatchObject({ status: "processed", result: { attempts: previousAttempts + 1 } });
   });
 
   it("does not read the body when another worker wins between eligibility and claim", async () => {
