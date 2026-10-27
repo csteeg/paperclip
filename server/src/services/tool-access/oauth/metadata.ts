@@ -309,3 +309,24 @@ export function authServerMetadataUrls(
     return true;
   });
 }
+
+/**
+ * Microsoft Entra ID (Azure AD v2.0) requires resources to match the scope prefix
+ * and rejects requests containing an RFC 8707 `resource` parameter with AADSTS9010010
+ * (error=invalid_target) when scopes are provided.
+ */
+export function isMicrosoftOAuthUrl(url: string | null | undefined): boolean {
+  if (!url) return false;
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return (
+      host === "login.microsoftonline.com" ||
+      host === "login.microsoft.com" ||
+      host === "login.windows.net" ||
+      host.endsWith(".login.microsoftonline.com")
+    );
+  } catch {
+    return false;
+  }
+}
+

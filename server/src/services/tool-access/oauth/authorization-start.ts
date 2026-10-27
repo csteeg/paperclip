@@ -4,7 +4,7 @@ import { createOAuthClientRegistration } from "./client-registration.js";
 import type { ActorInfo } from "../types.js";
 import { createOAuthEndpointPolicy } from "./endpoint-policy.js";
 import { createOAuthDiscovery } from "./discovery.js";
-import { oauthConfig, normalizeOauthScopes, originOf } from "./metadata.js";
+import { oauthConfig, normalizeOauthScopes, originOf, isMicrosoftOAuthUrl } from "./metadata.js";
 import { connectionMethodForConnection } from "../connection-methods.js";
 import { GOOGLE_WORKSPACE_DEFAULT_SELECTION, googleWorkspaceSelectedScopes, type GoogleWorkspaceServiceSelection, isGoogleWorkspaceScopeGrant } from "@paperclipai/shared";
 import { and, eq, lt } from "drizzle-orm";
@@ -451,7 +451,10 @@ export function createOAuthAuthorizationStart(db: Db, dependencies: Dependencies
     authorizationUrl.searchParams.set("code_challenge_method", "S256");
     // RFC 8707: name the MCP server the resulting token is for, so an
     // authorization server that serves several resources can audience-restrict it.
-    if (endpoints.resource)
+    // Microsoft Entra ID v2.0 determines the resource from the scope (e.g. https://.../.default)
+    // and explicitly rejects requests with error=invalid_target (AADSTS9010010) if the resource
+    // parameter does not match the scope prefix.
+    if (endpoints.resource && !isMicrosoftOAuthUrl(endpoints.authorizationUrl))
       authorizationUrl.searchParams.set("resource", endpoints.resource);
     // Curated definitions are an allowlist, not a suggestion. Never copy every
     // scope advertised by discovery into a provider consent screen: a curated
