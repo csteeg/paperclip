@@ -19,8 +19,8 @@ import {
   issueThreadInteractions,
   issues,
 } from "@paperclipai/db";
-import { startEmbeddedPostgresTestDatabase } from "../../__tests__/helpers/embedded-postgres.js";
 import { createDatabaseResponseCapture, installDatabaseResponseCapture } from "@paperclipai/db/response-capture";
+import { startRecoveryPostgres } from "../../__tests__/helpers/recovery-postgres.js";
 import { initializeRunIdentity, reserveSteeredIdentity, reconcileSteeredIdentity } from "../run-identity.js";
 import { documentService } from "../documents.js";
 import { issueService } from "../issues.js";
@@ -28,14 +28,15 @@ import { PaperclipRunnerToolAuthority } from "./paperclip-runner-tool-authority.
 import { PaperclipRunnerSemanticAuthority } from "./runner-semantic-authority.js";
 import { createAssignedMcpTools } from "./assigned-mcp-tools.js";
 import type { ToolGatewayService } from "../tool-gateway.js";
-import { READ_CURRENT_WAKE_COMMENTS_TOOL_NAME } from "./current-wake-comments.js";
+import { CURRENT_WAKE_COMMENTS_BINDING_SCHEMA, READ_CURRENT_WAKE_COMMENTS_TOOL_NAME } from "./current-wake-comments.js";
+import { NativeChatAttachmentReadScope, READ_CHAT_ATTACHMENT_TOOL_NAME } from "./chat-attachment-read.js";
 import { buildLowTrustSourceTrust, buildPromotedSourceTrust, LOW_TRUST_QUARANTINED_BODY } from "../source-trust.js";
 import { CAPABILITY_SEMANTIC_TOOL_CATALOG, runnerCodexDynamicToolsFit } from "../../vendor/paperclip-runner/index.js";
 
 describe("PaperclipRunnerToolAuthority", () => {
   const credentialDocumentBody = "Use a secret manager for credential handling.\nAuthorization: Bearer intentional-document-credential";
   let temporary: Awaited<
-    ReturnType<typeof startEmbeddedPostgresTestDatabase>
+    ReturnType<typeof startRecoveryPostgres>
   > | null = null;
   let db: ReturnType<typeof createDb>;
   const companyId = "00000000-0000-4000-8000-000000000101";
@@ -50,7 +51,7 @@ describe("PaperclipRunnerToolAuthority", () => {
   afterEach(() => vi.unstubAllEnvs());
 
   beforeAll(async () => {
-    temporary = await startEmbeddedPostgresTestDatabase(
+    temporary = await startRecoveryPostgres(
       "paperclip-runner-tools-",
     );
     db = createDb(temporary.connectionString);
@@ -119,12 +120,10 @@ describe("PaperclipRunnerToolAuthority", () => {
       issueId,
       runId,
     });
-    expect(authority.definitions()).toHaveLength(48);
+    expect(authority.definitions()).toHaveLength(50);
     expect(authority.definitions().map(tool => tool.name)).toEqual(expect.arrayContaining([
       "get_workspace", "list_workspaces", "select_workspace", "prepare_repository",
     ]));
-    expect(authority.definitions().map(tool => tool.name)).not.toContain("read_chat_attachment");
-    expect(authority.definitions().map(tool => tool.name)).not.toContain("read_current_wake_comments");
     const questions = authority.definitions().find(tool => tool.name === "request_human_input")!;
     expect(questions.description).toContain("ask only the next unanswered question");
     expect(questions.description).toContain("Never fabricate answers");
@@ -197,6 +196,39 @@ describe("PaperclipRunnerToolAuthority", () => {
         arguments: {},
       }),
     ).rejects.toThrow("paperclip_runner_tool_not_advertised");
+    await expect(
+      authority.execute({
+        tool: READ_CHAT_ATTACHMENT_TOOL_NAME,
+        callId: "attachment-read-without-run-scope",
+        arguments: { sourceCommentId: randomUUID(), attachmentId: randomUUID() },
+      }),
+    ).rejects.toThrow("paperclip_runner_chat_attachment_read_scope_unavailable");
+  });
+
+  it("keeps run-scoped reader declarations stable for resumed provider threads", () => {
+    // Codex thread/resume has no dynamicTools parameter: a resumed thread keeps
+    // the catalog from its original thread/start. A truncated chat wake that
+    // resumes a thread opened on an ordinary turn still needs both readers.
+    const ordinary = new PaperclipRunnerToolAuthority(db, { companyId, agentId, issueId, runId });
+    const chatBinding = { companyId, agentId, issueId, runId };
+    const truncatedChat = new PaperclipRunnerToolAuthority(db, {
+      ...chatBinding,
+      currentWakeComments: {
+        schema: CURRENT_WAKE_COMMENTS_BINDING_SCHEMA,
+        ...chatBinding,
+        provider: "github",
+        commentIds: [randomUUID()],
+        attachmentOmissions: [],
+        bindingDigest: "binding-digest",
+      },
+      chatAttachmentReadScope: new NativeChatAttachmentReadScope({
+        db, binding: chatBinding, workspaceRoot: "/workspace", executionTargetKind: "local",
+      }),
+    });
+    expect(ordinary.definitions().map(tool => tool.name)).toEqual(expect.arrayContaining([
+      READ_CURRENT_WAKE_COMMENTS_TOOL_NAME, READ_CHAT_ATTACHMENT_TOOL_NAME,
+    ]));
+    expect(ordinary.definitions()).toEqual(truncatedChat.definitions());
   });
 
   it("reads current tool authority without transferring saved profiles or output", async () => {

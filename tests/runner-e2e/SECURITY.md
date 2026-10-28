@@ -1,5 +1,12 @@
 # Runner E2E security for a public repository
 
+The explicit [chat feature evals](CHAT-FEATURES.md) use synthetic project briefs
+and a privately supplied Codex subscription login through the existing isolated
+company staging helper. Only source-chat screenshots are captured. Task, document
+and run evidence stays behind the existing sanitizer and publication allowlist;
+the YAML catalog contains no credentials. The suite's accounted-work budgets do
+not cover production setup probes or imply zero subscription cost.
+
 [Cloud Product journey bundles](PRODUCT-JOURNEYS.md) are always private and
 rejected by public history publication. Authentication uses an isolated browser
 context without saved storage state or auth tracing. Only closed error codes
@@ -20,6 +27,16 @@ names, and allowlisted outcome/check/server codes (at most 32 checks per respons
 Unknown codes become `unrecognized`; raw bodies, messages, URLs, headers, and
 browser errors are excluded. Reports validate the receipt before rendering its
 explicit fields, and historical results may omit it.
+
+The optional `onboardingPreAcceptance` receipt captures only a failing first-task
+acceptance guard. Its closed version-1 fields are a known checkpoint, up to four
+distinct guard-violation codes, nonnegative integer task/attachment/document
+counts, a canonical-parent match boolean, and closed first-task/canonical-parent
+statuses (`missing` and `unknown` remain explicit). It excludes all identifiers,
+task text, document keys and bodies, filenames, URLs, credentials, and raw API
+responses. Validation rejects extra or inconsistent fields before report use;
+older results may omit the receipt. It preserves the original failure grade and
+does not attribute a product cause or authorize acceptance.
 
 ## Attended connection authentication
 
@@ -305,6 +322,17 @@ in the retained Actions artifact. Credential redaction does not remove hidden
 reasoning or provider session identities, so a text extension never admits a
 file to the public bundle. Graded results remain in `normalized-results.json`.
 
+The normalized result may also contain the reviewed `taskChat` projection:
+task titles/briefs, complete saved comments, visible question/approval copy and
+recorded answers, agent display names, timestamps, and explicitly classified
+native assistant progress. It is captured only from the disposable fixture
+company and credential-redacted before retention. Only these presentation
+fields are admitted by the closed result validator. Arbitrary interaction
+payloads, tool arguments/results, provider/session identities, reasoning and
+raw event envelopes are excluded. No per-attempt snapshot or log becomes public
+as a consequence. Fixture authors must keep task conversation text public just
+as they do the visible content of marked screenshots.
+
 The packaged evidence uploaded as a 30-day GitHub Actions artifact has a
 different, broader boundary. Text is exact-value and key-shape scanned and
 redacted. PNG and WebM are raw-byte scanned; SVG is rejected during packaging
@@ -421,6 +449,18 @@ inherits an operator subscription login. The raw key is excluded from child
 server environments and public attempt evidence by the existing credential
 boundary; do not print it or store it in tracked configuration. The original
 arithmetic cell remains subscription-only.
+
+Upstream Codex also records its subscription account ID in `logs_N.sqlite`,
+`state_N.sqlite` (thread ownership), and their WAL/SHM companions. The isolated-home persistence scan permits only that
+identity value in those exact managed runtime log paths, inside an owner-only
+temporary root. It still scans the entire file for every token and other secret;
+an identity reused as a credential gets no exception. The private rollout scan
+also recognizes only the exact `session_meta.payload.creator_account_id` ownership
+field; all instruction/message content and all other fields retain the full scan.
+Config, workspaces, unrelated files and all packaged/public evidence retain the
+full redaction set. These private databases and rollouts are never copied into evidence and are
+removed with the disposable instance. Historical attempts rejected by the older
+persistence policy remain failed.
 
 Case screenshots use the exact case ID/identifier returned by that fixture's
 public kickoff, in addition to its ordinary task route. Other cases, setup,
