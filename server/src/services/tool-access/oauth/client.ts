@@ -1,5 +1,5 @@
 import { HttpError, unprocessable } from "../../../errors.js";
-import { asRecord, originOf, isMicrosoftOAuthUrl } from "./metadata.js";
+import { asRecord, originOf, isMicrosoftV2OAuthUrl } from "./metadata.js";
 import { normalizeOAuthProviderError, oauthProviderErrorMessage } from "./provider-errors.js";
 import type { OAuthProviderEndpoints, OAuthTokenEndpointAuthMethod, OAuthTransport } from "./types.js";
 
@@ -344,7 +344,8 @@ export function createOAuthClientProtocol({ fetchRemoteHttpUrl, assertOAuthEndpo
     // authorization server audience-restricts the access token (and any refresh
     // exchange) to this MCP server.
     // Microsoft Entra ID v2.0 rejects token requests if `resource` does not match the scope prefix.
-    if (input.resource && !isMicrosoftOAuthUrl(input.tokenUrl))
+    // Microsoft v1 endpoints still require `resource`.
+    if (input.resource && !isMicrosoftV2OAuthUrl(input.tokenUrl))
       body.set("resource", input.resource);
 
     // The token URL can come from a connection row written before the endpoint

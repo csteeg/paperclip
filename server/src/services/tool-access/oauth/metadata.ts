@@ -314,19 +314,30 @@ export function authServerMetadataUrls(
  * Microsoft Entra ID (Azure AD v2.0) requires resources to match the scope prefix
  * and rejects requests containing an RFC 8707 `resource` parameter with AADSTS9010010
  * (error=invalid_target) when scopes are provided.
+ *
+ * Microsoft v1 endpoints (`/oauth2/authorize`, `/oauth2/token`) use `resource` to select
+ * the target API rather than v2-style scopes, so only v2.0 endpoints omit `resource`.
  */
-export function isMicrosoftOAuthUrl(url: string | null | undefined): boolean {
+export function isMicrosoftV2OAuthUrl(url: string | null | undefined): boolean {
   if (!url) return false;
   try {
-    const host = new URL(url).hostname.toLowerCase();
-    return (
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    const isMicrosoftHost =
       host === "login.microsoftonline.com" ||
       host === "login.microsoft.com" ||
       host === "login.windows.net" ||
-      host.endsWith(".login.microsoftonline.com")
-    );
+      host.endsWith(".login.microsoftonline.com");
+    if (!isMicrosoftHost) return false;
+
+    return /\/v2\.0(\/|$)/i.test(parsed.pathname);
   } catch {
     return false;
   }
 }
+
+/**
+ * Backward compatibility alias for `isMicrosoftV2OAuthUrl`.
+ */
+export const isMicrosoftOAuthUrl = isMicrosoftV2OAuthUrl;
 
