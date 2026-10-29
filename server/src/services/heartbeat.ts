@@ -1,3 +1,4 @@
+import { externalConversationSettlementWork } from "./external-conversation-settlement-work.js";
 import { nativeRecoveryNoticeWork } from "./native-runtime/native-recovery-notice-work.js";
 import { nativeRunProjectionWork } from "./native-runtime/native-run-projection-work.js";
 import { nativeResultCommitWork } from "./native-runtime/native-result-commit-work.js";
@@ -1598,8 +1599,9 @@ export function heartbeatService(
     void reportRunFailure(db, updated, failureReport);
   }
 
-  async function reconcileStrandedAssignedIssues() {
+  async function reconcileStrandedAssignedIssues(opts?: { skipExternalConversationSettlement?: boolean }) {
     return recovery.reconcileStrandedAssignedIssues({
+      skipExternalConversationSettlement: opts?.skipExternalConversationSettlement,
       issueCreatedAtGte: await getWorktreeExecutionCutoff(),
     });
   }
@@ -4097,6 +4099,14 @@ export function heartbeatService(
     triggerIssueMonitor,
 
     reportRunActivity: clearDetachedRunWarning,
+    registerExternalConversationSettlementWork: (
+      coordinator: Parameters<ReturnType<typeof externalConversationSettlementWork>["register"]>[0], canRun: () => boolean,
+    ) => externalConversationSettlementWork(db).register(coordinator,
+      () => canRun() && readTaskDrain(new Date()) === null,
+      async () => {
+        const state = await getSchedulingSuppression(true);
+        return !state.suppressed || state.reason === "task_drain";
+      }),
     registerNativeRecoveryNoticeWork: (
       coordinator: Parameters<ReturnType<typeof nativeRecoveryNoticeWork>["register"]>[0], canRun: () => boolean,
     ) => nativeRecoveryNoticeWork(db).register(coordinator,

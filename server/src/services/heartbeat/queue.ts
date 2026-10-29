@@ -4912,19 +4912,22 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
           (targetIssue.assigneeAgentId !== candidate.agentId && !nativeReview) ||
           (candidate.reason === "native_completion_review" && !nativeReview)
         ) {
-          await db
-            .update(agentWakeupRequests)
-            .set({
-              status: "skipped",
-              finishedAt: new Date(),
-              error: !targetIssue
-                ? "Native status wake target no longer exists"
-                : ["done", "cancelled"].includes(targetIssue.status)
-                  ? `Native status wake target is already ${targetIssue.status}`
-                  : "Native status wake target has a different assignee",
-              updatedAt: new Date(),
-            })
-            .where(eq(agentWakeupRequests.id, candidate.id));
+          await db.transaction(async tx => {
+            await notifyChatInboundWakeNotices(tx, { companyId: candidate.companyId, issueId });
+            await tx
+              .update(agentWakeupRequests)
+              .set({
+                status: "skipped",
+                finishedAt: new Date(),
+                error: !targetIssue
+                  ? "Native status wake target no longer exists"
+                  : ["done", "cancelled"].includes(targetIssue.status)
+                    ? `Native status wake target is already ${targetIssue.status}`
+                    : "Native status wake target has a different assignee",
+                updatedAt: new Date(),
+              })
+              .where(eq(agentWakeupRequests.id, candidate.id));
+          });
           recovered += 1;
           continue;
         }

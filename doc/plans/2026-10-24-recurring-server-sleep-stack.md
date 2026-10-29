@@ -3287,3 +3287,22 @@ records producer coverage, 102 passing worker/startup cases and 340 passing
 affected cases (442 total), plus workspace typechecking. Build and remote
 acceptance remain pending. All other inventory, prior gate failures,
 suppression audits and master propagation remain active obligations.
+
+
+## Slice 56: external conversation settlement
+
+This slice moves eligible answered-conversation settlement to committed wakes and
+the shared deadline worker. See [the owner, producer, handoff and verification
+audit](2026-10-26-external-conversation-settlement-sleep.md). The existing durable
+rows remain truth; no table or migration is added. The monitor owner preserves
+its recovery handoff, including restart receipts and atomic board escalation.
+Periodic native replay delegates only settlement, and generic stranded-task
+recovery preserves ordering with a read-only eligibility guard. That generic
+scan, Muse completion and resource duties remain separate inventory items.
+
+Based on slice 55 / #17758 at `13f37eef91edce7ee424ec5424c66fc0e6154f4e`.
+Master was fetched at `a67a18c171816b097f46eae78fc58c7e55c9c565`; this slice remains
+stacked on its parent. Full-stack master propagation and fresh acceptance remain
+required. No merge or deployed host-sleep claim is made. See the PR for final
+verification and review evidence; a local test pass does not close earlier stack
+gate or suppression debts.

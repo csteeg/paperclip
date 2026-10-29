@@ -391,6 +391,7 @@ type NativeReconciliationOptions = {
   skipNativeWorkspaceFinalization?: boolean;
   skipNativeResultCommit?: boolean;
   skipNativeRunProjection?: boolean;
+  skipExternalConversationSettlement?: boolean;
   skipNativeRecoveryNotices?: boolean;
   pluginWorkerManager?: WorkspaceWorkers;
   environmentRuntime?: EnvironmentRuntimeService;
@@ -689,6 +690,7 @@ async function reconcileNativeFinalizationsPass(
           skipNativeResponsePresentation: options.skipNativeResponsePresentation,
           skipNativeReviewResponse: options.skipNativeReviewResponse,
         skipCommittedRunProjection: options.skipNativeRunProjection,
+        skipExternalConversationSettlement: options.skipExternalConversationSettlement,
         skipNativeRecoveryNotices: options.skipNativeRecoveryNotices,
           preserveProviderAttempt: Boolean(
             readNativeWorkspaceSyncReference(
@@ -752,6 +754,7 @@ async function reconcileNativeFinalizationsPass(
         skipNativeResponsePresentation: options.skipNativeResponsePresentation,
         skipNativeReviewResponse: options.skipNativeReviewResponse,
         skipCommittedRunProjection: options.skipNativeRunProjection,
+        skipExternalConversationSettlement: options.skipExternalConversationSettlement,
         skipNativeRecoveryNotices: options.skipNativeRecoveryNotices,
         preserveProviderAttempt: Boolean(
           readNativeWorkspaceSyncReference(

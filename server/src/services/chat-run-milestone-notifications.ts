@@ -1,4 +1,4 @@
-import { notifyNativeReviewState } from "./native-review-state-notifications.js";
+import { notifyIssueReviewState } from "./issue-review-state-notifications.js";
 import { notifyNativeResponsePresentation } from "./native-response-presentation-notifications.js";
 import { notifyChatResponseAvailability } from "./chat-response-availability.js";
 import { notifyChatConfirmationWork } from "./chat-confirmation-notifications.js";
@@ -12,7 +12,7 @@ export type ChatRunMilestoneScope = { companyId: string; issueId?: string; runId
 
 export async function notifyChatRunMilestones(tx: object, scope: ChatRunMilestoneScope) {
   if (scope.issueId || scope.runId) {
-    await notifyNativeReviewState(tx, { companyId: scope.companyId, issueId: scope.issueId,
+    await notifyIssueReviewState(tx, { companyId: scope.companyId, issueId: scope.issueId,
       runId: scope.issueId ? undefined : scope.runId });
     await notifyNativeResponsePresentation(tx, { companyId: scope.companyId, issueId: scope.issueId,
       runId: scope.issueId ? undefined : scope.runId });
@@ -24,14 +24,14 @@ export async function notifyChatRunMilestones(tx: object, scope: ChatRunMileston
   // this eligibility boundary once rather than adding wrappers to its callers.
   await notifyChatNativeProgress(tx, scope);
   // Admission and current chat authority also govern saved queue notices.
-  await notifyChatInboundWakeNotices(tx, scope);
+  await notifyChatInboundWakeNotices(tx, scope, { notifySettlement: false });
   await notifyChatConfirmationWork(tx, scope);
   // Native presentation and run ownership can unblock a parked acknowledgement.
-  await notifyChatResponseAvailability(tx, scope);
+  await notifyChatResponseAvailability(tx, scope, { notifySettlement: false });
 }
 
 export async function notifyChatCompanyAuthorityChange(tx: object, scope: { companyId: string }) {
   await notifyChatRunMilestones(tx, scope);
   await notifyNativeResponsePresentation(tx, scope);
-  await notifyNativeReviewState(tx, scope);
+  await notifyIssueReviewState(tx, scope);
 }

@@ -1,3 +1,4 @@
+import { notifyExternalConversationSettlement } from "./external-conversation-settlement-notifications.js";
 import { notifyNativeRecoveryNotices } from "./native-recovery-notice-notifications.js";
 import { notifyNativeRunProjection } from "./native-run-projection-notifications.js";
 import { notifyNativeResultCommit } from "./native-result-commit-notifications.js";
@@ -630,6 +631,7 @@ export function instanceSettingsService(db: Db, options: InstanceSettingsService
           await notifyDirectoryCleanup(tx);
           await notifyInstructionCollection(tx);
           await notifyCancelledWorkspacePreservation(tx);
+          await notifyExternalConversationSettlement(tx);
           await notifyNativeRecoveryNotices(tx);
           await notifyNativeRunProjection(tx);
           await notifyNativeResultCommit(tx);

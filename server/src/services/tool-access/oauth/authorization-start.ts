@@ -1,4 +1,4 @@
-import { notifyNativeReviewState } from "../../native-review-state-notifications.js";
+import { notifyIssueReviewState } from "../../issue-review-state-notifications.js";
 import { vercelConnectHttpError, vercelCredentialFor, vercelConnectResourcesFor } from "../vercel-credentials.js";
 import { credentialScope, managedConnectorProfile } from "./client-settings.js";
 import { createOAuthClientRegistration } from "./client-registration.js";
@@ -566,7 +566,7 @@ export function createOAuthAuthorizationStart(db: Db, dependencies: Dependencies
       };
       const issueId = input.issueId;
       await db.transaction(async tx => {
-        await notifyNativeReviewState(tx, { companyId, issueId });
+        await notifyIssueReviewState(tx, { companyId, issueId });
         const [existingInteraction] = await tx
           .select()
           .from(issueThreadInteractions)

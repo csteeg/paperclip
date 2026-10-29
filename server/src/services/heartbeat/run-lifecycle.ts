@@ -1,3 +1,4 @@
+import { notifyExternalConversationSettlement } from "../external-conversation-settlement-notifications.js";
 import { notifyNativeRecoveryNotices } from "../native-recovery-notice-notifications.js";
 import { notifyNativeRunProjection } from "../native-run-projection-notifications.js";
 import { notifyRetainedNativeSessionCleanup } from "../retained-native-session-cleanup-notifications.js";
@@ -1408,12 +1409,19 @@ export function createHeartbeatLifecycle(db: Db, dependencies: HeartbeatLifecycl
     patch?: Partial<typeof agentWakeupRequests.$inferInsert>,
   ) {
     if (!wakeupRequestId) return;
-    await db
-      .update(agentWakeupRequests)
-      .set({ status, ...patch, updatedAt: new Date() })
-      // Reassignment revokes requests transactionally. Late execution settlement
-      // must not turn a revoked request back into authority for a later retry.
-      .where(and(eq(agentWakeupRequests.id, wakeupRequestId), ne(agentWakeupRequests.status, "cancelled")));
+    await db.transaction(async tx => {
+      const [current] = await tx.select({ companyId: agentWakeupRequests.companyId, status: agentWakeupRequests.status })
+        .from(agentWakeupRequests).where(eq(agentWakeupRequests.id, wakeupRequestId)).for("update");
+      if (!current || current.status === "cancelled") return;
+      if (current.status !== (patch?.status ?? status) || patch?.payload !== undefined || patch?.runId !== undefined) {
+        await notifyExternalConversationSettlement(tx, { companyId: current.companyId });
+      }
+      await tx.update(agentWakeupRequests)
+        .set({ status, ...patch, updatedAt: new Date() })
+
+
+        .where(and(eq(agentWakeupRequests.id, wakeupRequestId), ne(agentWakeupRequests.status, "cancelled")));
+    });
   }
 
   async function addContinuationExhaustedCommentOnce(input: {

@@ -1,3 +1,4 @@
+import * as conversationLifecycle from "../services/slack-conversation-lifecycle.js";
 import { projectCommittedRun } from "../services/native-runtime/native-run-projection.js";
 import { heartbeatService } from "../services/heartbeat.js";
 import { instanceSettingsService } from "../services/instance-settings.js";
@@ -283,6 +284,19 @@ describe("committed native recovery notice lifecycle", () => {
     const lifecycle = createHeartbeatLifecycle(db, { emitTerminalAgentTaskRun: vi.fn() } as unknown as HeartbeatLifecycleDependencies);
     await lifecycle.setRunStatus(binding.runId, "succeeded", { nativePhase: "committed", errorCode: null });
     await flush(); expect((await action(pending.id)).status).toBe("resolved"); await quiet();
+  });
+  it.each([true, false])("preserves resource settlement while delegating conversations: %s", async delegated => {
+    const binding = await committed();
+    const settleConversation = vi.spyOn(conversationLifecycle, "settleExternalConversation");
+    const settled = vi.fn(async () => undefined);
+    await reconcileNativeFinalizations(db, [binding.runId], {
+      skipExternalConversationSettlement: delegated,
+      skipNativeRecoveryNotices: true, skipNativeResponsePresentation: true,
+      skipNativeReviewResponse: true, onWorkspaceSettled: settled,
+    });
+    expect(settleConversation).toHaveBeenCalledTimes(delegated ? 0 : 1);
+    if (!delegated) expect(settleConversation).toHaveBeenCalledWith(db, companyId, binding.issueId);
+    expect(settled).toHaveBeenCalledWith(expect.objectContaining({ runId: binding.runId, succeeded: true }));
   });
   it("delegates only notice repair and preserves periodic resource settlement", async () => {
     const binding = await committed(); const pending = await notice(binding); const settled = vi.fn(async () => undefined);
