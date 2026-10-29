@@ -16,9 +16,9 @@ export type LocalBrowserLoginState = {
   abort: () => void;
 };
 
-// Node has no built-in PTY API. Python's standard-library pty module supplies
-// the terminal required by both CLIs. The Docker image already includes
-// python3. This bridge forwards only bytes; provider output is never logged.
+// Unix uses the existing Python PTY bridge. Windows has no Python `pty` module;
+// its interactive Claude and Codex login processes instead use native ConPTY
+// through node-pty. Neither transport logs the provider's secret-bearing output.
 const PYTHON_PTY_BRIDGE = String.raw`
 import errno, os, pty, select, signal, sys
 pid, master = pty.fork()
@@ -52,6 +52,17 @@ export function startLocalBrowserLogin(provider: "anthropic" | "openai", home: s
   const state: LocalBrowserLoginState = { abort: () => controller.abort() };
   const args = provider === "anthropic" ? ["setup-token"] : ["login", "--device-auth"];
   let child: ChildProcessWithoutNullStreams | null = null;
+  let windowsPty: import("node-pty").IPty | null = null;
+  let stopped = false;
+  const stop = () => {
+    stopped = true;
+    const pty = windowsPty;
+    windowsPty = null;
+    try { pty?.kill(); } catch { /* Already exited. */ }
+    const c = child;
+    child = null;
+    try { c?.kill("SIGTERM"); } catch { /* Already exited. */ }
+  };
   const driver = {
     async start(_command: string, onData: (chunk: string) => void): Promise<{ exitCode: number | null }> {
       let executable = "claude";
@@ -61,7 +72,8 @@ export function startLocalBrowserLogin(provider: "anthropic" | "openai", home: s
         try {
           if (legacyPlatform) {
             await ensureCommandResolvable("codex", home, process.env);
-            executable = path.resolve(home, await resolveCommandForLogs("codex", home, process.env));
+            const pathApi = process.platform === "win32" ? path.win32 : path;
+            executable = pathApi.resolve(home, await resolveCommandForLogs("codex", home, process.env));
           } else {
             executable = resolveCodexCommand();
           }
@@ -72,7 +84,7 @@ export function startLocalBrowserLogin(provider: "anthropic" | "openai", home: s
           throw new Error("Browser login runtime unavailable");
         }
       }
-      if (controller.signal.aborted) throw new Error("Local sign-in cancelled before launch");
+      if (controller.signal.aborted || stopped) throw new Error("Local sign-in cancelled before launch");
       const env = { ...process.env,
         ANTHROPIC_API_KEY: "", ANTHROPIC_AUTH_TOKEN: "", CLAUDE_CODE_OAUTH_TOKEN: "",
         OPENAI_API_KEY: "", CODEX_API_KEY: "",
@@ -80,6 +92,48 @@ export function startLocalBrowserLogin(provider: "anthropic" | "openai", home: s
         CODEX_HOME: provider === "openai" ? home : process.env.CODEX_HOME,
         BROWSER: "true",
       };
+      if (process.platform === "win32") {
+        // A ConPTY is required: piping stdin/stdout to `claude setup-token` is
+        // not equivalent to an interactive terminal. Only fixed provider args
+        // are passed; never interpolate a browser code or a token into a shell.
+        let nodePty: typeof import("node-pty");
+        try {
+          nodePty = await import("node-pty");
+        } catch {
+          state.error = "Windows browser sign-in needs the node-pty ConPTY dependency. Reinstall Paperclip and start sign-in again.";
+          throw new Error("Windows login terminal unavailable");
+        }
+        if (controller.signal.aborted || stopped) {
+          throw new Error("Local sign-in cancelled before launch");
+        }
+        const quoted = (value: string) => `'${value.replaceAll("'", "''")}'`;
+        const command = `& ${quoted(executable)} ${args.map(quoted).join(" ")}`;
+        // EncodedCommand avoids another command-line quoting layer on Windows.
+        const encoded = Buffer.from(command, "utf16le").toString("base64");
+        const ptyEnv = Object.fromEntries(
+          Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+        );
+        return new Promise((resolve, reject) => {
+          if (controller.signal.aborted || stopped) {
+            reject(new Error("Local sign-in cancelled"));
+            return;
+          }
+          try {
+            windowsPty = nodePty.spawn("powershell.exe",
+              ["-NoLogo", "-NoProfile", "-EncodedCommand", encoded],
+              { name: "xterm-256color", cols: 120, rows: 30, cwd: process.cwd(), env: ptyEnv });
+            (windowsPty as unknown as { on?: (event: string, listener: () => void) => void }).on?.("error", () => {
+              /* Ignore socket errors during teardown */
+            });
+            windowsPty.onData(onData);
+            windowsPty.onExit(({ exitCode }) => resolve({ exitCode }));
+            if (controller.signal.aborted || stopped) stop();
+          } catch {
+            state.error = "Windows could not start an interactive ConPTY session. Check the installed node-pty binary and Claude/Codex CLI.";
+            reject(new Error("Windows ConPTY startup failed"));
+          }
+        });
+      }
       return new Promise((resolve, reject) => {
         child = spawn("python3", ["-u", "-c", PYTHON_PTY_BRIDGE, executable, ...args], { env, stdio: ["pipe", "pipe", "pipe"] });
         child.stdout.on("data", (bytes: Buffer) => onData(bytes.toString("utf8")));
@@ -92,9 +146,16 @@ export function startLocalBrowserLogin(provider: "anthropic" | "openai", home: s
         child.once("close", (exitCode) => resolve({ exitCode }));
       });
     },
-    write(input: string) { child?.stdin.write(input); },
-    stop() { child?.kill("SIGTERM"); },
-    async dispose() { child?.kill("SIGTERM"); },
+    write(input: string) {
+      try {
+        if (windowsPty) windowsPty.write(input);
+        else child?.stdin.write(input);
+      } catch {
+        /* Process may have already exited. */
+      }
+    },
+    stop,
+    async dispose() { stop(); },
     async readFile(file: string) { const { readLocalAiCredentialFile } = await import("./local-ai-credential-file.js"); return Buffer.from(await readLocalAiCredentialFile(file)); },
   };
   if (provider === "anthropic") {
@@ -112,7 +173,7 @@ export function startLocalBrowserLogin(provider: "anthropic" | "openai", home: s
       }),
       onCredential: async (bytes) => {
         const file = await open(path.join(home, ".credentials.json"),
-          constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
+          constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | (constants.O_NOFOLLOW ?? 0), 0o600);
         try {
           await file.writeFile(JSON.stringify({ claudeAiOauth: { accessToken: bytes.toString("utf8") } }));
         } finally {

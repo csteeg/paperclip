@@ -23,6 +23,15 @@ import { WORKSPACE_RESTORE_LOCK_TIMEOUT_CODE } from "@paperclipai/adapter-utils/
 import type { AdapterExecutionTarget } from "@paperclipai/adapter-utils/execution-target";
 import { runAdapterExecutionTargetProcess } from "@paperclipai/adapter-utils/execution-target";
 import { decideGrokAuthMerge } from "@paperclipai/adapter-grok-local/server";
+import { logger } from "../middleware/logger.js";
+
+async function safeRemoveManagedHome(homeDir: string) {
+  try {
+    await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  } catch (error) {
+    logger.warn({ dir: homeDir, err: error }, "Failed to remove temporary managed AI home directory");
+  }
+}
 
 export function isAiConnectionBusy(error: unknown): error is HttpError {
   return error instanceof HttpError && error.status === 422 &&
@@ -492,11 +501,11 @@ export async function prepareManagedAiRuntime(
         // exhausted lock retry or database failure. The caller can retry the
         // same cleanup; only a committed save or an intentional discard
         // (revoked grant, older/different identity) permits deletion.
-        if (home) await rm(home, { recursive: true, force: true });
+        if (home) await safeRemoveManagedHome(home);
       },
     };
   } catch (error) {
-    if (home) await rm(home, { recursive: true, force: true });
+    if (home) await safeRemoveManagedHome(home);
     throw error;
   }
 }

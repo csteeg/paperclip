@@ -13,6 +13,7 @@ import { createCommandManagedRuntimeClient } from "@paperclipai/adapter-utils/co
 import { createTarballFromDirectory, exportSandboxWorkspaceSnapshot, restoreVerifiedSnapshotArchive } from "@paperclipai/adapter-utils/sandbox-managed-runtime";
 import { captureDirectorySnapshotOffThread, disposeDirectorySnapshot } from "@paperclipai/adapter-utils/workspace-restore-merge";
 import { getStorageService, type StorageService } from "../storage/index.js";
+import { logger } from "../middleware/logger.js";
 import { SystemRecoveryFailure } from "./system-recovery-state.js";
 import { recoveryRunAncestry } from "./recovery-run-ancestry.js";
 
@@ -136,7 +137,11 @@ export async function preserveWorkspaceSnapshot(input: {
     await input.db.update(workspaceOperations).set({ status: "succeeded", finishedAt: new Date(), updatedAt: new Date() })
       .where(eq(workspaceOperations.id, operation.id));
     return operation.id;
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally {
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }).catch((err) => {
+      logger.warn({ dir: root, err }, "Failed to remove temporary workspace snapshot directory");
+    });
+  }
 }
 
 /** Recovered files are an attachment to a fresh attempt, never an overlay.
@@ -189,7 +194,11 @@ export async function attachPreservedWorkspaceSnapshots(input: {
         // Never replace an earlier attachment or user edits on a restart.
         await rename(staging, destination);
         results.push({ operationId: operation.id, path: destination, sourceRunId });
-      } finally { await rm(staging, { recursive: true, force: true }); }
+      } finally {
+        await rm(staging, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }).catch((err) => {
+          logger.warn({ dir: staging, err }, "Failed to remove temporary workspace snapshot staging directory");
+        });
+      }
     }
   }
   return results;
