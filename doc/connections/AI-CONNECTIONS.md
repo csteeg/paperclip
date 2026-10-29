@@ -320,6 +320,33 @@ grant's credentials. Inherited credential variables are cleared. Conflicting
 project authentication and provider-routing overrides are rejected. Managed
 failure cannot reactivate host or legacy credentials.
 
+Operators may opt managed Claude CLI and local ACP runs into an existing
+Claude Code profile by setting `PAPERCLIP_CLAUDE_PLUGIN_SOURCE_DIR` on the
+Paperclip server to that profile's `.claude` directory. Paperclip reads the
+profile's enabled-plugin list, installed-plugin metadata, cached payloads for
+enabled plugins, and `skills/`. It stores content-addressed snapshots under
+Paperclip's own per-company, per-agent runtime state, then copies skills into
+the invocation's private config directory. Managed invocations disable
+official marketplace auto-install, so an imported plugin is reused without a
+marketplace download on each run. The source profile is never modified or
+deleted; credentials, user MCP servers, hook settings, and marketplace source
+definitions are not imported. Paperclip's own MCP config remains attached to
+the run. A profile skill whose runtime name matches a Paperclip-selected skill
+is omitted for that run, leaving the selected skill as the only version Claude
+can load. Other profile skills remain available. Only point this option at a
+profile whose plugins and skills are trusted: plugin code, including its hooks
+and MCP servers, runs with the agent's permissions. Keep `CLAUDE_CONFIG_DIR`
+and `HOME` managed per invocation; do not point multiple agents at a writable
+personal config directory.
+
+The profile import currently applies to local managed CLI runs, including a
+local-process sandbox, and local managed ACP runs. Workspace-scoped CLI
+sandbox runs mount the imported per-agent plugin cache read-only. Remote CLI
+and ACP runs do not stage this personal profile. This avoids copying private
+plugin sources to another host and avoids paths that exist only on the
+Paperclip server. This option persists plugin and skill files, not Claude
+transcripts; it does not by itself enable managed Claude session resume.
+
 A subscription invocation takes no lease. Two invocations of one grant, from
 the same or a different provider account, run at the same time. At cleanup,
 each invocation re-reads the credential stored at that moment under a row

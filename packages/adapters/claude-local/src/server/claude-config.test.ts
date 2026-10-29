@@ -22,7 +22,11 @@ vi.mock("@paperclipai/adapter-utils/execution-target", async () => {
   };
 });
 
-import { prepareClaudeConfigSeed, prepareSandboxClaudeProbeRuntime } from "./claude-config.js";
+import {
+  prepareClaudeConfigSeed,
+  prepareManagedClaudePluginRuntime,
+  prepareSandboxClaudeProbeRuntime,
+} from "./claude-config.js";
 
 describe("prepareClaudeConfigSeed", () => {
   const cleanupDirs: string[] = [];
@@ -127,6 +131,113 @@ describe("prepareClaudeConfigSeed", () => {
       .rejects.toMatchObject({ code: "ENOENT" });
     await expect(fs.readFile(path.join(seedDir, "CLAUDE.md"), "utf8"))
       .resolves.toBe("local instructions");
+  });
+});
+
+describe("prepareManagedClaudePluginRuntime", () => {
+  const cleanupDirs: string[] = [];
+
+  afterEach(async () => {
+    while (cleanupDirs.length > 0) {
+      const dir = cleanupDirs.pop();
+      if (dir) await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it("imports enabled plugins and skills into per-agent cache without copying credentials or marketplace config", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-managed-claude-plugins-"));
+    cleanupDirs.push(root);
+    const sourceDir = path.join(root, "personal-claude");
+    const sourcePlugin = path.join(sourceDir, "plugins", "cache", "superpowers", "superpowers", "1.0.0");
+    const sourceSkill = path.join(sourceDir, "skills", "careconnections");
+    const sourceGuidance = path.join(sourceDir, "skills", "company-guidance");
+    const trashedSkill = path.join(sourceDir, "skills", ".trash", "removed-skill");
+    const configDir = path.join(root, "managed-run", "provider");
+    await fs.mkdir(sourcePlugin, { recursive: true });
+    await fs.mkdir(sourceSkill, { recursive: true });
+    await fs.mkdir(sourceGuidance, { recursive: true });
+    await fs.mkdir(trashedSkill, { recursive: true });
+    await fs.mkdir(configDir, { recursive: true });
+    await fs.mkdir(path.join(configDir, "skills", "careconnections"), { recursive: true });
+    await fs.writeFile(path.join(configDir, "skills", "careconnections", "SKILL.md"), "Paperclip selected skill\n");
+    await fs.writeFile(path.join(sourcePlugin, "plugin.js"), "trusted plugin code\n");
+    await fs.writeFile(path.join(sourceSkill, "SKILL.md"), "CareConnections workflow\n");
+    await fs.writeFile(path.join(sourceSkill, ".config.json"), '{"profile":"careconnections"}');
+    await fs.writeFile(path.join(sourceGuidance, "SKILL.md"), "Company guidance\n");
+    await fs.writeFile(path.join(sourceGuidance, ".config.json"), '{"version":1}');
+    await fs.writeFile(path.join(trashedSkill, "SKILL.md"), "Removed skill\n");
+    await fs.writeFile(path.join(sourceDir, ".credentials.json"), '{"token":"must-not-copy"}');
+    await fs.writeFile(path.join(sourceDir, "settings.json"), JSON.stringify({
+      enabledPlugins: { "superpowers@superpowers": true, "disabled@market": false },
+      hooks: { PreToolUse: [{ command: "personal-hook" }] },
+      mcpServers: { personal: { command: "personal-mcp" } },
+      extraKnownMarketplaces: { secret: { source: { url: "https://user:secret@example.invalid/plugins" } } },
+    }));
+    await fs.writeFile(path.join(sourceDir, "plugins", "installed_plugins.json"), JSON.stringify({
+      version: 2,
+      plugins: { "superpowers@superpowers": [{ scope: "user", installPath: sourcePlugin, version: "1.0.0" }] },
+    }));
+
+    const env: NodeJS.ProcessEnv = {
+      PAPERCLIP_HOME: path.join(root, "paperclip-data"),
+      PAPERCLIP_INSTANCE_ID: "test-instance",
+      PAPERCLIP_CLAUDE_PLUGIN_SOURCE_DIR: sourceDir,
+    };
+    const result = await prepareManagedClaudePluginRuntime({ env, companyId: "company-1", agentId: "agent-1", configDir });
+
+    expect(result.pluginRoot).not.toBeNull();
+    expect(result.skillCount).toBe(2);
+    await expect(fs.readFile(path.join(result.pluginRoot!, "cache", "superpowers", "superpowers", "1.0.0", "plugin.js"), "utf8"))
+      .resolves.toBe("trusted plugin code\n");
+    await expect(fs.readFile(path.join(configDir, "skills", "careconnections", "SKILL.md"), "utf8"))
+      .resolves.toBe("Paperclip selected skill\n");
+    await expect(fs.readFile(path.join(configDir, "skills", "company-guidance", ".config.json"), "utf8"))
+      .resolves.toBe('{"version":1}');
+    await expect(fs.access(path.join(configDir, "skills", ".trash")))
+      .rejects.toMatchObject({ code: "ENOENT" });
+    const settings = JSON.parse(await fs.readFile(path.join(configDir, "settings.json"), "utf8"));
+    expect(settings).toEqual({ enabledPlugins: { "disabled@market": false, "superpowers@superpowers": true } });
+    const installed = JSON.parse(await fs.readFile(path.join(result.pluginRoot!, "installed_plugins.json"), "utf8"));
+    expect(installed.plugins["superpowers@superpowers"][0].installPath)
+      .toBe(path.join(result.pluginRoot!, "cache", "superpowers", "superpowers", "1.0.0"));
+    expect(JSON.stringify(installed)).not.toContain(sourceDir);
+    await expect(fs.access(path.join(result.pluginRoot!, "known_marketplaces.json")))
+      .rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.access(path.join(configDir, ".credentials.json")))
+      .rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.readFile(path.join(sourceDir, ".credentials.json"), "utf8"))
+      .resolves.toBe('{"token":"must-not-copy"}');
+
+    const [secondRun, otherAgent] = await Promise.all([
+      prepareManagedClaudePluginRuntime({ env, companyId: "company-1", agentId: "agent-1", configDir }),
+      prepareManagedClaudePluginRuntime({ env, companyId: "company-1", agentId: "agent-2", configDir: path.join(root, "other-run", "provider") }),
+    ]);
+    expect(secondRun.pluginRoot).toBe(result.pluginRoot);
+    expect(otherAgent.pluginRoot).not.toBe(result.pluginRoot);
+
+    await fs.writeFile(path.join(sourceGuidance, ".config.json"), '{"version":2}');
+    const changedRun = await prepareManagedClaudePluginRuntime({
+      env,
+      companyId: "company-1",
+      agentId: "agent-1",
+      configDir: path.join(root, "changed-run", "provider"),
+    });
+    expect(changedRun.pluginRoot).not.toBe(result.pluginRoot);
+    await expect(fs.readFile(path.join(root, "changed-run", "provider", "skills", "company-guidance", ".config.json"), "utf8"))
+      .resolves.toBe('{"version":2}');
+  });
+
+  it("does nothing when no plugin source is explicitly configured", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-managed-claude-plugins-optout-"));
+    cleanupDirs.push(root);
+    const result = await prepareManagedClaudePluginRuntime({
+      env: { PAPERCLIP_HOME: path.join(root, "paperclip-data") },
+      companyId: "company-1",
+      agentId: "agent-1",
+      configDir: path.join(root, "managed-run", "provider"),
+    });
+    expect(result).toEqual({ pluginRoot: null, skillCount: 0 });
+    await expect(fs.access(path.join(root, "paperclip-data"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
 

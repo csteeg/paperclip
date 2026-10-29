@@ -82,6 +82,7 @@ import {
 } from "./parse.js";
 import {
   materializeRemoteClaudeConfig,
+  prepareManagedClaudePluginRuntime,
   prepareClaudeConfigSeed,
   resolveManagedClaudeRuntimeStateDir,
   resolveSharedClaudeConfigDir,
@@ -581,6 +582,27 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   });
   const localMcpConfigDir = path.dirname(localMcpConfigPath);
   const sharedClaudeConfigDir = config.managedAiConnection ? asString(configEnv.CLAUDE_CONFIG_DIR, "") : resolveSharedClaudeConfigDir(process.env);
+  const managedClaudePluginRuntime = config.managedAiConnection && !executionTargetIsRemote
+    ? await prepareManagedClaudePluginRuntime({
+        env: process.env,
+        companyId: agent.companyId,
+        agentId: agent.id,
+        configDir: sharedClaudeConfigDir,
+        excludedSkillNames: mountableSkillEntries.map((entry) => entry.runtimeName),
+      })
+    : null;
+  if (config.managedAiConnection) {
+    env.CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL = "1";
+    env.CLAUDE_CODE_PLUGIN_CACHE_DIR = managedClaudePluginRuntime?.pluginRoot ?? path.join(sharedClaudeConfigDir, "plugins");
+    if (managedClaudePluginRuntime?.pluginRoot) {
+      await onLog(
+        "stdout",
+        `[paperclip] Using this agent's isolated Claude plugin cache; imported ${managedClaudePluginRuntime.skillCount} skills.\n`,
+      );
+    } else if (managedClaudePluginRuntime && managedClaudePluginRuntime.skillCount > 0) {
+      await onLog("stdout", `[paperclip] Imported ${managedClaudePluginRuntime.skillCount} personal Claude skills.\n`);
+    }
+  }
   const networkScope = parseLocalProcessNetworkScope(config.networkScope);
   const filesystemScope = parseLocalProcessFilesystemScope(config.filesystemScope);
   const localProcessSandbox: LocalProcessSandboxOptions | null =
@@ -593,6 +615,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
             { path: path.join(path.dirname(sharedClaudeConfigDir), ".claude.json"), access: "rw" },
             { path: promptBundle.addDir, access: "ro" },
             { path: localMcpConfigDir, access: "ro" },
+            ...(managedClaudePluginRuntime?.pluginRoot
+              ? [{ path: managedClaudePluginRuntime.pluginRoot, access: "ro" as const }]
+              : []),
           ],
           extraPaths: parseLocalProcessSandboxExtraPaths(config.filesystemExtraPaths),
           homeDir: filesystemScope ? path.dirname(sharedClaudeConfigDir) : null,
@@ -710,6 +735,12 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const remoteClaudeConfigDir = useManagedRemoteClaudeConfig && remoteClaudeRuntimeRoot
     ? path.posix.join(remoteClaudeRuntimeRoot, "config")
     : null;
+  if (config.managedAiConnection && executionTargetIsRemote) {
+    env.CLAUDE_CODE_PLUGIN_CACHE_DIR = path.posix.join(
+      remoteClaudeConfigDir ?? path.posix.join(remoteClaudeRuntimeRoot ?? effectiveExecutionCwd, "config"),
+      "plugins",
+    );
+  }
   if (remoteClaudeConfigDir && remoteClaudeConfigSeedDir) {
     env.CLAUDE_CONFIG_DIR = remoteClaudeConfigDir;
     loggedEnv.CLAUDE_CONFIG_DIR = remoteClaudeConfigDir;
