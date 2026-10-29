@@ -312,12 +312,15 @@ export async function prepareManagedAiRuntime(
       }
       throw unprocessable("The AI credential changed during preparation; retry this execution");
     })();
-    const agentEnv = stripAiAuthBindings(input.config.env);
+    const rawAgentEnv = input.config.env && typeof input.config.env === "object"
+      ? input.config.env as Record<string, unknown>
+      : {};
+    const configuredClaudeConfigDir = harness === "claude_local" && typeof rawAgentEnv.CLAUDE_CONFIG_DIR === "string" && rawAgentEnv.CLAUDE_CONFIG_DIR.trim()
+      ? path.resolve(rawAgentEnv.CLAUDE_CONFIG_DIR.trim())
+      : undefined;
+    const agentEnv = stripAiAuthBindings(rawAgentEnv);
     const configuredClaudeHome = harness === "claude_local" && typeof agentEnv.HOME === "string" && agentEnv.HOME.trim()
       ? path.resolve(agentEnv.HOME.trim())
-      : undefined;
-    const configuredClaudeConfigDir = harness === "claude_local" && typeof agentEnv.CLAUDE_CONFIG_DIR === "string" && agentEnv.CLAUDE_CONFIG_DIR.trim()
-      ? path.resolve(agentEnv.CLAUDE_CONFIG_DIR.trim())
       : undefined;
     // Managed Claude keeps the safe, disposable home by default. Explicit agent
     // paths are opt-in and are never included in this runtime's cleanup target.
