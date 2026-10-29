@@ -48,6 +48,7 @@ export function registerManagedAiHomeCleanupWork(
 ) {
   const worker = coordinator.register(DELIVERY_QUEUES.managedAiHomeCleanup, {
     retryMs: 30_000,
+    runDuringDrain: true,
     run: retryPendingManagedHomeRemovals,
     hasPending: async () => pendingManagedHomeRemovals.size > 0,
   });
