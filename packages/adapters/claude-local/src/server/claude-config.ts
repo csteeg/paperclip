@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -123,6 +123,109 @@ async function copyManagedClaudeSkills(
   }
 }
 
+const managedSkillImportLocks = new Map<string, Promise<void>>();
+
+async function withManagedSkillImportLock<T>(key: string, action: () => Promise<T>): Promise<T> {
+  const previous = managedSkillImportLocks.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => { release = resolve; });
+  const queued = previous.then(() => current);
+  managedSkillImportLocks.set(key, queued);
+  await previous;
+  try {
+    return await action();
+  } finally {
+    release();
+    if (managedSkillImportLocks.get(key) === queued) managedSkillImportLocks.delete(key);
+  }
+}
+
+function managedSkillImportManifestPath(stateDir: string, configDir: string): string {
+  const targetHash = createHash("sha256").update(path.resolve(configDir)).digest("hex").slice(0, 24);
+  return path.join(stateDir, "managed-plugin-cache", "skill-imports", `${targetHash}.json`);
+}
+
+async function writeManagedSkillImportManifest(manifestPath: string, directories: Set<string>): Promise<void> {
+  await fs.mkdir(path.dirname(manifestPath), { recursive: true, mode: 0o700 });
+  const tempPath = `${manifestPath}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await fs.writeFile(tempPath, JSON.stringify({ version: 1, directories: [...directories].sort() }), { mode: 0o600 });
+    await fs.rename(tempPath, manifestPath);
+  } finally {
+    await fs.rm(tempPath, { force: true }).catch(() => undefined);
+  }
+}
+
+async function assertManagedSkillPathHasNoSymlinks(rootDir: string, relativeDir: string): Promise<boolean> {
+  let current = rootDir;
+  for (const segment of relativeDir.split(path.sep)) {
+    current = path.join(current, segment);
+    try {
+      const stat = await fs.lstat(current);
+      if (stat.isSymbolicLink()) {
+        throw new Error(`Managed Claude skill path contains a symbolic link: ${current}`);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    }
+  }
+  return true;
+}
+
+async function syncManagedClaudeSkills(input: {
+  sourceSkillsDir: string;
+  targetSkillsDir: string;
+  stateDir: string;
+  configDir: string;
+  skillFiles: Array<{ path: string }>;
+}): Promise<void> {
+  const manifestPath = managedSkillImportManifestPath(input.stateDir, input.configDir);
+  await withManagedSkillImportLock(path.resolve(input.targetSkillsDir), async () => {
+    await fs.mkdir(input.targetSkillsDir, { recursive: true, mode: 0o700 });
+    if ((await fs.lstat(input.targetSkillsDir)).isSymbolicLink()) {
+      throw new Error(`Managed Claude skills directory is a symbolic link: ${input.targetSkillsDir}`);
+    }
+    const manifest = await readJsonObject(manifestPath);
+    const ownedDirectories = new Set<string>(
+      Array.isArray(manifest?.directories)
+        ? manifest.directories.filter((entry): entry is string => typeof entry === "string")
+          .map((entry) => path.normalize(entry))
+          .filter((entry) => entry !== "." && entry !== ".." && !path.isAbsolute(entry) && !entry.startsWith(`..${path.sep}`))
+        : [],
+    );
+    const desiredDirectories = new Set(
+      input.skillFiles.map((entry) => path.normalize(path.dirname(entry.path))).filter((entry) => entry !== "."),
+    );
+    const persistOwnership = () => writeManagedSkillImportManifest(manifestPath, ownedDirectories);
+
+    for (const directory of [...ownedDirectories]) {
+      if (desiredDirectories.has(directory)) continue;
+      if (await assertManagedSkillPathHasNoSymlinks(input.targetSkillsDir, directory)) {
+        await fs.rm(path.join(input.targetSkillsDir, directory), { recursive: true, force: true });
+      }
+      ownedDirectories.delete(directory);
+      await persistOwnership();
+    }
+
+    for (const directory of desiredDirectories) {
+      const sourceDirectory = path.join(input.sourceSkillsDir, directory);
+      const targetDirectory = path.join(input.targetSkillsDir, directory);
+      const wasImported = ownedDirectories.has(directory);
+      const targetExists = await assertManagedSkillPathHasNoSymlinks(input.targetSkillsDir, directory);
+      if (!wasImported) {
+        // Keep agent-owned and task-selected skills that Paperclip did not create.
+        if (targetExists) continue;
+        ownedDirectories.add(directory);
+        await persistOwnership();
+      } else {
+        if (targetExists) await fs.rm(targetDirectory, { recursive: true, force: true });
+      }
+      await copyTreeWithoutSymlinks(sourceDirectory, targetDirectory);
+    }
+  });
+}
+
 interface ManagedClaudePluginInstall {
   id: string;
   cacheRelativePath: string;
@@ -174,16 +277,40 @@ export async function prepareManagedClaudePluginRuntime(input: {
   importMode?: "copy" | "cache";
   excludedSkillNames?: readonly string[];
 }): Promise<{ pluginRoot: string | null; skillCount: number }> {
+  const importMode = input.importMode ?? "cache";
+  const stateDir = resolveManagedClaudeRuntimeStateDir(input.env, input.companyId, input.agentId);
+  if (!input.configDir.trim()) throw new Error("Managed Claude config directory is missing");
   const configuredSource = nonEmpty(input.sourceDir) ?? nonEmpty(input.env.PAPERCLIP_CLAUDE_PLUGIN_SOURCE_DIR);
   const source = configuredSource ?? (input.autoDiscoverSource ? resolveSharedClaudeConfigDir(input.env) : undefined);
-  if (!source) return { pluginRoot: null, skillCount: 0 };
-  if (!input.configDir.trim()) throw new Error("Managed Claude config directory is missing");
+  if (!source) {
+    if (importMode === "cache" && input.autoDiscoverSource) {
+      await syncManagedClaudeSkills({
+        sourceSkillsDir: path.join(input.configDir, "skills"),
+        targetSkillsDir: path.join(input.configDir, "skills"),
+        stateDir,
+        configDir: input.configDir,
+        skillFiles: [],
+      });
+    }
+    return { pluginRoot: null, skillCount: 0 };
+  }
   const sourceDir = path.resolve(source);
   if (sourceDir === path.resolve(input.configDir)) {
     throw new Error("Claude plugin source and managed run config must be separate directories");
   }
   if (!(await pathExists(sourceDir))) {
-    if (!configuredSource && input.autoDiscoverSource) return { pluginRoot: null, skillCount: 0 };
+    if (!configuredSource && input.autoDiscoverSource) {
+      if (importMode === "cache") {
+        await syncManagedClaudeSkills({
+          sourceSkillsDir: path.join(sourceDir, "skills"),
+          targetSkillsDir: path.join(input.configDir, "skills"),
+          stateDir,
+          configDir: input.configDir,
+          skillFiles: [],
+        });
+      }
+      return { pluginRoot: null, skillCount: 0 };
+    }
     throw new Error(`Configured Claude plugin source directory does not exist: ${sourceDir}`);
   }
 
@@ -217,10 +344,6 @@ export async function prepareManagedClaudePluginRuntime(input: {
     path.basename(entry.path).toLowerCase() === "skill.md" &&
     !excludedSkillNames.has(path.basename(path.dirname(entry.path)).toLowerCase()),
   );
-  if (installs.length === 0 && skillFiles.length === 0) return { pluginRoot: null, skillCount: 0 };
-
-  const importMode = input.importMode ?? "cache";
-  const stateDir = resolveManagedClaudeRuntimeStateDir(input.env, input.companyId, input.agentId);
   if (importMode === "copy" && !input.runId) {
     throw new Error("Claude profile copy mode requires a run ID");
   }
@@ -240,7 +363,7 @@ export async function prepareManagedClaudePluginRuntime(input: {
     ? path.join(input.configDir, ".paperclip-profile-import")
     : path.join(stateDir, "managed-plugin-cache");
   const snapshotDir = path.join(snapshotRoot, snapshotKey);
-  if (!(await pathExists(snapshotDir))) {
+  if ((installs.length > 0 || skillFiles.length > 0) && !(await pathExists(snapshotDir))) {
     await fs.mkdir(snapshotRoot, { recursive: true, mode: 0o700 });
     const stagingDir = await fs.mkdtemp(path.join(snapshotRoot, ".tmp-"));
     try {
@@ -291,7 +414,15 @@ export async function prepareManagedClaudePluginRuntime(input: {
       },
     }, null, 2), { mode: 0o600 });
   }
-  if (skillFiles.length > 0) {
+  if (importMode === "cache") {
+    await syncManagedClaudeSkills({
+      sourceSkillsDir: path.join(snapshotDir, "skills"),
+      targetSkillsDir: path.join(input.configDir, "skills"),
+      stateDir,
+      configDir: input.configDir,
+      skillFiles,
+    });
+  } else if (skillFiles.length > 0) {
     await copyManagedClaudeSkills(
       path.join(snapshotDir, "skills"),
       path.join(input.configDir, "skills"),
