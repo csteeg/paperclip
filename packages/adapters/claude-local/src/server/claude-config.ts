@@ -173,6 +173,21 @@ async function assertManagedSkillPathHasNoSymlinks(rootDir: string, relativeDir:
   return true;
 }
 
+async function managedSkillPathExists(rootDir: string, relativeDir: string): Promise<boolean> {
+  let current = rootDir;
+  for (const segment of relativeDir.split(path.sep)) {
+    current = path.join(current, segment);
+    try {
+      const stat = await fs.lstat(current);
+      if (stat.isSymbolicLink()) return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    }
+  }
+  return true;
+}
+
 async function syncManagedClaudeSkills(input: {
   sourceSkillsDir: string;
   targetSkillsDir: string;
@@ -182,10 +197,6 @@ async function syncManagedClaudeSkills(input: {
 }): Promise<void> {
   const manifestPath = managedSkillImportManifestPath(input.stateDir, input.configDir);
   await withManagedSkillImportLock(path.resolve(input.targetSkillsDir), async () => {
-    await fs.mkdir(input.targetSkillsDir, { recursive: true, mode: 0o700 });
-    if ((await fs.lstat(input.targetSkillsDir)).isSymbolicLink()) {
-      throw new Error(`Managed Claude skills directory is a symbolic link: ${input.targetSkillsDir}`);
-    }
     const manifest = await readJsonObject(manifestPath);
     const ownedDirectories = new Set<string>(
       Array.isArray(manifest?.directories)
@@ -199,9 +210,22 @@ async function syncManagedClaudeSkills(input: {
     );
     const persistOwnership = () => writeManagedSkillImportManifest(manifestPath, ownedDirectories);
 
+    const targetRootExists = await fs.lstat(input.targetSkillsDir).then((stat) => {
+      if (stat.isSymbolicLink()) {
+        throw new Error(`Managed Claude skills directory is a symbolic link: ${input.targetSkillsDir}`);
+      }
+      return true;
+    }).catch((error) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    });
+    if (!targetRootExists && desiredDirectories.size > 0) {
+      await fs.mkdir(input.targetSkillsDir, { recursive: true, mode: 0o700 });
+    }
+
     for (const directory of [...ownedDirectories]) {
       if (desiredDirectories.has(directory)) continue;
-      if (await assertManagedSkillPathHasNoSymlinks(input.targetSkillsDir, directory)) {
+      if (targetRootExists && await assertManagedSkillPathHasNoSymlinks(input.targetSkillsDir, directory)) {
         await fs.rm(path.join(input.targetSkillsDir, directory), { recursive: true, force: true });
       }
       ownedDirectories.delete(directory);
@@ -212,13 +236,13 @@ async function syncManagedClaudeSkills(input: {
       const sourceDirectory = path.join(input.sourceSkillsDir, directory);
       const targetDirectory = path.join(input.targetSkillsDir, directory);
       const wasImported = ownedDirectories.has(directory);
-      const targetExists = await assertManagedSkillPathHasNoSymlinks(input.targetSkillsDir, directory);
       if (!wasImported) {
         // Keep agent-owned and task-selected skills that Paperclip did not create.
-        if (targetExists) continue;
+        if (await managedSkillPathExists(input.targetSkillsDir, directory)) continue;
         ownedDirectories.add(directory);
         await persistOwnership();
       } else {
+        const targetExists = await assertManagedSkillPathHasNoSymlinks(input.targetSkillsDir, directory);
         if (targetExists) await fs.rm(targetDirectory, { recursive: true, force: true });
       }
       await copyTreeWithoutSymlinks(sourceDirectory, targetDirectory);
