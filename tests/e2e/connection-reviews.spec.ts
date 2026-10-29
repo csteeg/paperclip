@@ -321,18 +321,15 @@ for (const journey of [
         queue.getByRole("button", { name: "Decline", exact: true }),
       ).not.toBeVisible({ timeout: 20_000 });
       await page.reload();
-      await expect(
-        page
-          .getByText(
-            journey === "decline"
-              ? "Declined"
-              : journey === "failure"
-                ? "Execution failed"
-                : "Succeeded",
-            { exact: false },
-          )
-          .first(),
-      ).toBeVisible();
+      if (journey === "approve" || journey === "always") {
+        const successfulResult = page.getByRole("button", { name: "Show result details" });
+        await expect(successfulResult).toBeVisible();
+        await expect(successfulResult).toContainText("Succeeded");
+      } else {
+        await expect(
+          page.getByText(journey === "decline" ? "Declined" : "Execution failed", { exact: false }).first(),
+        ).toBeVisible();
+      }
       await page.screenshot({
         path: testInfo.outputPath("resolved-review.png"),
       });
