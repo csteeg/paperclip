@@ -149,7 +149,7 @@ describe("claude_local ACP startup fallback", () => {
         engine: "cli",
         filesystemScope: "workspace",
         managedAiConnection: true,
-        env: { CLAUDE_CONFIG_DIR: configDir },
+        env: { CLAUDE_CONFIG_DIR: configDir, PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE: "cache" },
       });
 
       await execute(ctx as never);
@@ -188,7 +188,7 @@ describe("claude_local ACP startup fallback", () => {
       const ctx = buildContext({
         engine: "cli",
         managedAiConnection: true,
-        env: { CLAUDE_CONFIG_DIR: configDir },
+        env: { CLAUDE_CONFIG_DIR: configDir, PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE: "cache" },
         paperclipRuntimeSkills: [{
           key: "careconnections",
           runtimeName: "careconnections",

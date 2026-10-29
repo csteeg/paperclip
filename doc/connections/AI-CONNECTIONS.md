@@ -320,32 +320,51 @@ grant's credentials. Inherited credential variables are cleared. Conflicting
 project authentication and provider-routing overrides are rejected. Managed
 failure cannot reactivate host or legacy credentials.
 
-Operators may opt managed Claude CLI and local ACP runs into an existing
-Claude Code profile by setting `PAPERCLIP_CLAUDE_PLUGIN_SOURCE_DIR` on the
-Paperclip server to that profile's `.claude` directory. Paperclip reads the
-profile's enabled-plugin list, installed-plugin metadata, cached payloads for
-enabled plugins, and `skills/`. It stores content-addressed snapshots under
-Paperclip's own per-company, per-agent runtime state, then copies skills into
-the invocation's private config directory. Managed invocations disable
-official marketplace auto-install, so an imported plugin is reused without a
-marketplace download on each run. The source profile is never modified or
-deleted; credentials, user MCP servers, hook settings, and marketplace source
-definitions are not imported. Paperclip's own MCP config remains attached to
-the run. A profile skill whose runtime name matches a Paperclip-selected skill
-is omitted for that run, leaving the selected skill as the only version Claude
-can load. Other profile skills remain available. Only point this option at a
-profile whose plugins and skills are trusted: plugin code, including its hooks
-and MCP servers, runs with the agent's permissions. Keep `CLAUDE_CONFIG_DIR`
-and `HOME` managed per invocation; do not point multiple agents at a writable
-personal config directory.
+Managed Claude runtime paths and profile imports can be set per agent in its
+Environment variables. By default each invocation receives a private temporary
+`HOME` and `CLAUDE_CONFIG_DIR`, and Paperclip removes only that generated home
+after the run. Set `HOME` or `CLAUDE_CONFIG_DIR` explicitly to opt into stable
+agent-owned paths. Paperclip never removes either configured path. Use a distinct
+writable path per agent: sharing one path can share credentials, plugin settings,
+and session files, and concurrent runs may write to it at the same time.
 
-The profile import currently applies to local managed CLI runs, including a
-local-process sandbox, and local managed ACP runs. Workspace-scoped CLI
-sandbox runs mount the imported per-agent plugin cache read-only. Remote CLI
-and ACP runs do not stage this personal profile. This avoids copying private
-plugin sources to another host and avoids paths that exist only on the
-Paperclip server. This option persists plugin and skill files, not Claude
-transcripts; it does not by itself enable managed Claude session resume.
+Profile import is controlled independently with `PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE`
+(`off`, `copy`, or `cache`) and `PAPERCLIP_CLAUDE_PLUGIN_SOURCE_DIR`. Import is
+off by default, even if the server-level source variable is configured. A
+per-agent source path takes precedence over the server-level
+`PAPERCLIP_CLAUDE_PLUGIN_SOURCE_DIR` fallback. If both are empty and import is
+enabled, Paperclip reads the Claude profile selected by the server process's
+`CLAUDE_CONFIG_DIR`, or defaults to that process user's `~/.claude` directory.
+If that auto-detected directory is absent, import is skipped. `copy` stages
+files into the invocation's disposable managed home and imports them again on
+the next run;
+`cache` reuses content-addressed plugin snapshots in Paperclip's per-company,
+per-agent runtime state. Copy mode requires the default temporary home. Cache mode
+may be used with an explicitly persistent `HOME`. Profile import cannot be
+combined with an explicit `CLAUDE_CONFIG_DIR`, because import writes settings
+and skills into the active config; use the direct config override by itself when
+Claude should read a profile as-is. When importing into a generated or HOME-based
+config, Paperclip merges the imported enabled-plugin entries into `settings.json`
+and keeps the other existing settings. It leaves an existing skill directory in
+place, including a same-name Paperclip-selected skill.
+
+Paperclip reads the profile's enabled-plugin list, installed-plugin metadata,
+cached payloads for enabled plugins, and `skills/`. It never modifies or deletes
+the source profile. Credentials, user MCP servers, hook settings outside enabled
+plugins, and marketplace source definitions are not imported. Paperclip's own
+MCP config remains attached to the run. A profile skill whose runtime name
+matches a Paperclip-selected skill is omitted for that run, so the selected skill
+wins. Official marketplace auto-install is disabled for managed runs; cached
+plugins are reused without downloading them again. Only import profiles whose
+plugins and skills are trusted: plugin code, including hooks and MCP servers,
+runs with the agent's permissions.
+
+Profile import applies to local managed CLI runs, including a local-process
+sandbox, and local managed ACP runs. Workspace-scoped CLI sandbox runs mount the
+imported cache read-only. Remote CLI and ACP runs do not stage this personal
+profile. Profile caching persists plugin and skill files, not Claude transcripts;
+session resume depends on the selected `HOME`/`CLAUDE_CONFIG_DIR` and adapter
+session support.
 
 A subscription invocation takes no lease. Two invocations of one grant, from
 the same or a different provider account, run at the same time. At cleanup,

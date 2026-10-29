@@ -321,18 +321,29 @@ export async function prepareManagedAiRuntime(
       }
       throw unprocessable("The AI credential changed during preparation; retry this execution");
     })();
-    home = await mkdtemp(
+    const agentEnv = stripAiAuthBindings(input.config.env);
+    const configuredClaudeHome = harness === "claude_local" && typeof agentEnv.HOME === "string" && agentEnv.HOME.trim()
+      ? path.resolve(agentEnv.HOME.trim())
+      : undefined;
+    const configuredClaudeConfigDir = harness === "claude_local" && typeof agentEnv.CLAUDE_CONFIG_DIR === "string" && agentEnv.CLAUDE_CONFIG_DIR.trim()
+      ? path.resolve(agentEnv.CLAUDE_CONFIG_DIR.trim())
+      : undefined;
+    // Managed Claude keeps the safe, disposable home by default. Explicit agent
+    // paths are opt-in and are never included in this runtime's cleanup target.
+    home = configuredClaudeHome ? undefined : await mkdtemp(
       path.join(
         os.tmpdir(),
         `paperclip-ai-${input.companyId}-${selection.grant.id}-`,
       ),
     );
-    const providerHome = path.join(home, "provider");
-    await mkdir(providerHome, { mode: 0o700 });
+    const effectiveHome = configuredClaudeHome ?? home!;
+    const providerHome = path.join(effectiveHome, "provider");
+    await mkdir(providerHome, { recursive: true, mode: 0o700 });
     const env: Record<string, unknown> = {
-      ...stripAiAuthBindings(input.config.env),
+      ...agentEnv,
       ...Object.fromEntries(AI_AUTH_ENV_KEYS.map((key) => [key, ""])),
-      ...managedAiHomeEnvironment(home),
+      ...managedAiHomeEnvironment(effectiveHome),
+      ...(configuredClaudeConfigDir ? { CLAUDE_CONFIG_DIR: configuredClaudeConfigDir } : {}),
       ...(input.binding.provider === "github" ? { GH_TOKEN: "", GITHUB_TOKEN: "" } : {}),
     };
     const capability =
@@ -366,7 +377,7 @@ export async function prepareManagedAiRuntime(
     if (!routing && input.binding.provider === "google" && harness === "gemini_local") {
       // Gemini headless CLI requires an explicit auth choice even with an API key.
       // Seed only the disposable connection home, never the operator's settings.
-      const geminiHome = path.join(home, ".gemini");
+      const geminiHome = path.join(effectiveHome, ".gemini");
       await mkdir(geminiHome, { mode: 0o700 });
       await writeFile(path.join(geminiHome, "settings.json"), JSON.stringify({
         selectedAuthType: "gemini-api-key",
@@ -414,6 +425,12 @@ export async function prepareManagedAiRuntime(
         ...input.config,
         ...projected?.config,
         ...(routing ? { managedAiRouting: routing } : {}),
+        ...(harness === "claude_local" ? {
+          managedAiHomeOverrides: {
+            home: Boolean(configuredClaudeHome),
+            claudeConfigDir: Boolean(configuredClaudeConfigDir),
+          },
+        } : {}),
         env,
         managedAiConnection: { ...attribution, identity, sessionIdentity },
       },
