@@ -14,7 +14,7 @@ vi.mock("@paperclipai/adapter-codex-local/server", () => ({
 }));
 vi.mock("@paperclipai/adapter-utils/server-utils", () => ({
   ensureCommandResolvable: vi.fn(async () => {}),
-  resolveCommandForLogs: vi.fn(async () => "codex.cmd"),
+  resolveCommandForLogs: vi.fn(async (command: string) => `${command}.cmd`),
 }));
 vi.mock("../vendor/paperclip-runner/index.js", () => ({
   resolveCodexCommand: vi.fn(() => "codex"),
@@ -66,7 +66,7 @@ describe("native Windows subscription login PTY", () => {
     const [executable, args, settings] = mocks.spawn.mock.calls[0];
     expect(executable).toBe("powershell.exe");
     const encoded = args[args.indexOf("-EncodedCommand") + 1];
-    expect(Buffer.from(encoded, "base64").toString("utf16le")).toBe("& 'claude' 'setup-token'");
+    expect(Buffer.from(encoded, "base64").toString("utf16le")).toBe("& 'C:\\private\\login-home\\claude.cmd' 'setup-token'");
     expect(settings.env.CLAUDE_CONFIG_DIR).toBe("C:\\private\\login-home");
     expect(settings.env.ANTHROPIC_API_KEY).toBe("");
     expect(settings.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("");
