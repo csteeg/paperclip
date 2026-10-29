@@ -147,6 +147,14 @@ const ANSI_CSI_RE = /\x1b\[[0-?]*[ -/]*[@-~]/g;
 // eslint-disable-next-line no-control-regex
 const CSI_HORIZONTAL_MOVE_RE = /\x1b\[[0-9;]*[GC]/g;
 
+// Cursor position sequences (CSI <row>;<col>H and CSI <row>;<col>f): On Windows
+// ConPTY, Ink renders lines by positioning the cursor at absolute row/col
+// coordinates rather than emitting CRLF. Replacing cursor position sequences
+// with a newline ensures that lines rendered via cursor jumping land on separate
+// lines rather than being concatenated into one line.
+// eslint-disable-next-line no-control-regex
+const CSI_POSITION_RE = /\x1b\[[0-9]+(?:;[0-9]+)?[Hf]/g;
+
 // An OSC 8 hyperlink. The terminal emits the URL through an OSC 8 hyperlink plus
 // wrapped display text. The hyperlink carries the true, unwrapped URL in its URI
 // field, while the display text may wrap across lines. The parser replaces the
@@ -181,6 +189,9 @@ const URL_PREAMBLE_RE = /the url below to sign in/i;
 // the line.
 const PROMPT_LINE_RE = /^Paste code here if prompted\b[\s>*]*$/;
 
+// The terminal copy hint printed by Claude Code v2.1.300+ before the prompt.
+const HINT_LINE_RE = /^Hold Shift while selecting to use your terminal's native copy$/i;
+
 // The maximum number of characters between the end of the URL preamble line and
 // the start of the URL. The Claude UI prints the URL right after the preamble.
 // The parser accepts a URL start only inside this window, so a URL far from the
@@ -211,9 +222,10 @@ interface SetupTokenUrlMatch {
  */
 function stripTerminalControls(text: string): string {
   return text
-    .replace(OSC8_HYPERLINK_RE, "$1")
+    .replace(OSC8_HYPERLINK_RE, "\n$1\n")
     .replace(OSC_ANY_RE, "")
     .replace(CSI_HORIZONTAL_MOVE_RE, " ")
+    .replace(CSI_POSITION_RE, "\n")
     .replace(ANSI_CSI_RE, "");
 }
 
@@ -375,6 +387,8 @@ function findBrowserCodePrompt(lines: string[], endLine: number, url: string): s
     // punctuation first, the same way the repeated-URL comparison needs, so a
     // repeated URL with a trailing punctuation mark still matches.
     if (trimmed.replace(TRAILING_PUNCTUATION_RE, "") === url) continue;
+    // Skip the terminal copy hint printed by Claude Code v2.1.300+ before the prompt.
+    if (HINT_LINE_RE.test(trimmed)) continue;
     return PROMPT_LINE_RE.test(trimmed) ? SETUP_TOKEN_PROMPT : null;
   }
   return null;

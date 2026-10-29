@@ -136,7 +136,7 @@ export async function preserveWorkspaceSnapshot(input: {
     await input.db.update(workspaceOperations).set({ status: "succeeded", finishedAt: new Date(), updatedAt: new Date() })
       .where(eq(workspaceOperations.id, operation.id));
     return operation.id;
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally { await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }).catch(() => {}); }
 }
 
 /** Recovered files are an attachment to a fresh attempt, never an overlay.
@@ -189,7 +189,7 @@ export async function attachPreservedWorkspaceSnapshots(input: {
         // Never replace an earlier attachment or user edits on a restart.
         await rename(staging, destination);
         results.push({ operationId: operation.id, path: destination, sourceRunId });
-      } finally { await rm(staging, { recursive: true, force: true }); }
+      } finally { await rm(staging, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }).catch(() => {}); }
     }
   }
   return results;

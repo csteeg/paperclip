@@ -40,7 +40,7 @@
   ],
   "scripts": {
     "build": "tsc",
-    "clean": "rm -rf dist",
+    "clean": "shx rm -rf dist",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
