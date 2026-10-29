@@ -150,14 +150,17 @@ describe("prepareManagedClaudePluginRuntime", () => {
     const sourceDir = path.join(root, "personal-claude");
     const sourcePlugin = path.join(sourceDir, "plugins", "cache", "superpowers", "superpowers", "1.0.0");
     const sourceSkill = path.join(sourceDir, "skills", "careconnections");
+    const trashedSkill = path.join(sourceDir, "skills", ".trash", "removed-skill");
     const configDir = path.join(root, "managed-run", "provider");
     await fs.mkdir(sourcePlugin, { recursive: true });
     await fs.mkdir(sourceSkill, { recursive: true });
+    await fs.mkdir(trashedSkill, { recursive: true });
     await fs.mkdir(configDir, { recursive: true });
     await fs.mkdir(path.join(configDir, "skills", "paperclip-selected"), { recursive: true });
     await fs.writeFile(path.join(configDir, "skills", "paperclip-selected", "SKILL.md"), "Paperclip selected skill\n");
     await fs.writeFile(path.join(sourcePlugin, "plugin.js"), "trusted plugin code\n");
     await fs.writeFile(path.join(sourceSkill, "SKILL.md"), "CareConnections workflow\n");
+    await fs.writeFile(path.join(trashedSkill, "SKILL.md"), "Removed skill\n");
     await fs.writeFile(path.join(sourceDir, ".credentials.json"), '{"token":"must-not-copy"}');
     await fs.writeFile(path.join(sourceDir, "settings.json"), JSON.stringify({
       enabledPlugins: { "superpowers@superpowers": true, "disabled@market": false },
@@ -183,6 +186,8 @@ describe("prepareManagedClaudePluginRuntime", () => {
       .resolves.toBe("trusted plugin code\n");
     await expect(fs.readFile(path.join(configDir, "skills", "careconnections", "SKILL.md"), "utf8"))
       .resolves.toBe("CareConnections workflow\n");
+    await expect(fs.access(path.join(configDir, "skills", ".trash")))
+      .rejects.toMatchObject({ code: "ENOENT" });
     await expect(fs.readFile(path.join(configDir, "skills", "paperclip-selected", "SKILL.md"), "utf8"))
       .resolves.toBe("Paperclip selected skill\n");
     const settings = JSON.parse(await fs.readFile(path.join(configDir, "settings.json"), "utf8"));

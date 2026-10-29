@@ -47,17 +47,22 @@ async function readJsonObject(candidate: string): Promise<Record<string, unknown
   }
 }
 
-async function fileMetadata(rootDir: string): Promise<Array<{ path: string; size: number; contentHash: string }>> {
+async function fileMetadata(
+  rootDir: string,
+  options: { excludeHiddenPaths?: boolean } = {},
+): Promise<Array<{ path: string; size: number; contentHash: string }>> {
   const files: Array<{ path: string; size: number; contentHash: string }> = [];
   const visit = async (directory: string): Promise<void> => {
     for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
       const candidate = path.join(directory, entry.name);
+      const relativePath = path.relative(rootDir, candidate);
+      if (options.excludeHiddenPaths && relativePath.split(path.sep).some((segment) => segment.startsWith("."))) continue;
       if (entry.isSymbolicLink()) continue;
       if (entry.isDirectory()) await visit(candidate);
       else if (entry.isFile()) {
         const contents = await fs.readFile(candidate);
         files.push({
-          path: path.relative(rootDir, candidate),
+          path: relativePath,
           size: contents.length,
           contentHash: createHash("sha256").update(contents).digest("hex"),
         });
@@ -159,7 +164,7 @@ export async function prepareManagedClaudePluginRuntime(input: {
   const [settings, installed, skills] = await Promise.all([
     readJsonObject(path.join(sourceDir, "settings.json")),
     readJsonObject(path.join(sourceDir, "plugins", "installed_plugins.json")),
-    fileMetadata(sourceSkillsRoot),
+    fileMetadata(sourceSkillsRoot, { excludeHiddenPaths: true }),
   ]);
   const rawEnabledPlugins = settings?.enabledPlugins;
   const enabledPlugins = rawEnabledPlugins && typeof rawEnabledPlugins === "object" && !Array.isArray(rawEnabledPlugins)
@@ -205,7 +210,9 @@ export async function prepareManagedClaudePluginRuntime(input: {
           plugins: rewrittenPlugins,
         }, null, 2), { mode: 0o600 });
       }
-      if (skillFiles.length > 0) await copyTreeWithoutSymlinks(sourceSkillsRoot, path.join(stagingDir, "skills"));
+      if (skillFiles.length > 0) {
+        await copyManagedClaudeSkills(sourceSkillsRoot, path.join(stagingDir, "skills"), skillFiles);
+      }
       try {
         await fs.rename(stagingDir, snapshotDir);
       } catch (error) {
