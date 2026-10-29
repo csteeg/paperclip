@@ -4,7 +4,7 @@ import { createOAuthClientRegistration } from "./client-registration.js";
 import type { ActorInfo } from "../types.js";
 import { createOAuthEndpointPolicy } from "./endpoint-policy.js";
 import { createOAuthDiscovery } from "./discovery.js";
-import { oauthConfig, normalizeOauthScopes, originOf, isMicrosoftV2OAuthUrl } from "./metadata.js";
+import { oauthConfig, normalizeOauthScopes, originOf, shouldOmitMicrosoftResourceIndicator } from "./metadata.js";
 import { connectionMethodForConnection } from "../connection-methods.js";
 import { GOOGLE_WORKSPACE_DEFAULT_SELECTION, googleWorkspaceSelectedScopes, type GoogleWorkspaceServiceSelection, isGoogleWorkspaceScopeGrant } from "@paperclipai/shared";
 import { and, eq, lt } from "drizzle-orm";
@@ -485,7 +485,14 @@ export function createOAuthAuthorizationStart(db: Db, dependencies: Dependencies
     // Microsoft Entra ID v2.0 determines the resource from the scope (e.g. https://.../.default)
     // and explicitly rejects requests with error=invalid_target (AADSTS9010010) if the resource
     // parameter does not match the scope prefix. Microsoft v1 endpoints still require `resource`.
-    if (endpoints.resource && !isMicrosoftV2OAuthUrl(endpoints.authorizationUrl))
+    // We only omit the resource indicator for verified Microsoft resources with matching scopes,
+    // ensuring untrusted remote MCP servers cannot suppress RFC 8707 audience restrictions.
+    const omitResource = shouldOmitMicrosoftResourceIndicator({
+      oauthUrl: endpoints.authorizationUrl,
+      resource: endpoints.resource,
+      scopes: authorizationScopes,
+    });
+    if (endpoints.resource && !omitResource)
       authorizationUrl.searchParams.set("resource", endpoints.resource);
     // Curated definitions are an allowlist, not a suggestion. Never copy every
     // scope advertised by discovery into a provider consent screen: a curated
