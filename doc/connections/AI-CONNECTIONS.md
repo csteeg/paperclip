@@ -336,10 +336,12 @@ trusted: plugin code, including its hooks and MCP servers, runs with the agent's
 permissions. Keep `CLAUDE_CONFIG_DIR` and `HOME` managed per invocation; do not
 point multiple agents at a writable personal config directory.
 
-The profile import currently applies to managed CLI runs (local and sandbox)
-and local managed ACP runs. Remote managed ACP does not stage this personal
-profile. This option persists plugin and skill files, not Claude transcripts;
-it does not by itself enable managed Claude session resume.
+The profile import currently applies to local managed CLI runs, including a
+local-process sandbox, and local managed ACP runs. Remote CLI and ACP runs do
+not stage this personal profile. This avoids copying private plugin sources to
+another host and avoids paths that exist only on the Paperclip server. This
+option persists plugin and skill files, not Claude transcripts; it does not by
+itself enable managed Claude session resume.
 
 A subscription invocation takes no lease. Two invocations of one grant, from
 the same or a different provider account, run at the same time. At cleanup,

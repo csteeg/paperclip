@@ -513,6 +513,8 @@ describe("claude execute", () => {
     const sourcePluginDir = path.join(sourceDir, "plugins", "cache", "trusted", "careconnections", "1.0.0");
     await fs.mkdir(sourcePluginDir, { recursive: true });
     await fs.mkdir(path.join(sourceDir, "skills", "careconnections"), { recursive: true });
+    await fs.mkdir(path.join(managedConfigDir, "skills", "careconnections"), { recursive: true });
+    await fs.writeFile(path.join(managedConfigDir, "skills", "careconnections", "SKILL.md"), "Paperclip task skill", "utf8");
     await fs.writeFile(path.join(sourceDir, ".credentials.json"), "personal-secret", "utf8");
     await fs.writeFile(path.join(sourceDir, "settings.json"), JSON.stringify({ enabledPlugins: { "careconnections@trusted": true } }), "utf8");
     await fs.writeFile(path.join(sourceDir, "plugins", "installed_plugins.json"), JSON.stringify({
@@ -564,6 +566,8 @@ describe("claude execute", () => {
       expect(capture.claudePluginCacheDir).toContain("managed-plugin-cache");
       expect(capture.claudePluginCacheDir).toContain("agents/agent-managed");
       expect(capture.claudeConfigEntries).toEqual(expect.arrayContaining(["settings.json", "skills"]));
+      expect(await fs.readFile(path.join(managedConfigDir, "skills", "careconnections", "SKILL.md"), "utf8"))
+        .toBe("Paperclip task skill");
       expect(await fs.readFile(path.join(capture.claudePluginCacheDir!, "cache", "trusted", "careconnections", "1.0.0", "plugin.js"), "utf8"))
         .toBe("trusted plugin payload");
       expect(JSON.parse(capture.mcpConfigContents!).mcpServers.paperclip.headers.Authorization)

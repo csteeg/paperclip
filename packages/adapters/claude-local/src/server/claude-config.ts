@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -56,15 +57,32 @@ async function fileMetadata(
     for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
       const candidate = path.join(directory, entry.name);
       const relativePath = path.relative(rootDir, candidate);
-      if (options.excludeHiddenPaths && relativePath.split(path.sep).some((segment) => segment.startsWith("."))) continue;
+      const rootEntry = relativePath.split(path.sep, 1)[0] ?? "";
+      if (options.excludeHiddenPaths && rootEntry.startsWith(".")) continue;
       if (entry.isSymbolicLink()) continue;
       if (entry.isDirectory()) await visit(candidate);
       else if (entry.isFile()) {
-        const contents = await fs.readFile(candidate);
+        const stat = await fs.stat(candidate, { bigint: true });
+        const cached = fileHashCache.get(candidate);
+        const signature = `${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+        let contentHash = cached?.signature === signature ? cached.contentHash : null;
+        if (contentHash === null) {
+          const hash = createHash("sha256");
+          for await (const chunk of createReadStream(candidate)) hash.update(chunk);
+          contentHash = hash.digest("hex");
+          fileHashCache.set(candidate, { signature, contentHash });
+          if (fileHashCache.size > MAX_FILE_HASH_CACHE_ENTRIES) {
+            const oldest = fileHashCache.keys().next().value;
+            if (oldest) fileHashCache.delete(oldest);
+          }
+        } else {
+          fileHashCache.delete(candidate);
+          fileHashCache.set(candidate, { signature, contentHash });
+        }
         files.push({
           path: relativePath,
-          size: contents.length,
-          contentHash: createHash("sha256").update(contents).digest("hex"),
+          size: Number(stat.size),
+          contentHash,
         });
       }
     }
@@ -72,6 +90,9 @@ async function fileMetadata(
   if (await pathExists(rootDir)) await visit(rootDir);
   return files.sort((left, right) => left.path.localeCompare(right.path));
 }
+
+const MAX_FILE_HASH_CACHE_ENTRIES = 20_000;
+const fileHashCache = new Map<string, { signature: string; contentHash: string }>();
 
 async function copyTreeWithoutSymlinks(sourceDir: string, targetDir: string): Promise<void> {
   if (!(await pathExists(sourceDir))) return;
@@ -174,10 +195,13 @@ export async function prepareManagedClaudePluginRuntime(input: {
     : {};
   const candidateInstalls = resolveManagedClaudePluginInstalls(installed, sourceCacheRoot)
     .filter((install) => enabledPlugins[install.id] === true);
-  const installSnapshots = await Promise.all(candidateInstalls.map(async (install) => ({
-    install,
-    files: await fileMetadata(path.join(sourceCacheRoot, install.cacheRelativePath)),
-  })));
+  const installSnapshots: Array<{ install: ManagedClaudePluginInstall; files: Array<{ path: string; size: number; contentHash: string }> }> = [];
+  for (const install of candidateInstalls) {
+    installSnapshots.push({
+      install,
+      files: await fileMetadata(path.join(sourceCacheRoot, install.cacheRelativePath)),
+    });
+  }
   const installs = installSnapshots.filter(({ files }) => files.length > 0).map(({ install }) => install);
   const skillFiles = skills.filter((entry) => path.basename(entry.path).toLowerCase() === "skill.md");
   if (installs.length === 0 && skillFiles.length === 0) return { pluginRoot: null, skillCount: 0 };

@@ -582,7 +582,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   });
   const localMcpConfigDir = path.dirname(localMcpConfigPath);
   const sharedClaudeConfigDir = config.managedAiConnection ? asString(configEnv.CLAUDE_CONFIG_DIR, "") : resolveSharedClaudeConfigDir(process.env);
-  const managedClaudePluginRuntime = config.managedAiConnection
+  const managedClaudePluginRuntime = config.managedAiConnection && !executionTargetIsRemote
     ? await prepareManagedClaudePluginRuntime({
         env: process.env,
         companyId: agent.companyId,
@@ -612,9 +612,6 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
           managedPaths: [
             { path: sharedClaudeConfigDir, access: "rw" },
             { path: path.join(path.dirname(sharedClaudeConfigDir), ".claude.json"), access: "rw" },
-            ...(managedClaudePluginRuntime?.pluginRoot
-              ? [{ path: managedClaudePluginRuntime.pluginRoot, access: "ro" as const }]
-              : []),
             { path: promptBundle.addDir, access: "ro" },
             { path: localMcpConfigDir, access: "ro" },
           ],
@@ -680,13 +677,6 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
                 followSymlinks: true,
               }]
               : []),
-            ...(managedClaudePluginRuntime?.pluginRoot
-              ? [{
-                key: "managed-plugins",
-                localDir: managedClaudePluginRuntime.pluginRoot,
-                followSymlinks: false,
-              }]
-              : []),
           ],
         });
       })()
@@ -742,13 +732,10 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     ? path.posix.join(remoteClaudeRuntimeRoot, "config")
     : null;
   if (config.managedAiConnection && executionTargetIsRemote) {
-    const remotePluginRoot = managedClaudePluginRuntime?.pluginRoot
-      ? preparedExecutionTargetRuntime?.assetDirs["managed-plugins"]
-      : null;
-    if (managedClaudePluginRuntime?.pluginRoot && !remotePluginRoot) {
-      throw new Error("The remote Claude runtime did not materialize its managed plugin cache");
-    }
-    env.CLAUDE_CODE_PLUGIN_CACHE_DIR = remotePluginRoot ?? path.posix.join(remoteClaudeConfigDir ?? path.posix.join(remoteClaudeRuntimeRoot ?? effectiveExecutionCwd, "config"), "plugins");
+    env.CLAUDE_CODE_PLUGIN_CACHE_DIR = path.posix.join(
+      remoteClaudeConfigDir ?? path.posix.join(remoteClaudeRuntimeRoot ?? effectiveExecutionCwd, "config"),
+      "plugins",
+    );
   }
   if (remoteClaudeConfigDir && remoteClaudeConfigSeedDir) {
     env.CLAUDE_CONFIG_DIR = remoteClaudeConfigDir;

@@ -150,16 +150,21 @@ describe("prepareManagedClaudePluginRuntime", () => {
     const sourceDir = path.join(root, "personal-claude");
     const sourcePlugin = path.join(sourceDir, "plugins", "cache", "superpowers", "superpowers", "1.0.0");
     const sourceSkill = path.join(sourceDir, "skills", "careconnections");
+    const sourceGuidance = path.join(sourceDir, "skills", "company-guidance");
     const trashedSkill = path.join(sourceDir, "skills", ".trash", "removed-skill");
     const configDir = path.join(root, "managed-run", "provider");
     await fs.mkdir(sourcePlugin, { recursive: true });
     await fs.mkdir(sourceSkill, { recursive: true });
+    await fs.mkdir(sourceGuidance, { recursive: true });
     await fs.mkdir(trashedSkill, { recursive: true });
     await fs.mkdir(configDir, { recursive: true });
-    await fs.mkdir(path.join(configDir, "skills", "paperclip-selected"), { recursive: true });
-    await fs.writeFile(path.join(configDir, "skills", "paperclip-selected", "SKILL.md"), "Paperclip selected skill\n");
+    await fs.mkdir(path.join(configDir, "skills", "careconnections"), { recursive: true });
+    await fs.writeFile(path.join(configDir, "skills", "careconnections", "SKILL.md"), "Paperclip selected skill\n");
     await fs.writeFile(path.join(sourcePlugin, "plugin.js"), "trusted plugin code\n");
     await fs.writeFile(path.join(sourceSkill, "SKILL.md"), "CareConnections workflow\n");
+    await fs.writeFile(path.join(sourceSkill, ".config.json"), '{"profile":"careconnections"}');
+    await fs.writeFile(path.join(sourceGuidance, "SKILL.md"), "Company guidance\n");
+    await fs.writeFile(path.join(sourceGuidance, ".config.json"), '{"version":1}');
     await fs.writeFile(path.join(trashedSkill, "SKILL.md"), "Removed skill\n");
     await fs.writeFile(path.join(sourceDir, ".credentials.json"), '{"token":"must-not-copy"}');
     await fs.writeFile(path.join(sourceDir, "settings.json"), JSON.stringify({
@@ -181,15 +186,15 @@ describe("prepareManagedClaudePluginRuntime", () => {
     const result = await prepareManagedClaudePluginRuntime({ env, companyId: "company-1", agentId: "agent-1", configDir });
 
     expect(result.pluginRoot).not.toBeNull();
-    expect(result.skillCount).toBe(1);
+    expect(result.skillCount).toBe(2);
     await expect(fs.readFile(path.join(result.pluginRoot!, "cache", "superpowers", "superpowers", "1.0.0", "plugin.js"), "utf8"))
       .resolves.toBe("trusted plugin code\n");
     await expect(fs.readFile(path.join(configDir, "skills", "careconnections", "SKILL.md"), "utf8"))
-      .resolves.toBe("CareConnections workflow\n");
+      .resolves.toBe("Paperclip selected skill\n");
+    await expect(fs.readFile(path.join(configDir, "skills", "company-guidance", ".config.json"), "utf8"))
+      .resolves.toBe('{"version":1}');
     await expect(fs.access(path.join(configDir, "skills", ".trash")))
       .rejects.toMatchObject({ code: "ENOENT" });
-    await expect(fs.readFile(path.join(configDir, "skills", "paperclip-selected", "SKILL.md"), "utf8"))
-      .resolves.toBe("Paperclip selected skill\n");
     const settings = JSON.parse(await fs.readFile(path.join(configDir, "settings.json"), "utf8"));
     expect(settings).toEqual({ enabledPlugins: { "disabled@market": false, "superpowers@superpowers": true } });
     const installed = JSON.parse(await fs.readFile(path.join(result.pluginRoot!, "installed_plugins.json"), "utf8"));
@@ -209,6 +214,17 @@ describe("prepareManagedClaudePluginRuntime", () => {
     ]);
     expect(secondRun.pluginRoot).toBe(result.pluginRoot);
     expect(otherAgent.pluginRoot).not.toBe(result.pluginRoot);
+
+    await fs.writeFile(path.join(sourceGuidance, ".config.json"), '{"version":2}');
+    const changedRun = await prepareManagedClaudePluginRuntime({
+      env,
+      companyId: "company-1",
+      agentId: "agent-1",
+      configDir: path.join(root, "changed-run", "provider"),
+    });
+    expect(changedRun.pluginRoot).not.toBe(result.pluginRoot);
+    await expect(fs.readFile(path.join(root, "changed-run", "provider", "skills", "company-guidance", ".config.json"), "utf8"))
+      .resolves.toBe('{"version":2}');
   });
 
   it("does nothing when no plugin source is explicitly configured", async () => {
