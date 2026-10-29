@@ -704,7 +704,10 @@ printf 'patched spawnEnvironment runtime\\n' > "$target/dist/runtime.js"
     readFileSync(callLog, "utf8"),
     /patch -p1 --forward -d .*node_modules\/acpx/,
   );
-  const patchedBundledDependencies = serverPackage.bundleDependencies.filter(name => rootPackage.pnpm.patchedDependencies[`${name}@${serverPackage.dependencies[name]}`]);
+  const patchedBundledDependencies = serverPackage.bundleDependencies.filter(name => {
+    const version = serverPackage.dependencies[name] ?? serverPackage.optionalDependencies?.[name];
+    return version && rootPackage.pnpm.patchedDependencies[`${name}@${version}`];
+  });
   assert.equal(
     readFileSync(callLog, "utf8")
       .split("\n")
@@ -712,7 +715,8 @@ printf 'patched spawnEnvironment runtime\\n' > "$target/dist/runtime.js"
     patchedBundledDependencies.length,
   );
   for (const name of patchedBundledDependencies) {
-    const specifier = `${name}@${serverPackage.dependencies[name]}`;
+    const version = serverPackage.dependencies[name] ?? serverPackage.optionalDependencies?.[name];
+    const specifier = `${name}@${version}`;
     const patchPath = rootPackage.pnpm.patchedDependencies[specifier];
     assert.equal(
       readFileSync(
