@@ -83,6 +83,7 @@ const originalNodeVersion = process.version;
 const originalEnv: Record<string, string | undefined> = {
   PAPERCLIP_HOME: process.env.PAPERCLIP_HOME,
   PAPERCLIP_INSTANCE_ID: process.env.PAPERCLIP_INSTANCE_ID,
+  PAPERCLIP_CLAUDE_PLUGIN_SOURCE_DIR: process.env.PAPERCLIP_CLAUDE_PLUGIN_SOURCE_DIR,
   CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR,
 };
 
@@ -268,6 +269,51 @@ function buildContext(root: string, overrides: Partial<AdapterExecutionContext> 
 }
 
 describe("claude_local ACP lane", () => {
+  it("imports opted-in plugins and skills into a managed local ACP run", async () => {
+    const root = await makeTempRoot("paperclip-claude-acp-managed-plugins-");
+    const sourceDir = path.join(root, "personal-claude-config");
+    const pluginDir = path.join(sourceDir, "plugins", "cache", "company", "careconnections", "1.2.0");
+    const configDir = path.join(root, "managed-home", "provider");
+    await fs.mkdir(pluginDir, { recursive: true });
+    await fs.mkdir(path.join(sourceDir, "skills", "careconnections"), { recursive: true });
+    await fs.writeFile(path.join(sourceDir, "settings.json"), JSON.stringify({
+      enabledPlugins: { "careconnections@company": true },
+    }), "utf8");
+    await fs.writeFile(path.join(sourceDir, "plugins", "installed_plugins.json"), JSON.stringify({
+      version: 2,
+      plugins: { "careconnections@company": [{ scope: "user", installPath: pluginDir, version: "1.2.0" }] },
+    }), "utf8");
+    await fs.writeFile(path.join(pluginDir, "plugin.js"), "trusted plugin", "utf8");
+    await fs.writeFile(path.join(sourceDir, "skills", "careconnections", "SKILL.md"), "CareConnections skill", "utf8");
+    process.env.PAPERCLIP_HOME = path.join(root, "paperclip-home");
+    process.env.PAPERCLIP_INSTANCE_ID = "acp-plugin-test";
+    process.env.PAPERCLIP_CLAUDE_PLUGIN_SOURCE_DIR = sourceDir;
+
+    const meta: AdapterInvocationMeta[] = [];
+    const execute = createClaudeAcpExecutor({
+      createRuntime: (options: FakeRuntimeOptions) => new FakeRuntime(options) as never,
+    });
+    const result = await execute(buildContext(root, {
+      config: {
+        engine: "acp",
+        cwd: root,
+        stateDir: path.join(root, "state"),
+        env: { CLAUDE_CONFIG_DIR: configDir },
+        managedAiConnection: { provider: "anthropic", method: "api_key" },
+      },
+      onMeta: async (payload) => { meta.push(payload); },
+    }));
+
+    expect(result.exitCode).toBe(0);
+    expect(meta[0]?.env?.CLAUDE_CONFIG_DIR).toBe(configDir);
+    expect(meta[0]?.env?.CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL).toBe("1");
+    expect(meta[0]?.env?.CLAUDE_CODE_PLUGIN_CACHE_DIR).toContain("managed-plugin-cache");
+    await expect(fs.readFile(path.join(configDir, "skills", "careconnections", "SKILL.md"), "utf8"))
+      .resolves.toBe("CareConnections skill");
+    await expect(fs.readFile(path.join(String(meta[0]?.env?.CLAUDE_CODE_PLUGIN_CACHE_DIR), "cache", "company", "careconnections", "1.2.0", "plugin.js"), "utf8"))
+      .resolves.toBe("trusted plugin");
+  });
+
   it("uses the same default model in ACP startup and session identity", async () => {
     const root = await makeTempRoot("paperclip-claude-acp-default-");
     const meta: AdapterInvocationMeta[] = [];

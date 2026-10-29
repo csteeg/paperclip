@@ -42,6 +42,7 @@ import {
 } from "@paperclipai/adapter-utils/server-utils";
 import {
   materializeRemoteClaudeConfig,
+  prepareManagedClaudePluginRuntime,
   prepareClaudeConfigSeed,
   prepareSandboxClaudeProbeRuntime,
 } from "./claude-config.js";
@@ -313,6 +314,10 @@ async function prepareClaudeRemoteManagedHome(
   });
   // Repoint CLAUDE_CONFIG_DIR onto the in-sandbox config dir.
   env.CLAUDE_CONFIG_DIR = remoteClaudeConfigDir;
+  if (input.config.managedAiConnection) {
+    env.CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL = "1";
+    env.CLAUDE_CODE_PLUGIN_CACHE_DIR = path.posix.join(remoteClaudeConfigDir, "plugins");
+  }
   return { stagedRuntime, teardown: registerWorkspaceSyncBack(stagedRuntime) };
 }
 
@@ -401,10 +406,29 @@ export function createClaudeAcpExecutor(options: ClaudeAcpExecutorOptions = {}):
       executionTarget: ctx.executionTarget,
       legacyRemoteExecution: ctx.executionTransport?.remoteExecution,
     });
-    const result = await currentExecutor({
-      ...ctx,
-      config: buildClaudeAcpConfig(ctx.config, target?.kind === "remote" ? {} : process.env),
-    });
+    const acpConfig = buildClaudeAcpConfig(ctx.config, target?.kind === "remote" ? {} : process.env);
+    const acpEnv = parseObject(acpConfig.env);
+    if (acpConfig.managedAiConnection && target?.kind !== "remote") {
+      const configDir = typeof acpEnv.CLAUDE_CONFIG_DIR === "string" ? acpEnv.CLAUDE_CONFIG_DIR : "";
+      const managedPlugins = await prepareManagedClaudePluginRuntime({
+        env: process.env,
+        companyId: ctx.agent.companyId,
+        agentId: ctx.agent.id,
+        configDir,
+      });
+      acpConfig.env = {
+        ...acpEnv,
+        CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL: "1",
+        CLAUDE_CODE_PLUGIN_CACHE_DIR: managedPlugins.pluginRoot ?? path.join(configDir, "plugins"),
+      };
+      if (managedPlugins.pluginRoot || managedPlugins.skillCount > 0) {
+        await ctx.onLog(
+          "stdout",
+          `[paperclip] Imported ${managedPlugins.skillCount} personal Claude skills and configured the managed plugin cache for local ACP.\n`,
+        );
+      }
+    }
+    const result = await currentExecutor({ ...ctx, config: acpConfig });
     return mapClaudeAcpAuthErrorCode(result);
   };
 }

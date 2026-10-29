@@ -35,6 +35,203 @@ async function pathExists(candidate: string): Promise<boolean> {
   return fs.access(candidate).then(() => true).catch(() => false);
 }
 
+async function readJsonObject(candidate: string): Promise<Record<string, unknown> | null> {
+  try {
+    const parsed: unknown = JSON.parse(await fs.readFile(candidate, "utf8"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+async function fileMetadata(rootDir: string): Promise<Array<{ path: string; size: number; contentHash: string }>> {
+  const files: Array<{ path: string; size: number; contentHash: string }> = [];
+  const visit = async (directory: string): Promise<void> => {
+    for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+      const candidate = path.join(directory, entry.name);
+      if (entry.isSymbolicLink()) continue;
+      if (entry.isDirectory()) await visit(candidate);
+      else if (entry.isFile()) {
+        const contents = await fs.readFile(candidate);
+        files.push({
+          path: path.relative(rootDir, candidate),
+          size: contents.length,
+          contentHash: createHash("sha256").update(contents).digest("hex"),
+        });
+      }
+    }
+  };
+  if (await pathExists(rootDir)) await visit(rootDir);
+  return files.sort((left, right) => left.path.localeCompare(right.path));
+}
+
+async function copyTreeWithoutSymlinks(sourceDir: string, targetDir: string): Promise<void> {
+  if (!(await pathExists(sourceDir))) return;
+  await fs.cp(sourceDir, targetDir, {
+    recursive: true,
+    filter: async (candidate) => path.resolve(candidate) === path.resolve(sourceDir) ||
+      !(await fs.lstat(candidate)).isSymbolicLink(),
+  });
+}
+
+async function copyManagedClaudeSkills(
+  sourceSkillsDir: string,
+  targetSkillsDir: string,
+  skillFiles: Array<{ path: string }>,
+): Promise<void> {
+  await fs.mkdir(targetSkillsDir, { recursive: true, mode: 0o700 });
+  const skillDirs = [...new Set(skillFiles.map((entry) => path.dirname(entry.path)))].filter((entry) => entry !== ".");
+  for (const skillDir of skillDirs) {
+    const targetSkillDir = path.join(targetSkillsDir, skillDir);
+    const targetExists = await fs.lstat(targetSkillDir).then(() => true).catch((error) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    });
+    // Paperclip's task-selected skills already occupy this name in the managed
+    // config. Keep that link and avoid replacing it with a personal skill.
+    if (targetExists) continue;
+    await copyTreeWithoutSymlinks(path.join(sourceSkillsDir, skillDir), targetSkillDir);
+  }
+}
+
+interface ManagedClaudePluginInstall {
+  id: string;
+  cacheRelativePath: string;
+  metadata: Record<string, unknown>;
+}
+
+function resolveManagedClaudePluginInstalls(
+  installed: Record<string, unknown> | null,
+  cacheRoot: string,
+): ManagedClaudePluginInstall[] {
+  const plugins = installed?.plugins;
+  if (!plugins || typeof plugins !== "object" || Array.isArray(plugins)) return [];
+  const result: ManagedClaudePluginInstall[] = [];
+  for (const [id, records] of Object.entries(plugins as Record<string, unknown>)) {
+    if (!Array.isArray(records)) continue;
+    for (const value of records) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+      const record = value as Record<string, unknown>;
+      if (typeof record.installPath !== "string" || typeof record.version !== "string") continue;
+      const relative = path.relative(cacheRoot, path.resolve(record.installPath));
+      if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) continue;
+      const metadata: Record<string, unknown> = {
+        scope: typeof record.scope === "string" ? record.scope : "user",
+        installPath: relative,
+        version: record.version,
+      };
+      for (const key of ["installedAt", "lastUpdated", "gitCommitSha"]) {
+        if (typeof record[key] === "string") metadata[key] = record[key];
+      }
+      result.push({ id, cacheRelativePath: relative, metadata });
+    }
+  }
+  return result.sort((left, right) => `${left.id}\0${left.cacheRelativePath}`.localeCompare(`${right.id}\0${right.cacheRelativePath}`));
+}
+
+/**
+ * Copies enabled plugin payloads and plain skills from an explicitly configured
+ * profile into persistent per-agent cache state. Credentials, MCP settings,
+ * hooks outside plugins, and marketplace sources are deliberately excluded.
+ */
+export async function prepareManagedClaudePluginRuntime(input: {
+  env: NodeJS.ProcessEnv;
+  companyId: string;
+  agentId: string;
+  configDir: string;
+}): Promise<{ pluginRoot: string | null; skillCount: number }> {
+  const configuredSource = nonEmpty(input.env.PAPERCLIP_CLAUDE_PLUGIN_SOURCE_DIR);
+  if (!configuredSource) return { pluginRoot: null, skillCount: 0 };
+  if (!input.configDir.trim()) throw new Error("Managed Claude config directory is missing");
+  const sourceDir = path.resolve(configuredSource);
+  if (sourceDir === path.resolve(input.configDir)) {
+    throw new Error("Claude plugin source and managed run config must be separate directories");
+  }
+  if (!(await pathExists(sourceDir))) {
+    throw new Error(`Configured Claude plugin source directory does not exist: ${sourceDir}`);
+  }
+
+  const sourceCacheRoot = path.join(sourceDir, "plugins", "cache");
+  const sourceSkillsRoot = path.join(sourceDir, "skills");
+  const [settings, installed, skills] = await Promise.all([
+    readJsonObject(path.join(sourceDir, "settings.json")),
+    readJsonObject(path.join(sourceDir, "plugins", "installed_plugins.json")),
+    fileMetadata(sourceSkillsRoot),
+  ]);
+  const rawEnabledPlugins = settings?.enabledPlugins;
+  const enabledPlugins = rawEnabledPlugins && typeof rawEnabledPlugins === "object" && !Array.isArray(rawEnabledPlugins)
+    ? Object.fromEntries(Object.entries(rawEnabledPlugins as Record<string, unknown>)
+      .filter(([id, enabled]) => id.trim().length > 0 && typeof enabled === "boolean")
+      .sort(([left], [right]) => left.localeCompare(right))) as Record<string, boolean>
+    : {};
+  const candidateInstalls = resolveManagedClaudePluginInstalls(installed, sourceCacheRoot)
+    .filter((install) => enabledPlugins[install.id] === true);
+  const installSnapshots = await Promise.all(candidateInstalls.map(async (install) => ({
+    install,
+    files: await fileMetadata(path.join(sourceCacheRoot, install.cacheRelativePath)),
+  })));
+  const installs = installSnapshots.filter(({ files }) => files.length > 0).map(({ install }) => install);
+  const skillFiles = skills.filter((entry) => path.basename(entry.path).toLowerCase() === "skill.md");
+  if (installs.length === 0 && skillFiles.length === 0) return { pluginRoot: null, skillCount: 0 };
+
+  const stateDir = resolveManagedClaudeRuntimeStateDir(input.env, input.companyId, input.agentId);
+  const snapshotKey = createHash("sha256").update(JSON.stringify({
+    enabledPlugins,
+    installs: installSnapshots
+      .filter(({ files }) => files.length > 0)
+      .map(({ install, files }) => ({ id: install.id, cacheRelativePath: install.cacheRelativePath, metadata: install.metadata, files })),
+    skills,
+  })).digest("hex").slice(0, 24);
+  const snapshotRoot = path.join(stateDir, "managed-plugin-cache");
+  const snapshotDir = path.join(snapshotRoot, snapshotKey);
+  if (!(await pathExists(snapshotDir))) {
+    await fs.mkdir(snapshotRoot, { recursive: true, mode: 0o700 });
+    const stagingDir = await fs.mkdtemp(path.join(snapshotRoot, ".tmp-"));
+    try {
+      const rewrittenPlugins: Record<string, Array<Record<string, unknown>>> = {};
+      for (const install of installs) {
+        const sourceInstallDir = path.join(sourceCacheRoot, install.cacheRelativePath);
+        const targetInstallDir = path.join(stagingDir, "plugins", "cache", install.cacheRelativePath);
+        await copyTreeWithoutSymlinks(sourceInstallDir, targetInstallDir);
+        const metadata = { ...install.metadata, installPath: path.join(snapshotDir, "plugins", "cache", install.cacheRelativePath) };
+        (rewrittenPlugins[install.id] ??= []).push(metadata);
+      }
+      if (Object.keys(rewrittenPlugins).length > 0) {
+        await fs.writeFile(path.join(stagingDir, "plugins", "installed_plugins.json"), JSON.stringify({
+          version: installed?.version ?? 2,
+          plugins: rewrittenPlugins,
+        }, null, 2), { mode: 0o600 });
+      }
+      if (skillFiles.length > 0) await copyTreeWithoutSymlinks(sourceSkillsRoot, path.join(stagingDir, "skills"));
+      try {
+        await fs.rename(stagingDir, snapshotDir);
+      } catch (error) {
+        if (!isAlreadyExistsError(error) && !(await pathExists(snapshotDir))) throw error;
+        await fs.rm(stagingDir, { recursive: true, force: true });
+      }
+    } catch (error) {
+      await fs.rm(stagingDir, { recursive: true, force: true }).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  await fs.mkdir(input.configDir, { recursive: true, mode: 0o700 });
+  if (installs.length > 0) {
+    await fs.writeFile(path.join(input.configDir, "settings.json"), JSON.stringify({ enabledPlugins }, null, 2), { mode: 0o600 });
+  }
+  if (skillFiles.length > 0) {
+    await copyManagedClaudeSkills(
+      path.join(snapshotDir, "skills"),
+      path.join(input.configDir, "skills"),
+      skillFiles,
+    );
+  }
+  return { pluginRoot: installs.length > 0 ? path.join(snapshotDir, "plugins") : null, skillCount: skillFiles.length };
+}
+
 function isAlreadyExistsError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const code = "code" in error ? error.code : null;
