@@ -38,7 +38,12 @@ test("a task title survives an outage and saves after server recovery", async ({
     expect((await json(await request.get(`/api/issues/${issue.id}`))).title).toBe(issue.title);
     await expect(header).toBeVisible();
 
+    // Hold the replayable mutation while the browser is disconnected, then
+    // make recovery explicit so the connectivity store resumes it promptly.
+    await page.context().setOffline(true);
+    await expect(page.locator('[data-connection-status="offline"]')).toBeVisible();
     unavailable = false;
+    await page.context().setOffline(false);
     await expect.poll(async () => (await json(await request.get(`/api/issues/${issue.id}`))).title,
       { timeout: 30_000 }).toBe("A title retained through the outage");
     expect((await json(await request.get(`/api/issues/${other.id}`))).title).toBe(other.title);
