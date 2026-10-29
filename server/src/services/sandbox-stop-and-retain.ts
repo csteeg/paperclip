@@ -116,7 +116,7 @@ async function prepareStopAndRetain(db: Db, lease: Lease, fromStatus: "active" |
     sql`${environmentLeases.provider} is not distinct from ${lease.provider}`,
     sql`${environmentLeases.providerLeaseId} is not distinct from ${lease.providerLeaseId}`,
     sql`${environmentLeases.metadata} is not distinct from ${lease.metadata === null ? null : JSON.stringify(lease.metadata)}::jsonb`,
-  )).returning());
+  )).returning(), { companyId: lease.companyId, runId: lease.heartbeatRunId ?? undefined });
   return updated ?? null;
 }
 
@@ -151,7 +151,7 @@ export async function settleStopOnlyCleanup(db: Db, lease: Lease, options: { att
       sql`${environmentLeases.metadata}->'sandboxStopAndRetain' = ${JSON.stringify(lease.metadata?.[SANDBOX_STOP_AND_RETAIN_KEY])}::jsonb`,
       sql`${environmentLeases.metadata}->>'pluginId' is not distinct from ${intent.pluginId}`,
     )).returning();
-  });
+  }, { companyId: lease.companyId, runId: lease.heartbeatRunId ?? undefined });
   return updated ?? null;
 }
 
