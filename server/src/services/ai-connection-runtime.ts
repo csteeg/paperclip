@@ -25,11 +25,38 @@ import { runAdapterExecutionTargetProcess } from "@paperclipai/adapter-utils/exe
 import { decideGrokAuthMerge } from "@paperclipai/adapter-grok-local/server";
 import { logger } from "../middleware/logger.js";
 
+const pendingManagedHomeRemovals = new Set<string>();
+let managedHomeRemovalRetry: NodeJS.Timeout | undefined;
+
+function scheduleManagedHomeRemovalRetry() {
+  if (managedHomeRemovalRetry || pendingManagedHomeRemovals.size === 0) return;
+  managedHomeRemovalRetry = setTimeout(() => {
+    managedHomeRemovalRetry = undefined;
+    void retryPendingManagedHomeRemovals();
+  }, 30_000);
+  managedHomeRemovalRetry.unref();
+}
+
+async function retryPendingManagedHomeRemovals() {
+  for (const homeDir of pendingManagedHomeRemovals) {
+    try {
+      await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+      pendingManagedHomeRemovals.delete(homeDir);
+    } catch (error) {
+      logger.warn({ dir: homeDir, err: error }, "Failed to remove temporary managed AI home directory; cleanup remains queued");
+    }
+  }
+  scheduleManagedHomeRemovalRetry();
+}
+
 async function safeRemoveManagedHome(homeDir: string) {
   try {
     await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    pendingManagedHomeRemovals.delete(homeDir);
   } catch (error) {
-    logger.warn({ dir: homeDir, err: error }, "Failed to remove temporary managed AI home directory");
+    pendingManagedHomeRemovals.add(homeDir);
+    logger.warn({ dir: homeDir, err: error }, "Failed to remove temporary managed AI home directory; cleanup remains queued");
+    scheduleManagedHomeRemovalRetry();
   }
 }
 
