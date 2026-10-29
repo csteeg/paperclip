@@ -321,7 +321,7 @@ for (const journey of [
         queue.getByRole("button", { name: "Decline", exact: true }),
       ).not.toBeVisible({ timeout: 20_000 });
       await page.reload();
-      if (journey === "approve" || journey === "always") {
+      if (journey === "approve" || journey === "always" || journey === "restart") {
         const successfulResult = page.getByRole("button", { name: "Show result details" });
         await expect(successfulResult).toBeVisible();
         await expect(successfulResult).toContainText("Succeeded");
