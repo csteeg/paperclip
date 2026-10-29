@@ -20,7 +20,7 @@ vi.mock("../vendor/paperclip-runner/index.js", () => ({
   resolveCodexCommand: vi.fn(() => "codex"),
 }));
 
-import { startLocalBrowserLogin } from "./local-ai-browser-login.js";
+import { startLocalBrowserLogin, type LocalBrowserLoginState } from "./local-ai-browser-login.js";
 
 const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform")!;
 const events = {
