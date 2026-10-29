@@ -109,6 +109,7 @@ export const DELIVERY_QUEUES = {
   issueMonitors: "issue-monitors",
   caseHandoffs: "case-handoffs",
   nativeCheckpointExpiration: "native-checkpoint-expiration",
+  managedAiHomeCleanup: "managed-ai-home-cleanup",
 } as const;
 export type DeliveryQueue = typeof DELIVERY_QUEUES[keyof typeof DELIVERY_QUEUES];
 

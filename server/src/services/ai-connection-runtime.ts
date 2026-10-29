@@ -24,29 +24,35 @@ import type { AdapterExecutionTarget } from "@paperclipai/adapter-utils/executio
 import { runAdapterExecutionTargetProcess } from "@paperclipai/adapter-utils/execution-target";
 import { decideGrokAuthMerge } from "@paperclipai/adapter-grok-local/server";
 import { logger } from "../middleware/logger.js";
+import type { createDeliveryWorkCoordinator } from "./delivery-work-coordinator.js";
+import { DELIVERY_QUEUES } from "./delivery-work-notifications.js";
 
 const pendingManagedHomeRemovals = new Set<string>();
-let managedHomeRemovalRetry: NodeJS.Timeout | undefined;
-
-function scheduleManagedHomeRemovalRetry() {
-  if (managedHomeRemovalRetry || pendingManagedHomeRemovals.size === 0) return;
-  managedHomeRemovalRetry = setTimeout(() => {
-    managedHomeRemovalRetry = undefined;
-    void retryPendingManagedHomeRemovals();
-  }, 30_000);
-  managedHomeRemovalRetry.unref();
-}
+let wakeManagedHomeRemovalWork: (() => void) | undefined;
 
 async function retryPendingManagedHomeRemovals() {
+  const failures: unknown[] = [];
   for (const homeDir of pendingManagedHomeRemovals) {
     try {
       await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
       pendingManagedHomeRemovals.delete(homeDir);
     } catch (error) {
-      logger.warn({ dir: homeDir, err: error }, "Failed to remove temporary managed AI home directory; cleanup remains queued");
+      failures.push(error);
     }
   }
-  scheduleManagedHomeRemovalRetry();
+  if (failures.length) throw new AggregateError(failures, "Temporary managed AI home cleanup failed");
+}
+
+export function registerManagedAiHomeCleanupWork(
+  coordinator: ReturnType<typeof createDeliveryWorkCoordinator>,
+) {
+  const worker = coordinator.register(DELIVERY_QUEUES.managedAiHomeCleanup, {
+    retryMs: 30_000,
+    run: retryPendingManagedHomeRemovals,
+    hasPending: async () => pendingManagedHomeRemovals.size > 0,
+  });
+  wakeManagedHomeRemovalWork = worker.wake;
+  return worker;
 }
 
 async function safeRemoveManagedHome(homeDir: string) {
@@ -56,7 +62,7 @@ async function safeRemoveManagedHome(homeDir: string) {
   } catch (error) {
     pendingManagedHomeRemovals.add(homeDir);
     logger.warn({ dir: homeDir, err: error }, "Failed to remove temporary managed AI home directory; cleanup remains queued");
-    scheduleManagedHomeRemovalRetry();
+    wakeManagedHomeRemovalWork?.();
   }
 }
 
