@@ -460,8 +460,16 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const configuredCwd = asString(config.cwd, "");
   const useConfiguredInsteadOfAgentHome = workspaceSource === "agent_home" && configuredCwd.length > 0;
   const effectiveWorkspaceCwd = useConfiguredInsteadOfAgentHome ? "" : workspaceCwd;
-  const hasExplicitClaudeConfigDir =
-    typeof configEnv.CLAUDE_CONFIG_DIR === "string" && configEnv.CLAUDE_CONFIG_DIR.trim().length > 0;
+  const managedAiHomeOverrides = parseObject(config.managedAiHomeOverrides);
+  const hasExplicitClaudeConfigDir = config.managedAiConnection
+    ? managedAiHomeOverrides.claudeConfigDir === true
+    : typeof configEnv.CLAUDE_CONFIG_DIR === "string" && configEnv.CLAUDE_CONFIG_DIR.trim().length > 0;
+  const rawClaudeProfileImportMode = asString(configEnv.PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE, "off").trim().toLowerCase();
+  if (!["off", "copy", "cache"].includes(rawClaudeProfileImportMode)) {
+    throw new Error("PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE must be off, copy, or cache");
+  }
+  const claudeProfileImportMode = rawClaudeProfileImportMode as "off" | "copy" | "cache";
+  const claudeProfileSourceDir = asString(configEnv.PAPERCLIP_CLAUDE_PLUGIN_SOURCE_DIR, "").trim();
   const instructionsFilePath = asString(config.instructionsFilePath, "").trim();
   const instructionsFileDir = instructionsFilePath ? `${path.dirname(instructionsFilePath)}/` : "";
   const runtimeConfig = await buildClaudeRuntimeConfig({
@@ -581,13 +589,27 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     servers: runtimeMcpServers,
   });
   const localMcpConfigDir = path.dirname(localMcpConfigPath);
-  const sharedClaudeConfigDir = config.managedAiConnection ? asString(configEnv.CLAUDE_CONFIG_DIR, "") : resolveSharedClaudeConfigDir(process.env);
-  const managedClaudePluginRuntime = config.managedAiConnection && !executionTargetIsRemote
+  const sharedClaudeConfigDir = config.managedAiConnection
+    ? asString(configEnv.CLAUDE_CONFIG_DIR, asString(env.CLAUDE_CONFIG_DIR, ""))
+    : resolveSharedClaudeConfigDir(process.env);
+  if (config.managedAiConnection && claudeProfileImportMode !== "off" && hasExplicitClaudeConfigDir) {
+    throw new Error(
+      "Claude profile import cannot write into an explicitly configured CLAUDE_CONFIG_DIR. Disable profile import or remove the config directory override.",
+    );
+  }
+  if (config.managedAiConnection && claudeProfileImportMode === "copy" && managedAiHomeOverrides.home === true) {
+    throw new Error("Claude profile copy mode requires Paperclip's temporary HOME. Choose cache mode or clear the HOME override.");
+  }
+  const managedClaudePluginRuntime = config.managedAiConnection && !executionTargetIsRemote && claudeProfileImportMode !== "off"
     ? await prepareManagedClaudePluginRuntime({
         env: process.env,
         companyId: agent.companyId,
         agentId: agent.id,
+        runId,
         configDir: sharedClaudeConfigDir,
+        sourceDir: claudeProfileSourceDir || undefined,
+        autoDiscoverSource: true,
+        importMode: claudeProfileImportMode,
         excludedSkillNames: mountableSkillEntries.map((entry) => entry.runtimeName),
       })
     : null;

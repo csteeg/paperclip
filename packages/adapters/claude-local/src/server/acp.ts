@@ -410,12 +410,37 @@ export function createClaudeAcpExecutor(options: ClaudeAcpExecutorOptions = {}):
     const acpEnv = parseObject(acpConfig.env);
     if (acpConfig.managedAiConnection && target?.kind !== "remote") {
       const configDir = typeof acpEnv.CLAUDE_CONFIG_DIR === "string" ? acpEnv.CLAUDE_CONFIG_DIR : "";
-      const managedPlugins = await prepareManagedClaudePluginRuntime({
-        env: process.env,
-        companyId: ctx.agent.companyId,
-        agentId: ctx.agent.id,
-        configDir,
-      });
+      const managedHomeOverrides = parseObject(acpConfig.managedAiHomeOverrides);
+      const hasExplicitConfigDir = managedHomeOverrides.claudeConfigDir === true;
+      const rawImportMode = typeof acpEnv.PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE === "string"
+        ? acpEnv.PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE.trim().toLowerCase()
+        : "off";
+      if (!["off", "copy", "cache"].includes(rawImportMode)) {
+        throw new Error("PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE must be off, copy, or cache");
+      }
+      const importMode = rawImportMode as "off" | "copy" | "cache";
+      if (importMode !== "off" && hasExplicitConfigDir) {
+        throw new Error(
+          "Claude profile import cannot write into an explicitly configured CLAUDE_CONFIG_DIR. Disable profile import or remove the config directory override.",
+        );
+      }
+      if (importMode === "copy" && managedHomeOverrides.home === true) {
+        throw new Error("Claude profile copy mode requires Paperclip's temporary HOME. Choose cache mode or clear the HOME override.");
+      }
+      const managedPlugins = importMode === "off"
+        ? { pluginRoot: null, skillCount: 0 }
+        : await prepareManagedClaudePluginRuntime({
+            env: process.env,
+            companyId: ctx.agent.companyId,
+            agentId: ctx.agent.id,
+            runId: ctx.runId,
+            configDir,
+            sourceDir: typeof acpEnv.PAPERCLIP_CLAUDE_PLUGIN_SOURCE_DIR === "string"
+              ? acpEnv.PAPERCLIP_CLAUDE_PLUGIN_SOURCE_DIR
+              : undefined,
+            autoDiscoverSource: true,
+            importMode,
+          });
       acpConfig.env = {
         ...acpEnv,
         CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL: "1",
@@ -424,7 +449,7 @@ export function createClaudeAcpExecutor(options: ClaudeAcpExecutorOptions = {}):
       if (managedPlugins.pluginRoot || managedPlugins.skillCount > 0) {
         await ctx.onLog(
           "stdout",
-          `[paperclip] Imported ${managedPlugins.skillCount} personal Claude skills and configured the managed plugin cache for local ACP.\n`,
+          `[paperclip] Imported ${managedPlugins.skillCount} personal Claude skills using ${importMode} mode for local ACP.\n`,
         );
       }
     }

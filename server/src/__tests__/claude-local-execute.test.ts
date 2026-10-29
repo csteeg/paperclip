@@ -552,6 +552,7 @@ describe("claude execute", () => {
             PAPERCLIP_TEST_CAPTURE_PATH: capturePath,
             HOME: managedHomeDir,
             CLAUDE_CONFIG_DIR: managedConfigDir,
+            PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE: "cache",
             ANTHROPIC_API_KEY: "managed-credential",
           },
           managedAiConnection: { provider: "anthropic", method: "api_key" },

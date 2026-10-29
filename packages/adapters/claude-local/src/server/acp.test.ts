@@ -298,7 +298,7 @@ describe("claude_local ACP lane", () => {
         engine: "acp",
         cwd: root,
         stateDir: path.join(root, "state"),
-        env: { CLAUDE_CONFIG_DIR: configDir },
+        env: { CLAUDE_CONFIG_DIR: configDir, PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE: "cache" },
         managedAiConnection: { provider: "anthropic", method: "api_key" },
       },
       onMeta: async (payload) => { meta.push(payload); },

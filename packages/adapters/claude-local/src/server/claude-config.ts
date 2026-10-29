@@ -167,17 +167,23 @@ export async function prepareManagedClaudePluginRuntime(input: {
   env: NodeJS.ProcessEnv;
   companyId: string;
   agentId: string;
+  runId?: string;
   configDir: string;
+  sourceDir?: string;
+  autoDiscoverSource?: boolean;
+  importMode?: "copy" | "cache";
   excludedSkillNames?: readonly string[];
 }): Promise<{ pluginRoot: string | null; skillCount: number }> {
-  const configuredSource = nonEmpty(input.env.PAPERCLIP_CLAUDE_PLUGIN_SOURCE_DIR);
-  if (!configuredSource) return { pluginRoot: null, skillCount: 0 };
+  const configuredSource = nonEmpty(input.sourceDir) ?? nonEmpty(input.env.PAPERCLIP_CLAUDE_PLUGIN_SOURCE_DIR);
+  const source = configuredSource ?? (input.autoDiscoverSource ? resolveSharedClaudeConfigDir(input.env) : undefined);
+  if (!source) return { pluginRoot: null, skillCount: 0 };
   if (!input.configDir.trim()) throw new Error("Managed Claude config directory is missing");
-  const sourceDir = path.resolve(configuredSource);
+  const sourceDir = path.resolve(source);
   if (sourceDir === path.resolve(input.configDir)) {
     throw new Error("Claude plugin source and managed run config must be separate directories");
   }
   if (!(await pathExists(sourceDir))) {
+    if (!configuredSource && input.autoDiscoverSource) return { pluginRoot: null, skillCount: 0 };
     throw new Error(`Configured Claude plugin source directory does not exist: ${sourceDir}`);
   }
 
@@ -213,16 +219,26 @@ export async function prepareManagedClaudePluginRuntime(input: {
   );
   if (installs.length === 0 && skillFiles.length === 0) return { pluginRoot: null, skillCount: 0 };
 
+  const importMode = input.importMode ?? "cache";
   const stateDir = resolveManagedClaudeRuntimeStateDir(input.env, input.companyId, input.agentId);
-  const snapshotKey = createHash("sha256").update(JSON.stringify({
-    enabledPlugins,
-    installs: installSnapshots
-      .filter(({ files }) => files.length > 0)
-      .map(({ install, files }) => ({ id: install.id, cacheRelativePath: install.cacheRelativePath, metadata: install.metadata, files })),
-    excludedSkillNames: [...excludedSkillNames].sort(),
-    skills,
-  })).digest("hex").slice(0, 24);
-  const snapshotRoot = path.join(stateDir, "managed-plugin-cache");
+  if (importMode === "copy" && !input.runId) {
+    throw new Error("Claude profile copy mode requires a run ID");
+  }
+  const snapshotKey = importMode === "copy"
+    ? input.runId!.replace(/[^a-zA-Z0-9_-]/g, "_")
+    : createHash("sha256").update(JSON.stringify({
+      enabledPlugins,
+      installs: installSnapshots
+        .filter(({ files }) => files.length > 0)
+        .map(({ install, files }) => ({ id: install.id, cacheRelativePath: install.cacheRelativePath, metadata: install.metadata, files })),
+      excludedSkillNames: [...excludedSkillNames].sort(),
+      skills,
+    })).digest("hex").slice(0, 24);
+  // Copy mode stages this run under its already-private config directory. Cache
+  // mode stores immutable content-addressed snapshots in per-agent state.
+  const snapshotRoot = importMode === "copy"
+    ? path.join(input.configDir, ".paperclip-profile-import")
+    : path.join(stateDir, "managed-plugin-cache");
   const snapshotDir = path.join(snapshotRoot, snapshotKey);
   if (!(await pathExists(snapshotDir))) {
     await fs.mkdir(snapshotRoot, { recursive: true, mode: 0o700 });
@@ -259,7 +275,21 @@ export async function prepareManagedClaudePluginRuntime(input: {
 
   await fs.mkdir(input.configDir, { recursive: true, mode: 0o700 });
   if (installs.length > 0) {
-    await fs.writeFile(path.join(input.configDir, "settings.json"), JSON.stringify({ enabledPlugins }, null, 2), { mode: 0o600 });
+    const settingsPath = path.join(input.configDir, "settings.json");
+    const existingSettings = await readJsonObject(settingsPath);
+    await fs.writeFile(settingsPath, JSON.stringify({
+      ...existingSettings,
+      enabledPlugins: {
+        ...(
+          existingSettings?.enabledPlugins &&
+          typeof existingSettings.enabledPlugins === "object" &&
+          !Array.isArray(existingSettings.enabledPlugins)
+            ? existingSettings.enabledPlugins as Record<string, unknown>
+            : {}
+        ),
+        ...enabledPlugins,
+      },
+    }, null, 2), { mode: 0o600 });
   }
   if (skillFiles.length > 0) {
     await copyManagedClaudeSkills(

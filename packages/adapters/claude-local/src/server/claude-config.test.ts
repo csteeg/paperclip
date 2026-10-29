@@ -160,6 +160,11 @@ describe("prepareManagedClaudePluginRuntime", () => {
     await fs.mkdir(configDir, { recursive: true });
     await fs.mkdir(path.join(configDir, "skills", "careconnections"), { recursive: true });
     await fs.writeFile(path.join(configDir, "skills", "careconnections", "SKILL.md"), "Paperclip selected skill\n");
+    await fs.writeFile(path.join(configDir, "settings.json"), JSON.stringify({
+      permissions: { defaultMode: "acceptEdits" },
+      enabledPlugins: { "existing@local": true },
+      hooks: { PreToolUse: [{ command: "agent-owned-hook" }] },
+    }));
     await fs.writeFile(path.join(sourcePlugin, "plugin.js"), "trusted plugin code\n");
     await fs.writeFile(path.join(sourceSkill, "SKILL.md"), "CareConnections workflow\n");
     await fs.writeFile(path.join(sourceSkill, ".config.json"), '{"profile":"careconnections"}');
@@ -196,7 +201,15 @@ describe("prepareManagedClaudePluginRuntime", () => {
     await expect(fs.access(path.join(configDir, "skills", ".trash")))
       .rejects.toMatchObject({ code: "ENOENT" });
     const settings = JSON.parse(await fs.readFile(path.join(configDir, "settings.json"), "utf8"));
-    expect(settings).toEqual({ enabledPlugins: { "disabled@market": false, "superpowers@superpowers": true } });
+    expect(settings).toEqual({
+      permissions: { defaultMode: "acceptEdits" },
+      enabledPlugins: {
+        "disabled@market": false,
+        "existing@local": true,
+        "superpowers@superpowers": true,
+      },
+      hooks: { PreToolUse: [{ command: "agent-owned-hook" }] },
+    });
     const installed = JSON.parse(await fs.readFile(path.join(result.pluginRoot!, "installed_plugins.json"), "utf8"));
     expect(installed.plugins["superpowers@superpowers"][0].installPath)
       .toBe(path.join(result.pluginRoot!, "cache", "superpowers", "superpowers", "1.0.0"));
@@ -225,6 +238,93 @@ describe("prepareManagedClaudePluginRuntime", () => {
     expect(changedRun.pluginRoot).not.toBe(result.pluginRoot);
     await expect(fs.readFile(path.join(root, "changed-run", "provider", "skills", "company-guidance", ".config.json"), "utf8"))
       .resolves.toBe('{"version":2}');
+  });
+
+  it("copies the selected profile once per run without modifying the source profile", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-managed-claude-copy-"));
+    cleanupDirs.push(root);
+    const serverSource = path.join(root, "server-profile");
+    const agentSource = path.join(root, "agent-profile");
+    const pluginDir = path.join(agentSource, "plugins", "cache", "trusted", "superpowers", "1.0.0");
+    await fs.mkdir(pluginDir, { recursive: true });
+    await fs.mkdir(path.join(agentSource, "skills", "careconnections"), { recursive: true });
+    await fs.writeFile(path.join(pluginDir, "plugin.js"), "agent-selected payload");
+    await fs.writeFile(path.join(agentSource, "skills", "careconnections", "SKILL.md"), "selected profile skill");
+    await fs.writeFile(path.join(agentSource, "settings.json"), JSON.stringify({ enabledPlugins: { "superpowers@trusted": true } }));
+    await fs.writeFile(path.join(agentSource, "plugins", "installed_plugins.json"), JSON.stringify({
+      version: 2,
+      plugins: { "superpowers@trusted": [{ scope: "user", installPath: pluginDir, version: "1.0.0" }] },
+    }));
+    const env = {
+      PAPERCLIP_HOME: path.join(root, "paperclip-data"),
+      PAPERCLIP_CLAUDE_PLUGIN_SOURCE_DIR: serverSource,
+    };
+    const firstConfig = path.join(root, "runs", "first", "provider");
+    const secondConfig = path.join(root, "runs", "second", "provider");
+    const first = await prepareManagedClaudePluginRuntime({
+      env, companyId: "company-1", agentId: "agent-1", runId: "first-run",
+      configDir: firstConfig, sourceDir: agentSource, importMode: "copy",
+    });
+    const second = await prepareManagedClaudePluginRuntime({
+      env, companyId: "company-1", agentId: "agent-1", runId: "second-run",
+      configDir: secondConfig, sourceDir: agentSource, importMode: "copy",
+    });
+
+    expect(first.pluginRoot).not.toBe(second.pluginRoot);
+    expect(first.pluginRoot).toContain(path.join(firstConfig, ".paperclip-profile-import"));
+    await expect(fs.readFile(path.join(first.pluginRoot!, "cache", "trusted", "superpowers", "1.0.0", "plugin.js"), "utf8"))
+      .resolves.toBe("agent-selected payload");
+    await expect(fs.readFile(path.join(firstConfig, "skills", "careconnections", "SKILL.md"), "utf8"))
+      .resolves.toBe("selected profile skill");
+    await expect(fs.readFile(path.join(agentSource, "skills", "careconnections", "SKILL.md"), "utf8"))
+      .resolves.toBe("selected profile skill");
+    await expect(fs.access(serverSource)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("auto-discovers the active Claude config directory when profile import is enabled", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-managed-claude-autodiscover-"));
+    cleanupDirs.push(root);
+    const sourceDir = path.join(root, "signed-in-user-claude");
+    const configDir = path.join(root, "managed-run", "provider");
+    await fs.mkdir(path.join(sourceDir, "skills", "careconnections"), { recursive: true });
+    await fs.writeFile(path.join(sourceDir, "skills", "careconnections", "SKILL.md"), "user profile skill");
+
+    const result = await prepareManagedClaudePluginRuntime({
+      env: {
+        CLAUDE_CONFIG_DIR: sourceDir,
+        PAPERCLIP_HOME: path.join(root, "paperclip-data"),
+      },
+      companyId: "company-1",
+      agentId: "agent-1",
+      configDir,
+      autoDiscoverSource: true,
+      importMode: "cache",
+    });
+
+    expect(result.skillCount).toBe(1);
+    await expect(fs.readFile(path.join(configDir, "skills", "careconnections", "SKILL.md"), "utf8"))
+      .resolves.toBe("user profile skill");
+    await expect(fs.readFile(path.join(sourceDir, "skills", "careconnections", "SKILL.md"), "utf8"))
+      .resolves.toBe("user profile skill");
+  });
+
+  it("skips auto-discovery when the signed-in user's Claude config does not exist", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-managed-claude-autodiscover-missing-"));
+    cleanupDirs.push(root);
+    const result = await prepareManagedClaudePluginRuntime({
+      env: {
+        CLAUDE_CONFIG_DIR: path.join(root, "missing-profile"),
+        PAPERCLIP_HOME: path.join(root, "paperclip-data"),
+      },
+      companyId: "company-1",
+      agentId: "agent-1",
+      configDir: path.join(root, "managed-run", "provider"),
+      autoDiscoverSource: true,
+      importMode: "cache",
+    });
+
+    expect(result).toEqual({ pluginRoot: null, skillCount: 0 });
+    await expect(fs.access(path.join(root, "paperclip-data"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("does nothing when no plugin source is explicitly configured", async () => {
