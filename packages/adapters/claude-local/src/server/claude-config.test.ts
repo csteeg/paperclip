@@ -26,6 +26,7 @@ import {
   prepareClaudeConfigSeed,
   prepareManagedClaudePluginRuntime,
   prepareSandboxClaudeProbeRuntime,
+  resolveManagedClaudeRuntimeStateDir,
 } from "./claude-config.js";
 
 describe("prepareClaudeConfigSeed", () => {
@@ -286,14 +287,17 @@ describe("prepareManagedClaudePluginRuntime", () => {
     cleanupDirs.push(root);
     const sourceDir = path.join(root, "personal-claude");
     const managedSkill = path.join(sourceDir, "skills", "careconnections");
+    const managedScript = path.join(managedSkill, "scripts", "helper.js");
     const removedSkill = path.join(sourceDir, "skills", "retired");
     const targetSkills = path.join(root, "agent-home", "provider", "skills");
     const agentOwnedSkill = path.join(targetSkills, "agent-owned");
     const configDir = path.dirname(targetSkills);
     await fs.mkdir(managedSkill, { recursive: true });
+    await fs.mkdir(path.dirname(managedScript), { recursive: true });
     await fs.mkdir(removedSkill, { recursive: true });
     await fs.mkdir(agentOwnedSkill, { recursive: true });
     await fs.writeFile(path.join(managedSkill, "SKILL.md"), "CareConnections v1");
+    await fs.writeFile(managedScript, "helper v1");
     await fs.writeFile(path.join(removedSkill, "SKILL.md"), "Retired skill");
     await fs.writeFile(path.join(agentOwnedSkill, "SKILL.md"), "Agent-owned skill");
     const env = { PAPERCLIP_HOME: path.join(root, "paperclip-data") };
@@ -309,6 +313,20 @@ describe("prepareManagedClaudePluginRuntime", () => {
     await prepare();
     await expect(fs.readFile(path.join(targetSkills, "careconnections", "SKILL.md"), "utf8"))
       .resolves.toBe("CareConnections v1");
+    await expect(fs.readFile(path.join(targetSkills, "careconnections", "scripts", "helper.js"), "utf8"))
+      .resolves.toBe("helper v1");
+
+    const manifestDir = path.join(resolveManagedClaudeRuntimeStateDir(env, "company-1", "agent-1"), "managed-plugin-cache", "skill-imports");
+    const [manifestName] = await fs.readdir(manifestDir);
+    const manifestPath = path.join(manifestDir, manifestName);
+    const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8"));
+    manifest.skills.careconnections.complete = false;
+    await fs.writeFile(manifestPath, JSON.stringify(manifest));
+    await fs.rm(path.join(targetSkills, "careconnections", "scripts", "helper.js"));
+    await prepare();
+    await expect(fs.readFile(path.join(targetSkills, "careconnections", "scripts", "helper.js"), "utf8"))
+      .resolves.toBe("helper v1");
+
     await fs.writeFile(path.join(targetSkills, "careconnections", "SKILL.md"), "Cached skill remains in place");
     await prepare();
     await expect(fs.readFile(path.join(targetSkills, "careconnections", "SKILL.md"), "utf8"))
@@ -328,6 +346,10 @@ describe("prepareManagedClaudePluginRuntime", () => {
       .rejects.toMatchObject({ code: "ENOENT" });
     await expect(fs.readFile(path.join(targetSkills, "new-skill", "SKILL.md"), "utf8"))
       .resolves.toBe("New skill");
+    await fs.writeFile(managedScript, "helper v2");
+    await prepare();
+    await expect(fs.readFile(path.join(targetSkills, "careconnections", "scripts", "helper.js"), "utf8"))
+      .resolves.toBe("helper v2");
     await expect(fs.readFile(path.join(agentOwnedSkill, "SKILL.md"), "utf8"))
       .resolves.toBe("Agent-owned skill");
   });
