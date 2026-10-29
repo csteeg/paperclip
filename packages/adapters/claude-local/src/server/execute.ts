@@ -614,6 +614,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
             { path: path.join(path.dirname(sharedClaudeConfigDir), ".claude.json"), access: "rw" },
             { path: promptBundle.addDir, access: "ro" },
             { path: localMcpConfigDir, access: "ro" },
+            ...(managedClaudePluginRuntime?.pluginRoot
+              ? [{ path: managedClaudePluginRuntime.pluginRoot, access: "ro" as const }]
+              : []),
           ],
           extraPaths: parseLocalProcessSandboxExtraPaths(config.filesystemExtraPaths),
           homeDir: filesystemScope ? path.dirname(sharedClaudeConfigDir) : null,
