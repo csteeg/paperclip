@@ -51,6 +51,16 @@ describe("isolated subscription credential read", () => {
     await expect(readLocalAiCredentialFile(path.join(link, ".credentials.json"))).rejects.toThrow();
   });
 
+  it.skipIf(process.platform !== "win32")("rejects a Windows login directory junction", async () => {
+    const home = await credentialHome();
+    const file = path.join(home, ".credentials.json");
+    await writeFile(file, "not valid");
+    const junction = path.join(root!, "redirect-junction");
+    await symlink(home, junction, "junction");
+
+    await expect(readLocalAiCredentialFile(path.join(junction, ".credentials.json"))).rejects.toThrow();
+  });
+
   it("rejects oversized Windows credentials", async () => {
     const home = await credentialHome();
     const file = path.join(home, ".credentials.json");
