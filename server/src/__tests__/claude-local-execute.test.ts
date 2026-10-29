@@ -70,6 +70,12 @@ const payload = {
   mcpConfigPath,
   mcpConfigContents: mcpConfigPath ? fs.readFileSync(mcpConfigPath, "utf8") : null,
   skillEntries: addDir ? fs.readdirSync(path.join(addDir, ".claude", "skills")).sort() : [],
+  skillContents: addDir ? Object.fromEntries(
+    fs.readdirSync(path.join(addDir, ".claude", "skills")).map((name) => [
+      name,
+      fs.readFileSync(path.join(addDir, ".claude", "skills", name, "SKILL.md"), "utf8"),
+    ]),
+  ) : {},
   claudeConfigDir: process.env.CLAUDE_CONFIG_DIR || null,
   home: process.env.HOME || null,
   claudePluginCacheDir: process.env.CLAUDE_CODE_PLUGIN_CACHE_DIR || null,
@@ -178,6 +184,7 @@ type CapturePayload = {
   instructionsFilePath: string | null;
   instructionsContents: string | null;
   skillEntries: string[];
+  skillContents?: Record<string, string>;
   claudeConfigDir: string | null;
   home?: string | null;
   claudePluginCacheDir?: string | null;
@@ -511,10 +518,10 @@ describe("claude execute", () => {
     const managedHomeDir = path.join(root, "paperclip", "connection-home");
     const managedConfigDir = path.join(managedHomeDir, "provider");
     const sourcePluginDir = path.join(sourceDir, "plugins", "cache", "trusted", "careconnections", "1.0.0");
+    const selectedSkillDir = path.join(root, "paperclip-selected-skills", "careconnections");
     await fs.mkdir(sourcePluginDir, { recursive: true });
     await fs.mkdir(path.join(sourceDir, "skills", "careconnections"), { recursive: true });
-    await fs.mkdir(path.join(managedConfigDir, "skills", "careconnections"), { recursive: true });
-    await fs.writeFile(path.join(managedConfigDir, "skills", "careconnections", "SKILL.md"), "Paperclip task skill", "utf8");
+    await fs.mkdir(selectedSkillDir, { recursive: true });
     await fs.writeFile(path.join(sourceDir, ".credentials.json"), "personal-secret", "utf8");
     await fs.writeFile(path.join(sourceDir, "settings.json"), JSON.stringify({ enabledPlugins: { "careconnections@trusted": true } }), "utf8");
     await fs.writeFile(path.join(sourceDir, "plugins", "installed_plugins.json"), JSON.stringify({
@@ -523,6 +530,7 @@ describe("claude execute", () => {
     }), "utf8");
     await fs.writeFile(path.join(sourcePluginDir, "plugin.js"), "trusted plugin payload", "utf8");
     await fs.writeFile(path.join(sourceDir, "skills", "careconnections", "SKILL.md"), "company skill", "utf8");
+    await fs.writeFile(path.join(selectedSkillDir, "SKILL.md"), "Paperclip selected task skill", "utf8");
 
     const previousEnv = Object.fromEntries([
       "PAPERCLIP_CLAUDE_PLUGIN_SOURCE_DIR", "PAPERCLIP_HOME", "PAPERCLIP_INSTANCE_ID",
@@ -547,6 +555,8 @@ describe("claude execute", () => {
             ANTHROPIC_API_KEY: "managed-credential",
           },
           managedAiConnection: { provider: "anthropic", method: "api_key" },
+          paperclipRuntimeSkills: [{ key: "careconnections", runtimeName: "careconnections", source: selectedSkillDir }],
+          paperclipSkillSync: { desiredSkills: ["careconnections"] },
         },
         runtimeMcp: { getServers: () => [{
           name: "paperclip",
@@ -565,9 +575,12 @@ describe("claude execute", () => {
       expect(capture.officialMarketplaceAutoInstall).toBe("1");
       expect(capture.claudePluginCacheDir).toContain("managed-plugin-cache");
       expect(capture.claudePluginCacheDir).toContain("agents/agent-managed");
-      expect(capture.claudeConfigEntries).toEqual(expect.arrayContaining(["settings.json", "skills"]));
-      expect(await fs.readFile(path.join(managedConfigDir, "skills", "careconnections", "SKILL.md"), "utf8"))
-        .toBe("Paperclip task skill");
+      expect(capture.claudeConfigEntries).toContain("settings.json");
+      expect(capture.claudeConfigEntries).not.toContain("skills");
+      expect(capture.skillEntries).toContain("careconnections");
+      expect(capture.skillContents?.careconnections).toBe("Paperclip selected task skill");
+      await expect(fs.access(path.join(managedConfigDir, "skills", "careconnections", "SKILL.md")))
+        .rejects.toMatchObject({ code: "ENOENT" });
       expect(await fs.readFile(path.join(capture.claudePluginCacheDir!, "cache", "trusted", "careconnections", "1.0.0", "plugin.js"), "utf8"))
         .toBe("trusted plugin payload");
       expect(JSON.parse(capture.mcpConfigContents!).mcpServers.paperclip.headers.Authorization)

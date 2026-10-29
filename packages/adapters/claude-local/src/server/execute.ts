@@ -588,6 +588,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         companyId: agent.companyId,
         agentId: agent.id,
         configDir: sharedClaudeConfigDir,
+        excludedSkillNames: mountableSkillEntries.map((entry) => entry.runtimeName),
       })
     : null;
   if (config.managedAiConnection) {

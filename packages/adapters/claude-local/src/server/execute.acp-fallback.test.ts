@@ -170,6 +170,57 @@ describe("claude_local ACP startup fallback", () => {
     }
   });
 
+  it("keeps a selected Paperclip skill ahead of a same-named imported profile skill", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-claude-skill-collision-"));
+    try {
+      const sourceDir = path.join(root, "profile");
+      const selectedSkillDir = path.join(root, "selected-skills", "careconnections");
+      const configDir = path.join(root, "run-config");
+      await fs.mkdir(path.join(sourceDir, "skills", "careconnections"), { recursive: true });
+      await fs.mkdir(path.join(sourceDir, "skills", "personal-only"), { recursive: true });
+      await fs.mkdir(selectedSkillDir, { recursive: true });
+      await fs.writeFile(path.join(sourceDir, "skills", "careconnections", "SKILL.md"), "Personal CareConnections skill\n");
+      await fs.writeFile(path.join(sourceDir, "skills", "personal-only", "SKILL.md"), "Personal-only skill\n");
+      await fs.writeFile(path.join(selectedSkillDir, "SKILL.md"), "Paperclip selected CareConnections skill\n");
+
+      vi.stubEnv("PAPERCLIP_HOME", path.join(root, "paperclip-home"));
+      vi.stubEnv("PAPERCLIP_CLAUDE_PLUGIN_SOURCE_DIR", sourceDir);
+      const ctx = buildContext({
+        engine: "cli",
+        managedAiConnection: true,
+        env: { CLAUDE_CONFIG_DIR: configDir },
+        paperclipRuntimeSkills: [{
+          key: "careconnections",
+          runtimeName: "careconnections",
+          source: selectedSkillDir,
+        }],
+        paperclipSkillSync: { desiredSkills: ["careconnections"] },
+      });
+
+      await execute(ctx as never);
+
+      const call = runAdapterExecutionTargetProcess.mock.calls[0] as unknown as [
+        string,
+        unknown,
+        string,
+        string[],
+        unknown,
+      ] | undefined;
+      const args = call?.[3] ?? [];
+      const addDirIndex = args.indexOf("--add-dir");
+      expect(addDirIndex).toBeGreaterThanOrEqual(0);
+      const addDir = args[addDirIndex + 1];
+      expect(await fs.readFile(path.join(addDir!, ".claude", "skills", "careconnections", "SKILL.md"), "utf8"))
+        .toBe("Paperclip selected CareConnections skill\n");
+      await expect(fs.access(path.join(configDir, "skills", "careconnections")))
+        .rejects.toMatchObject({ code: "ENOENT" });
+      await expect(fs.readFile(path.join(configDir, "skills", "personal-only", "SKILL.md"), "utf8"))
+        .resolves.toBe("Personal-only skill\n");
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("keeps explicit ACP strict when startup fails", async () => {
     const ctx = buildContext({ engine: "acp" });
 

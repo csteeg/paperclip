@@ -168,6 +168,7 @@ export async function prepareManagedClaudePluginRuntime(input: {
   companyId: string;
   agentId: string;
   configDir: string;
+  excludedSkillNames?: readonly string[];
 }): Promise<{ pluginRoot: string | null; skillCount: number }> {
   const configuredSource = nonEmpty(input.env.PAPERCLIP_CLAUDE_PLUGIN_SOURCE_DIR);
   if (!configuredSource) return { pluginRoot: null, skillCount: 0 };
@@ -203,7 +204,13 @@ export async function prepareManagedClaudePluginRuntime(input: {
     });
   }
   const installs = installSnapshots.filter(({ files }) => files.length > 0).map(({ install }) => install);
-  const skillFiles = skills.filter((entry) => path.basename(entry.path).toLowerCase() === "skill.md");
+  const excludedSkillNames = new Set(
+    (input.excludedSkillNames ?? []).map((name) => name.trim().toLowerCase()).filter(Boolean),
+  );
+  const skillFiles = skills.filter((entry) =>
+    path.basename(entry.path).toLowerCase() === "skill.md" &&
+    !excludedSkillNames.has(path.basename(path.dirname(entry.path)).toLowerCase()),
+  );
   if (installs.length === 0 && skillFiles.length === 0) return { pluginRoot: null, skillCount: 0 };
 
   const stateDir = resolveManagedClaudeRuntimeStateDir(input.env, input.companyId, input.agentId);
@@ -212,6 +219,7 @@ export async function prepareManagedClaudePluginRuntime(input: {
     installs: installSnapshots
       .filter(({ files }) => files.length > 0)
       .map(({ install, files }) => ({ id: install.id, cacheRelativePath: install.cacheRelativePath, metadata: install.metadata, files })),
+    excludedSkillNames: [...excludedSkillNames].sort(),
     skills,
   })).digest("hex").slice(0, 24);
   const snapshotRoot = path.join(stateDir, "managed-plugin-cache");
