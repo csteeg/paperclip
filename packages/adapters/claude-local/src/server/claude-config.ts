@@ -145,11 +145,14 @@ function managedSkillImportManifestPath(stateDir: string, configDir: string): st
   return path.join(stateDir, "managed-plugin-cache", "skill-imports", `${targetHash}.json`);
 }
 
-async function writeManagedSkillImportManifest(manifestPath: string, directories: Set<string>): Promise<void> {
+async function writeManagedSkillImportManifest(manifestPath: string, skills: Map<string, string>): Promise<void> {
   await fs.mkdir(path.dirname(manifestPath), { recursive: true, mode: 0o700 });
   const tempPath = `${manifestPath}.${process.pid}.${randomUUID()}.tmp`;
   try {
-    await fs.writeFile(tempPath, JSON.stringify({ version: 1, directories: [...directories].sort() }), { mode: 0o600 });
+    await fs.writeFile(tempPath, JSON.stringify({
+      version: 2,
+      skills: Object.fromEntries([...skills].sort(([left], [right]) => left.localeCompare(right))),
+    }), { mode: 0o600 });
     await fs.rename(tempPath, manifestPath);
   } finally {
     await fs.rm(tempPath, { force: true }).catch(() => undefined);
@@ -193,22 +196,48 @@ async function syncManagedClaudeSkills(input: {
   targetSkillsDir: string;
   stateDir: string;
   configDir: string;
-  skillFiles: Array<{ path: string }>;
+  skillFiles: Array<{ path: string; contentHash: string }>;
 }): Promise<void> {
   const manifestPath = managedSkillImportManifestPath(input.stateDir, input.configDir);
   await withManagedSkillImportLock(path.resolve(input.targetSkillsDir), async () => {
     const manifest = await readJsonObject(manifestPath);
-    const ownedDirectories = new Set<string>(
-      Array.isArray(manifest?.directories)
-        ? manifest.directories.filter((entry): entry is string => typeof entry === "string")
-          .map((entry) => path.normalize(entry))
-          .filter((entry) => entry !== "." && entry !== ".." && !path.isAbsolute(entry) && !entry.startsWith(`..${path.sep}`))
-        : [],
-    );
-    const desiredDirectories = new Set(
-      input.skillFiles.map((entry) => path.normalize(path.dirname(entry.path))).filter((entry) => entry !== "."),
-    );
-    const persistOwnership = () => writeManagedSkillImportManifest(manifestPath, ownedDirectories);
+    const ownedSkills = new Map<string, string>();
+    const isSafeRelativeDirectory = (directory: string) => {
+      const normalized = path.normalize(directory);
+      return normalized !== "." && normalized !== ".." && !path.isAbsolute(normalized) &&
+        !normalized.startsWith(`..${path.sep}`);
+    };
+    if (manifest?.skills && typeof manifest.skills === "object" && !Array.isArray(manifest.skills)) {
+      for (const [directory, hash] of Object.entries(manifest.skills)) {
+        if (isSafeRelativeDirectory(directory) && typeof hash === "string") {
+          ownedSkills.set(path.normalize(directory), hash);
+        }
+      }
+    } else if (Array.isArray(manifest?.directories)) {
+      // Upgrade the original ownership-only manifest; an empty hash forces one refresh.
+      for (const directory of manifest.directories) {
+        if (typeof directory === "string" && isSafeRelativeDirectory(directory)) {
+          ownedSkills.set(path.normalize(directory), "");
+        }
+      }
+    }
+    const desiredSkillFiles = new Map<string, Array<{ path: string; contentHash: string }>>();
+    for (const file of input.skillFiles) {
+      const directory = path.normalize(path.dirname(file.path));
+      if (!isSafeRelativeDirectory(directory)) continue;
+      const files = desiredSkillFiles.get(directory) ?? [];
+      files.push(file);
+      desiredSkillFiles.set(directory, files);
+    }
+    const desiredSkills = new Map<string, string>();
+    for (const [directory, files] of desiredSkillFiles) {
+      const hash = createHash("sha256");
+      for (const file of files.sort((left, right) => left.path.localeCompare(right.path))) {
+        hash.update(path.relative(directory, file.path)).update("\0").update(file.contentHash).update("\n");
+      }
+      desiredSkills.set(directory, hash.digest("hex"));
+    }
+    const persistOwnership = () => writeManagedSkillImportManifest(manifestPath, ownedSkills);
 
     const targetRootExists = await fs.lstat(input.targetSkillsDir).then((stat) => {
       if (stat.isSymbolicLink()) {
@@ -219,32 +248,34 @@ async function syncManagedClaudeSkills(input: {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
       throw error;
     });
-    if (!targetRootExists && desiredDirectories.size > 0) {
+    if (!targetRootExists && desiredSkills.size > 0) {
       await fs.mkdir(input.targetSkillsDir, { recursive: true, mode: 0o700 });
     }
 
-    for (const directory of [...ownedDirectories]) {
-      if (desiredDirectories.has(directory)) continue;
+    for (const directory of [...ownedSkills.keys()]) {
+      if (desiredSkills.has(directory)) continue;
       if (targetRootExists && await assertManagedSkillPathHasNoSymlinks(input.targetSkillsDir, directory)) {
         await fs.rm(path.join(input.targetSkillsDir, directory), { recursive: true, force: true });
       }
-      ownedDirectories.delete(directory);
+      ownedSkills.delete(directory);
       await persistOwnership();
     }
 
-    for (const directory of desiredDirectories) {
+    for (const [directory, contentHash] of desiredSkills) {
       const sourceDirectory = path.join(input.sourceSkillsDir, directory);
       const targetDirectory = path.join(input.targetSkillsDir, directory);
-      const wasImported = ownedDirectories.has(directory);
+      const wasImported = ownedSkills.has(directory);
       if (!wasImported) {
         // Keep agent-owned and task-selected skills that Paperclip did not create.
         if (await managedSkillPathExists(input.targetSkillsDir, directory)) continue;
-        ownedDirectories.add(directory);
-        await persistOwnership();
+        ownedSkills.set(directory, contentHash);
       } else {
         const targetExists = await assertManagedSkillPathHasNoSymlinks(input.targetSkillsDir, directory);
+        if (targetExists && ownedSkills.get(directory) === contentHash) continue;
         if (targetExists) await fs.rm(targetDirectory, { recursive: true, force: true });
+        ownedSkills.set(directory, contentHash);
       }
+      await persistOwnership();
       await copyTreeWithoutSymlinks(sourceDirectory, targetDirectory);
     }
   });

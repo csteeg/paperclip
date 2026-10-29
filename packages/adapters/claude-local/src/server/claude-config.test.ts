@@ -309,6 +309,11 @@ describe("prepareManagedClaudePluginRuntime", () => {
     await prepare();
     await expect(fs.readFile(path.join(targetSkills, "careconnections", "SKILL.md"), "utf8"))
       .resolves.toBe("CareConnections v1");
+    await fs.writeFile(path.join(targetSkills, "careconnections", "SKILL.md"), "Cached skill remains in place");
+    await prepare();
+    await expect(fs.readFile(path.join(targetSkills, "careconnections", "SKILL.md"), "utf8"))
+      .resolves.toBe("Cached skill remains in place");
+
     await fs.writeFile(path.join(managedSkill, "SKILL.md"), "CareConnections v2");
     await fs.rm(removedSkill, { recursive: true, force: true });
     const addedSkill = path.join(sourceDir, "skills", "new-skill");
