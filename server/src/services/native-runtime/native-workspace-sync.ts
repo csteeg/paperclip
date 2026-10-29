@@ -643,14 +643,14 @@ async function persistLeaseStamp(input: {
 }): Promise<void> {
   await input.db.transaction(async (tx) => {
     const lease = await tx
-      .select({ metadata: environmentLeases.metadata })
+      .select({ metadata: environmentLeases.metadata, companyId: environmentLeases.companyId, heartbeatRunId: environmentLeases.heartbeatRunId })
       .from(environmentLeases)
       .where(eq(environmentLeases.id, input.leaseId))
       .for("update")
       .limit(1)
       .then((rows) => rows[0] ?? null);
     if (!lease) throw new Error("native_workspace_sync_lease_missing");
-    await notifyEnvironmentCleanup(tx);
+    await notifyEnvironmentCleanup(tx, { companyId: lease.companyId, runId: lease.heartbeatRunId ?? undefined });
     await tx
       .update(environmentLeases)
       .set({
@@ -837,6 +837,7 @@ async function prepareRuntime(input: {
     onWorkspaceCheckpoint: input.onCheckpoint,
     workspaceSeedCacheDirectory: input.seedCacheDirectory,
     workspaceSeedCacheCompanyDirectory: input.seedCacheCompanyDirectory,
+    workspaceSeedCacheScope: "company",
     runtimeSpan: input.onPhase,
   }));
 }
@@ -1006,7 +1007,7 @@ export async function prepareNativeWorkspaceSync(input: {
       hasPriorStamp: priorStamp !== null,
     });
     const seedCacheCompanyDirectory = path.join(resolvePaperclipInstanceRoot(), STATE_ROOT_NAME, "generations", requireSafeSegment(input.companyId, "company_id"));
-    const seedCacheDirectory = path.join(seedCacheCompanyDirectory, requireSafeSegment(input.workspaceId, "workspace_id"));
+    const seedCacheDirectory = path.join(seedCacheCompanyDirectory, "shared-v1");
     runtime = await prepareRuntime({
       runId: input.runId,
       target,

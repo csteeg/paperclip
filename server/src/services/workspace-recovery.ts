@@ -317,7 +317,7 @@ export async function scheduleRecoveredWorkspaceCleanup(db: Db, run: typeof hear
     eq(environmentLeases.heartbeatRunId, run.id), eq(environmentLeases.providerLeaseId, ref.providerLeaseId),
     eq(environmentLeases.status, "released"), eq(environmentLeases.cleanupStatus, "success"),
     sql`${environmentLeases.metadata} = ${JSON.stringify(lease.metadata)}::jsonb`,
-    sql`${environmentLeases.metadata}->>'workspaceRecoveryCleanup' is null`)));
+    sql`${environmentLeases.metadata}->>'workspaceRecoveryCleanup' is null`)), { companyId: run.companyId, runId: run.id });
 }
 export function retainedWorkspaceCandidates(db: Db, cursor?: string, unfinishedOnly = false, obligationsOnly = false, inFlightRunIds: string[] = []) {
   const cleanup = sql`(${heartbeatRuns.runnerProfileJson}#>>'{nativeWorkspaceSync,resourceDisposition}' = 'destroy' and exists (

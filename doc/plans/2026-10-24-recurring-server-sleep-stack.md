@@ -2,6 +2,10 @@
 
 Baseline: `785d54636e1c8513ee5503d602daf6a5ee1970d6` (2026-10-24).
 
+Current integration baseline: master `507dc70be26c191e372f09e58dc0965e73bf8f57`
+(October 26). Earlier gate results below are historical; current acceptance is
+pending. See the final integration/review-repair section for the current state.
+
 The requested outcome is a reviewed PR stack for every remaining recurring server
 work item below. A PR owns one reason for background activity. Split compound
 items into separate PRs as their producer and lifecycle audits identify distinct
@@ -24,12 +28,12 @@ Do not mark an item done from a timer removal or a green check alone.
 | 10 | External-object refresh | Configuration changes, refresh deadlines, source events | Pending |
 | 11 | Status-card evaluation | Settings/card mutations and evaluation deadlines | Pending |
 | 12 | Plugin scheduled jobs | Registration/update/removal and actual job deadlines | #17518 published; see latest-head gate records below |
-| 13 | Routine, agent-timer and issue-monitor scheduling | Remove periodic wake backstops after complete producer coverage; routine execution-status reconciliation separately | Pending |
+| 13 | Routine, agent-timer and issue-monitor scheduling | Remove periodic wake backstops after complete producer coverage; routine execution-status reconciliation separately | Routine schedules implemented in slice 61; issue/agent timers still pending |
 | 14 | Skill-version retention and native-harness backup expiration | Separate retention owners and existing retention guarantees | Pending |
-| 15 | Automatic database backups | Shared scheduling, actual backup deadlines, existing checkpoint contract | Pending |
+| 15 | Automatic database backups | Shared scheduling, actual backup deadlines, existing checkpoint contract | Slice 60 implemented; remote acceptance pending; see `2026-10-26-database-backup-sleep-schedule.md` |
 | 16 | Aggregate maintenance tick | Retire enabled and disabled branches after all constituent owners migrate | Pending |
 | 17 | Grok routine dispatch | Committed reservations and feature changes; prepared-only recovery | [#17490](https://github.com/paperclipai/paperclip/pull/17490) merged after exact-head 5/5 reviews and passing CI |
-| 18 | Abandoned import transfer spools | Creation/completion events, existing retention deadline, startup recovery | Pending; explicitly retained from the remaining-blocker checklist |
+| 18 | Abandoned import transfer spools | Creation/completion events, existing retention deadline, startup recovery | [#17835](https://github.com/paperclipai/paperclip/pull/17835), implemented; remote acceptance pending |
 
 ## Stack and verification contract
 
@@ -3330,3 +3334,178 @@ Whole-stack master integration, older failed gates and suppression audits, and
 all remaining inventory reasons remain active. Nothing was merged. Existing
 active-transport replay polling remains a separate reason to inventory and
 migrate, rather than a false claim of whole-instance quiet.
+
+## Slice 57 acceptance and slice 58 environment settlement
+
+Slice 57 [#17793](https://github.com/paperclipai/paperclip/pull/17793) is published
+at `be8f3284c2c8a05903f2eca000ad86d046780fec`. Latest-head checks show 53 success
+and one neutral result, and the PR is mergeable. Greptile is 5/5 with no unresolved
+threads. One failed-job rerun recovered initial runner shutdowns and missing or
+truncated logs. The latter individual causes remain unknown. No source change
+was needed for that rerun. Nothing was merged.
+
+Slice 58, `codex/sleep-58-native-environment-settlement`, moves the environment
+release duty out of periodic native finalization replay. Existing lease records
+and the existing release owner's predicate supply debt. Existing native and lease
+transactions wake the shared coordinator. Saved cleanup deadlines, workspace
+preservation, provider stop evidence, and warm-retention policy keep their owners.
+See the [owner and lifecycle audit](2026-10-26-native-environment-settlement-sleep.md).
+The initial combined run passed 127 affected tests. Final workspace checks and
+remote acceptance remain required before this slice is accepted.
+
+The compound callback's runtime-service release and agent-status projection are
+still outstanding. Workspace descriptor cleanup remains separate. All earlier
+inventory reasons, master propagation, older failed gates, and suppression debts
+remain active; this section does not narrow the original goal.
+
+## October 26 master integration and review repairs
+
+All 60 published branches (58 numbered duties and two auxiliary slices) now
+contain master `507dc70be26c191e372f09e58dc0965e73bf8f57` through normal parent
+merges. Earlier acceptance entries in this document describe their recorded
+historical heads; they do not certify these new integrated heads. The current
+stack still requires fresh CI, fresh review, and resolution of outstanding
+findings. Nothing has been merged into master.
+
+Three review/compatibility repairs were made at their owning stack boundaries:
+
+- Slice 01 / [#17443](https://github.com/paperclipai/paperclip/pull/17443):
+  a successfully read future custom-image expiry now runs at its saved deadline.
+  A five-second deadline and an earlier committed replacement previously waited
+  for the 30-second retry floor. Failure and unfinished-overdue work retain
+  backoff. Slice 02 carries the same correction into the shared deadline helper.
+  The new unit and real-producer regressions failed first; root verification
+  passed 47 custom-image cases and 39 startup cases. Slice 02 passed 122
+  custom-image, secret-proposal and startup cases.
+- Slice 17 / [#17518](https://github.com/paperclipai/paperclip/pull/17518):
+  plugin inventory notification batching is now an explicit, optional shared
+  deadline contract. Only the plugin scheduler opts into its existing bounded
+  batching latency; consumers without the option reconcile notifications
+  immediately. Known saved deadlines preempt batching, including a ten-second
+  job deadline. This preserves bounded full-inventory reads for bursts of
+  job-status writes without making every successful expiry pass a cooldown.
+  Newly changed plugin configuration retains bounded batching latency. Idle
+  queues still disarm. The focused owner run passed 76 cases.
+- Slice 51 / [#17717](https://github.com/paperclipai/paperclip/pull/17717):
+  HTTP readiness and later worker registration no longer wait for retained
+  physical-session cleanup. The existing scheduler-work and delivery owners
+  retain the original cleanup promise through idle drain and shutdown. A held
+  cleanup regression failed before the fix; 73 startup cases and 28 real-DB
+  retained-cleanup cases passed after it.
+
+Combined source revision `6a5ff3683614d8f954986157f158d74b1f653d22` passed
+workspace typechecking, the full build, and 246 focused cases across seven
+suites. The first combined run exposed the plugin batching dependency: 244
+passed and one failed. The explicit batching repair fixed that failure. This
+ledger-only follow-up does not alter the tested code. Earlier integrated-tip
+validation also covered 470 cases; that remains evidence for its recorded
+revision, not a substitute for fresh checks. Full local `test:run` was not
+repeated because of the previously recorded embedded PostgreSQL capacity
+limitation. Full remote CI remains required.
+
+Known acceptance debt still includes approved-tool rate-limit admission and
+permanent recovery classification, native recovery-notice lock ordering,
+workspace-export scheduling and plugin completion-persistence CI failures,
+cancellation lock failures, several retention/backlog/producer review findings,
+and the native-worker scheduling-suppression audit. Passing focused tests does
+not close those investigations. The remaining original inventory also remains
+in scope; the next native duty audit is agent-status projection. An empty local
+runtime-service map is already SQL/network quiet and does not by itself justify
+another queue. No deployed host suspension, external alarm coverage, or fleet
+savings are claimed by these repairs.
+
+## October 26 approved-review and interrupted-outcome repairs
+
+Slice 05 now retains the originally admitted rate slot through human review,
+reconciles durable request/invocation history before dispatch, and settles
+permanently invalid records without recurring recovery. Formal approvals still
+awaiting human input remain quiet until a committed decision/cancellation; startup
+rediscovers them. Configuration/dependency failures retain retry debt, and saved
+or unknown provider outcomes are never replayed. The originating branch passed
+208 gateway/policy/approval/signature cases and server typechecking.
+
+Propagation preserved each existing owner boundary. Slice 06 retains its shared
+Test-tab fixture with optional rate admission. Slice 14 folds formal-review wakes
+into the existing approval write transaction; slice 16 carries that signal through
+the company-scoped approval notification owner; slice 49 also retains native task
+scopes. Eight affected suites passed 506 cases at source
+`d4ff4b9c04cbaa3739d1b62f7c29a3bff670c901`, including retention, seeding, and native
+review consumers. This is evidence for those integration changes, not separate
+certification of each intermediate branch.
+
+Slice 06 additionally preserves saved `cancelled` invocation status, completion
+time, and error while repairing a stranded executing request. Its new regression
+reproduced the unwanted overwrite; all 14 interrupted-review worker cases passed
+at that branch. Final combined source `b91de5102faf548217ea489667fe51de98c9071a`
+passes all 129 gateway tests, workspace typechecking, and the full build. This
+ledger-only follow-up leaves the tested source unchanged. Full local test:run was
+not repeated because of the previously documented embedded PostgreSQL capacity
+limitation. Fresh remote CI is still required.
+
+No stack PR was merged. Earlier CI debts, other review findings (including native
+notice lock order), the eight native facade suppression audits, the next native
+agent-status projection duty, and the rest of the original inventory remain in
+scope. These repairs do not establish deployed instance/database suspension.
+
+Slice 58 readiness follow-up: fresh review found its first physical provider
+release could block HTTP readiness, just as retained-session cleanup had done.
+The startup/shutdown regression reproduced that blockage. Registration now tracks
+the worker's ready promise through the existing heartbeat work owner without
+awaiting provider cleanup inline. All 84 startup and 20 real-database environment
+settlement cases pass, plus workspace typechecking and the full build. This
+changes only the last PR; earlier stack qualification and unresolved scope remain
+as recorded above. Fresh CI is required and nothing is merged.
+
+## Slice 59: import spool cleanup
+
+Branch `codex/sleep-59-import-spool-cleanup` follows slice 58 at
+`929c86e32e00d219b329741dd2c89c40b1a5f826`. Replace the hourly abandoned-upload
+scan with root/run-scoped filesystem hints, transaction-aware ledger changes,
+and saved 24-hour deadlines. Keep failed/applying files quiet and preserve the
+atomic cancellation claim. Database failures no longer count as missing rows
+that permit orphan deletion. No new table or external-wake exemption.
+
+The owning three complete suites pass 50 tests with real PostgreSQL and files;
+server typechecking passes. The initial outage regression reproduced deletion,
+and fixture failures during lifecycle testing are recorded in
+[the producer and lifecycle audit](2026-10-26-import-spool-cleanup-sleep.md).
+Workspace and remote checks remain separate acceptance gates. This is one
+remaining original duty, not a declaration that the inventory or stack is done.
+
+## Slice 60: automatic database backup scheduling
+
+The ordinary backup interval now registers its real deadline with the shared
+delivery coordinator. Backup execution, serialization, retention, manual calls,
+and the pre-sleep/restart-marker protocol remain with their existing owner.
+The coordinator prevents overlap, leaves passive drain/standby waits without
+SQL, and joins a scheduled backup during shutdown. Enabled backups still owe
+periodic work; this does not claim they become event-only or that Cloud persists
+this deadline. Existing host-sleep gates remain unchanged.
+
+Nine worker lifecycle cases and the complete affected six-suite set passed
+(152 cases), as did workspace typechecking and the full build. A real PostgreSQL
+backup/restore probe also passed after correcting two harness-only errors.
+Full local test:run and remote acceptance remain outstanding. See the dedicated
+[backup scheduling audit](2026-10-26-database-backup-sleep-schedule.md) for limits.
+Skill retention, native harness expiration, and the other original inventory
+duties remain open; this is not completion of the full stack request.
+
+
+## Slice 61: routine schedules
+
+Routine schedules now use their actual saved next-run timestamp and committed
+producer changes without the periodic heartbeat wake. The owner includes overdue
+catch-up debt, shares eligibility between dispatch and deadline reads, and stops
+between claimed trigger batches on drain/shutdown. Added producer coverage includes
+manual invocation of a schedule, company lifecycle and deletion, and budget-driven
+company pause/resume. Existing cron behavior and Cloud sleep proofs stay with their
+owners. Issue-monitor and legacy-agent-timer polling remain separate pending duties.
+
+Two original regressions and two budget-producer regressions failed before their
+fixes. Final acceptance passed 224 tests in eight complete suites, workspace
+typechecking, and the full build. Embedded PostgreSQL setup timed out, and the old
+external disposable cluster later lost a catalog file; a fresh isolated PostgreSQL
+cluster ran the same acceptance suites. No further IPC cleanup was performed.
+Remote checks/review and full-stack acceptance remain pending. See the
+[routine scheduling audit](2026-10-27-routine-schedule-sleep.md) for producer coverage,
+lifecycle evidence, harness corrections and the supported single-process writer model.

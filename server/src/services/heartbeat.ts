@@ -1029,6 +1029,7 @@ export function heartbeatService(
     registerScheduledRetryCancellationWork,
     registerRetainedNativeSessionCleanupWork,
     registerNativeWorkspaceFinalizationWork,
+    registerNativeEnvironmentSettlementWork,
   } = createHeartbeatRecovery(db, {
     pluginWorkerManager: options.pluginWorkerManager,
     enterShutdown: () => { shutdownInProgress = true; },
@@ -1312,6 +1313,7 @@ export function heartbeatService(
     trackWakeup,
     resumeQueuedRuns,
     parseHeartbeatPolicy,
+    nextTimerHeartbeatAt,
     claimDueTimerHeartbeat,
   } = heartbeatQueue;
 
@@ -1559,6 +1561,10 @@ export function heartbeatService(
   const {
     triggerIssueMonitor,
     tickTimers,
+    tickAgentTimers,
+    nextAgentTimerAt,
+    tickIssueMonitors,
+    nextIssueMonitorAt,
     recoverActiveSessionGoals,
     recoverPendingSessionGoalActions,
   } = createHeartbeatScheduling(db, {
@@ -1572,6 +1578,7 @@ export function heartbeatService(
     toAgentOrgRow,
     groupAgentOrgRowsByCompany,
     parseHeartbeatPolicy,
+    nextTimerHeartbeatAt,
     claimDueTimerHeartbeat,
   });
 
@@ -4131,6 +4138,14 @@ export function heartbeatService(
         const state = await getSchedulingSuppression(true);
         return !state.suppressed || state.reason === "task_drain";
       }),
+    registerNativeEnvironmentSettlementWork: (
+      coordinator: Parameters<typeof registerNativeEnvironmentSettlementWork>[0], canRun: () => boolean,
+    ) => registerNativeEnvironmentSettlementWork(coordinator,
+      () => canRun() && readTaskDrain(new Date()) === null,
+      async () => {
+        const state = await getSchedulingSuppression(true);
+        return !state.suppressed || state.reason === "task_drain";
+      }),
     registerNativeWorkspaceFinalizationWork: (
       coordinator: Parameters<typeof registerNativeWorkspaceFinalizationWork>[0], canRun: () => boolean,
     ) => registerNativeWorkspaceFinalizationWork(coordinator,
@@ -4255,6 +4270,10 @@ export function heartbeatService(
     buildRunOutputSilence,
 
     tickTimers,
+    tickAgentTimers,
+    nextAgentTimerAt,
+    tickIssueMonitors,
+    nextIssueMonitorAt,
 
     cancelRun: (runId: string, reason?: string, options?: CancelRunOptions) =>
       cancelRunInternal(runId, reason, options),
