@@ -320,7 +320,11 @@ for (const journey of [
       await expect(
         queue.getByRole("button", { name: "Decline", exact: true }),
       ).not.toBeVisible({ timeout: 20_000 });
+      await page.bringToFront();
       await page.reload();
+      await expect(page.getByTestId("task-chat-history-content")).toBeVisible({
+        timeout: 30_000,
+      });
       if (journey === "approve" || journey === "always" || journey === "restart") {
         const successfulResult = page.getByRole("button", { name: "Show result details" });
         await expect(successfulResult).toBeVisible();
