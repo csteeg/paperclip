@@ -41,8 +41,8 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc && shx mkdir -p dist/cliplab && shx cp src/cliplab/LICENSE src/cliplab/PROVENANCE.md dist/cliplab/",
-    "clean": "shx rm -rf dist",
+    "build": "tsc && node scripts/copy-cliplab.mjs",
+    "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

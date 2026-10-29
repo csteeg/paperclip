@@ -1,3 +1,4 @@
+import { notifyExternalAgentSettlement } from "../../modules/external-agents/index.js";
 import { notifyNativeStatusReassessment } from "../native-status-reassessment-notifications.js";
 import { notifyUnsafeWorkspaceExportRecovery } from "../unsafe-workspace-export-notifications.js";
 import { notifyCancelledWorkspacePreservation } from "../cancelled-workspace-preservation-notifications.js";
@@ -14,7 +15,7 @@ import { RESTRICTED_WORKSPACE_SOURCE_REASON } from "../workspace-source-restrict
 import { hasCommittedNativePlanWait } from "../native-runtime/native-plan-wait.js";
 import { listExternalReviewWaits } from "../native-runtime/external-review-wait.js";
 import { isNativeWorkspaceExportRepairCause } from "@paperclipai/shared";
-import { settleSlackConversation } from "../slack-conversation-lifecycle.js";
+import { pendingExternalConversationSettlement, settleSlackConversation } from "../slack-conversation-lifecycle.js";
 import { externalConversationStateSql } from "../slack-conversation-state.js";
 import { isIssueReviewPathRecoveryRun } from "./review-path-recovery.js";
 import { escalateExhaustedIssueReviewPathRecovery } from "./review-path-recovery-escalation.js";
@@ -4522,6 +4523,7 @@ export function recoveryService(
 
   async function reconcileStrandedAssignedIssues(opts?: {
     issueCreatedAtGte?: Date | null;
+    skipExternalConversationSettlement?: boolean;
   }) {
     const candidates = await db
       .select(recoveryIssueFields)
@@ -4595,7 +4597,16 @@ export function recoveryService(
 
     for (const issue of candidates) {
       if (issue.originKind === "chat_channel") {
-        await settleSlackConversation(db, issue.companyId, issue.id);
+        if (opts?.skipExternalConversationSettlement) {
+
+
+          if (await pendingExternalConversationSettlement(db, issue.companyId, issue.id)) {
+            result.skipped += 1;
+            continue;
+          }
+        } else {
+          await settleSlackConversation(db, issue.companyId, issue.id);
+        }
         const [current] = await db.select({ externalConversationState: externalConversationStateSql() })
           .from(issues).where(and(eq(issues.companyId, issue.companyId), eq(issues.id, issue.id)));
         if (current?.externalConversationState === "waiting") { result.skipped += 1; continue; }
@@ -6252,6 +6263,7 @@ export function recoveryService(
       const [candidate] = await tx.select().from(heartbeatRuns).where(eligible).for("update");
       if (!candidate) return null;
       await notifyInstructionCollection(tx, { companyId: candidate.companyId, runId: candidate.id });
+      await notifyExternalAgentSettlement(tx, { companyId: candidate.companyId, runId: candidate.id });
       await notifyCancelledWorkspacePreservation(tx, { companyId: candidate.companyId, runId: candidate.id });
       const boundIssueId = boundRunIssueId(candidate);
       if (boundIssueId) {

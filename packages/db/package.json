@@ -39,8 +39,8 @@
   ],
   "scripts": {
     "check:migrations": "tsx src/check-migration-numbering.ts && tsx src/check-migration-safety.ts",
-    "build": "pnpm run check:migrations && tsc && shx rm -rf dist/migrations && shx mkdir -p dist/migrations/meta && shx cp \"src/migrations/*.sql\" dist/migrations/ && shx cp src/migrations/meta/_journal.json dist/migrations/meta/",
-    "clean": "shx rm -rf dist",
+    "build": "pnpm run check:migrations && tsc && node scripts/copy-migrations.mjs",
+    "clean": "node scripts/clean.mjs",
     "typecheck": "pnpm run check:migrations && tsc --noEmit",
     "generate": "pnpm run check:migrations && pnpm run clean && tsc -p tsconfig.json && drizzle-kit generate && pnpm run prune:snapshots",
     "prune:snapshots": "node scripts/prune-snapshots.mjs",

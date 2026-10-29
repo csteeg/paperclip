@@ -55,7 +55,6 @@ export function startLocalBrowserLogin(provider: "anthropic" | "openai", home: s
   let windowsPty: import("node-pty").IPty | null = null;
   let stopped = false;
   const stop = () => {
-    if (stopped) return;
     stopped = true;
     const pty = windowsPty;
     windowsPty = null;
@@ -73,7 +72,8 @@ export function startLocalBrowserLogin(provider: "anthropic" | "openai", home: s
         try {
           if (legacyPlatform) {
             await ensureCommandResolvable("codex", home, process.env);
-            executable = path.resolve(home, await resolveCommandForLogs("codex", home, process.env));
+            const pathApi = process.platform === "win32" ? path.win32 : path;
+            executable = pathApi.resolve(home, await resolveCommandForLogs("codex", home, process.env));
           } else {
             executable = resolveCodexCommand();
           }
@@ -84,7 +84,7 @@ export function startLocalBrowserLogin(provider: "anthropic" | "openai", home: s
           throw new Error("Browser login runtime unavailable");
         }
       }
-      if (controller.signal.aborted) throw new Error("Local sign-in cancelled before launch");
+      if (controller.signal.aborted || stopped) throw new Error("Local sign-in cancelled before launch");
       const env = { ...process.env,
         ANTHROPIC_API_KEY: "", ANTHROPIC_AUTH_TOKEN: "", CLAUDE_CODE_OAUTH_TOKEN: "",
         OPENAI_API_KEY: "", CODEX_API_KEY: "",
@@ -103,6 +103,9 @@ export function startLocalBrowserLogin(provider: "anthropic" | "openai", home: s
           state.error = "Windows browser sign-in needs the node-pty ConPTY dependency. Reinstall Paperclip and start sign-in again.";
           throw new Error("Windows login terminal unavailable");
         }
+        if (controller.signal.aborted || stopped) {
+          throw new Error("Local sign-in cancelled before launch");
+        }
         const quoted = (value: string) => `'${value.replaceAll("'", "''")}'`;
         const command = `& ${quoted(executable)} ${args.map(quoted).join(" ")}`;
         // EncodedCommand avoids another command-line quoting layer on Windows.
@@ -111,6 +114,10 @@ export function startLocalBrowserLogin(provider: "anthropic" | "openai", home: s
           Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
         );
         return new Promise((resolve, reject) => {
+          if (controller.signal.aborted || stopped) {
+            reject(new Error("Local sign-in cancelled"));
+            return;
+          }
           try {
             windowsPty = nodePty.spawn("powershell.exe",
               ["-NoLogo", "-NoProfile", "-EncodedCommand", encoded],
@@ -120,7 +127,7 @@ export function startLocalBrowserLogin(provider: "anthropic" | "openai", home: s
             });
             windowsPty.onData(onData);
             windowsPty.onExit(({ exitCode }) => resolve({ exitCode }));
-            if (controller.signal.aborted) stop();
+            if (controller.signal.aborted || stopped) stop();
           } catch {
             state.error = "Windows could not start an interactive ConPTY session. Check the installed node-pty binary and Claude/Codex CLI.";
             reject(new Error("Windows ConPTY startup failed"));

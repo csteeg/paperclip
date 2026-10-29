@@ -1,3 +1,4 @@
+import { notifyNativeRecoveryNotices } from "./native-recovery-notice-notifications.js";
 import { notifyUnsafeWorkspaceExportRecovery } from "./unsafe-workspace-export-notifications.js";
 import { writeExecutionControl } from "./execution-control-notifications.js";
 import { DELIVERY_QUEUES, notifyDeliveryWork } from "./delivery-work-notifications.js";
@@ -321,6 +322,7 @@ export function issueRecoveryActionService(db: DbOrTransaction) {
   ): Promise<IssueRecoveryAction> {
     try {
       const created = await db.transaction(async (tx) => {
+        await notifyNativeRecoveryNotices(tx, { companyId: input.companyId, issueId: input.sourceIssueId });
         await notifyDeliveryWork(tx, DELIVERY_QUEUES.executionDisposition);
         await notifyDeliveryWork(tx, DELIVERY_QUEUES.executionContinuation);
         await notifyUnsafeWorkspaceExportRecovery(tx, { companyId: input.companyId, issueId: input.sourceIssueId });
@@ -411,6 +413,7 @@ export function issueRecoveryActionService(db: DbOrTransaction) {
           Math.min(nextAttemptCount, effectiveMaxAttempts),
         );
         const [exhausted] = await writeExecutionControl(db, [DELIVERY_QUEUES.executionDisposition, DELIVERY_QUEUES.executionContinuation], async tx => {
+          await notifyNativeRecoveryNotices(tx, { companyId: input.companyId, issueId: input.sourceIssueId });
           if ((!input.preserveExistingOwner && existing.cause !== input.cause)
             || (input.evidence?.runId !== undefined && input.evidence.runId !== existing.evidence?.runId)) {
             await notifyUnsafeWorkspaceExportRecovery(tx, { companyId: input.companyId, issueId: input.sourceIssueId });
@@ -471,6 +474,7 @@ export function issueRecoveryActionService(db: DbOrTransaction) {
         return toReadModel(exhausted);
       }
       const [updated] = await writeExecutionControl(db, [DELIVERY_QUEUES.executionDisposition, DELIVERY_QUEUES.executionContinuation], async tx => {
+        await notifyNativeRecoveryNotices(tx, { companyId: input.companyId, issueId: input.sourceIssueId });
         if ((!input.preserveExistingOwner && existing.cause !== input.cause)
           || (input.evidence?.runId !== undefined && input.evidence.runId !== existing.evidence?.runId)) {
           await notifyUnsafeWorkspaceExportRecovery(tx, { companyId: input.companyId, issueId: input.sourceIssueId });
@@ -544,6 +548,7 @@ export function issueRecoveryActionService(db: DbOrTransaction) {
 
     try {
       const [created] = await writeExecutionControl(db, [DELIVERY_QUEUES.executionDisposition, DELIVERY_QUEUES.executionContinuation], async tx => {
+        await notifyNativeRecoveryNotices(tx, { companyId: input.companyId, issueId: input.sourceIssueId });
         await notifyUnsafeWorkspaceExportRecovery(tx, { companyId: input.companyId, issueId: input.sourceIssueId });
         return tx
           .insert(issueRecoveryActions)
@@ -590,6 +595,7 @@ export function issueRecoveryActionService(db: DbOrTransaction) {
       const pending = await tx.select({ id: issueRecoveryActions.id }).from(issueRecoveryActions)
         .where(and(...predicates)).limit(1);
       if (!pending.length) return [];
+      await notifyNativeRecoveryNotices(tx, { companyId: input.companyId, issueId: input.sourceIssueId });
       await notifyUnsafeWorkspaceExportRecovery(tx, { companyId: input.companyId, issueId: input.sourceIssueId });
       return tx
         .update(issueRecoveryActions)

@@ -90,6 +90,31 @@ describe("native Windows subscription login PTY", () => {
     expect(pty.kill).toHaveBeenCalled();
   });
 
+  it("does not spawn ConPTY when cancelled before launch", async () => {
+    Object.defineProperty(process, "platform", { ...originalPlatform, value: "win32" });
+    const pty = fakePty();
+    mocks.spawn.mockReturnValue(pty);
+    mocks.runSetup.mockImplementation(fakeRunner);
+    const login = startLocalBrowserLogin("anthropic", "C:\\private\\login-home");
+    login.abort();
+    await vi.waitFor(() => expect(login.outcome).toBe("failure"));
+    expect(mocks.spawn).not.toHaveBeenCalled();
+  });
+
+  it("kills newly spawned ConPTY if cancellation raced with spawn", async () => {
+    Object.defineProperty(process, "platform", { ...originalPlatform, value: "win32" });
+    const pty = fakePty();
+    let abortedLogin!: LocalBrowserLoginState;
+    mocks.spawn.mockImplementationOnce(() => {
+      abortedLogin.abort();
+      return pty;
+    });
+    mocks.runSetup.mockImplementation(fakeRunner);
+    abortedLogin = startLocalBrowserLogin("anthropic", "C:\\private\\login-home");
+    await waitForSpawn();
+    expect(pty.kill).toHaveBeenCalled();
+  });
+
   it("launches Codex login --device-auth under ConPTY without spawning Unix Python", async () => {
     Object.defineProperty(process, "platform", { ...originalPlatform, value: "win32" });
     const pty = fakePty();

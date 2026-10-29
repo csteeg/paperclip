@@ -3250,3 +3250,83 @@ recovery. Publication and final local/remote gates remain pending.
 Master refreshed to `49bd7a4ba6`; subsequent finalization changes must be reconciled
 through the stack before final acceptance. All earlier gate failures, suppression
 audits and remaining inventory duties stay open. Nothing was merged.
+
+## Slice 53 accepted; slice 54 projection repair
+
+Slice 53 [#17748](https://github.com/paperclipai/paperclip/pull/17748) is verified at
+`1fc2e8c5b61173203abbd50b1b03346abc629218`: all 53 remote checks/status entries
+passed, Greptile 5/5 and zero unresolved threads. Local evidence includes 250
+passing tests, workspace typechecking and build. The embedded-cluster executor
+command was interrupted after PostgreSQL semaphore exhaustion; that run is not
+counted as passing. The full local test command was not claimed. The PR remains
+draft/open and unmerged.
+
+Slice 54, `codex/sleep-54-native-run-projection`, moves the existing committed run
+projection predicate and write into their owner and drives repair from scoped
+committed changes. [Its audit](2026-10-26-native-run-projection-sleep-audit.md)
+records the reproduced duplicate-event/stale-time/cleanup-ordering races, 400
+passing local cases, producer coverage and the retained post-commit/resource
+obligations. Workspace typechecking passes; the full local suite remains limited
+by embedded PostgreSQL startup capacity. Final local
+and remote acceptance is pending. Master refreshed to `ad861a7f94`; stack integration,
+prior failed gates, suppression audits and all remaining duties stay in scope.
+
+## Slice 54 accepted; slice 55 recovery-notice resolution
+
+Slice 54 [#17752](https://github.com/paperclipai/paperclip/pull/17752) is verified at
+`f98e6b5b57558c78ba111170ab3d8d19ff667827`: all 53 checks/status entries passed,
+Greptile 5/5, zero unresolved threads, 400 passing local cases, workspace types
+and build. The PR remains draft/open and unmerged. Intermediate failures and the
+full-local-suite limitation remain recorded in its audit and PR body.
+
+Slice 55, `codex/sleep-55-native-recovery-notices`, moves only committed native
+finalization recovery-notice resolution to scoped transaction wakes. The existing
+action rows remain truth; the owner rechecks reused action identities under
+lifecycle locks. [Its audit](2026-10-26-native-recovery-notice-sleep-audit.md)
+records producer coverage, 102 passing worker/startup cases and 340 passing
+affected cases (442 total), plus workspace typechecking. Build and remote
+acceptance remain pending. All other inventory, prior gate failures,
+suppression audits and master propagation remain active obligations.
+
+
+## Slice 56: external conversation settlement
+
+This slice moves eligible answered-conversation settlement to committed wakes and
+the shared deadline worker. See [the owner, producer, handoff and verification
+audit](2026-10-26-external-conversation-settlement-sleep.md). The existing durable
+rows remain truth; no table or migration is added. The monitor owner preserves
+its recovery handoff, including restart receipts and atomic board escalation.
+Periodic native replay delegates only settlement, and generic stranded-task
+recovery preserves ordering with a read-only eligibility guard. That generic
+scan, Muse completion and resource duties remain separate inventory items.
+
+Based on slice 55 / #17758 at `13f37eef91edce7ee424ec5424c66fc0e6154f4e`.
+Master was fetched at `a67a18c171816b097f46eae78fc58c7e55c9c565`; this slice remains
+stacked on its parent. Full-stack master propagation and fresh acceptance remain
+required. No merge or deployed host-sleep claim is made. See the PR for final
+verification and review evidence; a local test pass does not close earlier stack
+gate or suppression debts.
+
+
+## Slice 56 gates; slice 57 Muse terminal settlement
+
+Slice 56 [#17772](https://github.com/paperclipai/paperclip/pull/17772), at
+`4d1bc93840ae4bd238814d73249325246f69d76e`, has a successful authoritative Actions
+run and Greptile 5/5 with zero unresolved threads. Its external Entire Gates
+check still requires trail approval and draft assessment. The superseded run's
+cancelled checks are not a new code failure. Do not call all gates green.
+
+Slice 57, `codex/sleep-57-muse-terminal-settlement`, extends the existing Muse
+maintenance worker with original-binding terminal debt and scoped transaction
+wakes. No new table or independent timer is added. The
+[producer and lifecycle audit](2026-10-26-muse-terminal-settlement-sleep.md)
+records 433 passing affected cases and workspace typechecking, including the
+real finalization serialization regression and its fix. Periodic finalization
+delegates only this duty; default live/manual and resource callbacks remain.
+Build, publication and remote acceptance are still pending.
+
+Master was fetched again at `a67a18c171816b097f46eae78fc58c7e55c9c565`.
+Whole-stack master integration, older failed gates and suppression audits, and
+all remaining inventory reasons remain active. Nothing was merged. Existing
+active-transport replay polling remains a separate reason to inventory and
+migrate, rather than a false claim of whole-instance quiet.

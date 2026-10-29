@@ -1,3 +1,5 @@
+import { notifyExternalAgentSettlement } from "../../modules/external-agents/index.js";
+import { pendingNativeRunProjectionCondition } from "./native-run-projection.js";
 import { nativeStatusReassessmentSourceIsSuperseded, reassessNativeStatusFromSource } from "./native-status-reassessment.js";
 import { resolveNativeReconciliationStatus } from "./native-reconciliation-status.js";
 export { resolveNativeReconciliationStatus, type NativeReconciliationFacts } from "./native-reconciliation-status.js";
@@ -259,6 +261,7 @@ export async function claimNativeSessionResumptions(input: {
           nextAttemptAt: null,
           updatedAt: now,
         }).where(eq(nativeRunFinalizations.runId, row.run.id));
+        await notifyExternalAgentSettlement(tx, { companyId: row.run.companyId, runId: row.run.id });
         await notifyInstructionCollection(tx, { companyId: row.run.companyId, runId: row.run.id });
         await notifyCancelledWorkspacePreservation(tx, { companyId: row.run.companyId, runId: row.run.id });
         await notifyUnsafeWorkspaceExportRunChange(tx, row.run);
@@ -389,6 +392,10 @@ type NativeReconciliationOptions = {
   skipNativeStatusReassessment?: boolean;
   skipNativeWorkspaceFinalization?: boolean;
   skipNativeResultCommit?: boolean;
+  skipNativeRunProjection?: boolean;
+  skipExternalConversationSettlement?: boolean;
+  skipExternalAgentSettlement?: boolean;
+  skipNativeRecoveryNotices?: boolean;
   pluginWorkerManager?: WorkspaceWorkers;
   environmentRuntime?: EnvironmentRuntimeService;
   onWorkspaceSettled?: (input: {
@@ -507,6 +514,7 @@ async function reconcileNativeFinalizationsPass(
       issueStatusVersion: issues.statusVersion,
       issueDecisionId: issues.lastStatusDecisionId,
       coordinatorPhase: nativeRunFinalizations.phase,
+      runProjectionPending: options.skipNativeRunProjection ? pendingNativeRunProjectionCondition(db) : sql<boolean>`false`,
       resultId: nativeRunFinalizations.resultId,
       assessmentId: nativeRunFinalizations.assessmentId,
       decisionId: nativeRunFinalizations.decisionId,
@@ -618,6 +626,9 @@ async function reconcileNativeFinalizationsPass(
         }
       }
     }
+
+
+    if (options.skipNativeRunProjection && row.coordinatorPhase === "committed" && row.runProjectionPending) continue;
     const barrier = await db.select({ status: workspaceOperations.status })
       .from(workspaceOperations)
       .where(and(
@@ -681,6 +692,10 @@ async function reconcileNativeFinalizationsPass(
           projectRunStatus: true,
           skipNativeResponsePresentation: options.skipNativeResponsePresentation,
           skipNativeReviewResponse: options.skipNativeReviewResponse,
+        skipCommittedRunProjection: options.skipNativeRunProjection,
+        skipExternalConversationSettlement: options.skipExternalConversationSettlement,
+        skipExternalAgentSettlement: options.skipExternalAgentSettlement,
+        skipNativeRecoveryNotices: options.skipNativeRecoveryNotices,
           preserveProviderAttempt: Boolean(
             readNativeWorkspaceSyncReference(
               row.nativeWorkspaceSync,
@@ -742,6 +757,10 @@ async function reconcileNativeFinalizationsPass(
         projectRunStatus: true,
         skipNativeResponsePresentation: options.skipNativeResponsePresentation,
         skipNativeReviewResponse: options.skipNativeReviewResponse,
+        skipCommittedRunProjection: options.skipNativeRunProjection,
+        skipExternalConversationSettlement: options.skipExternalConversationSettlement,
+        skipExternalAgentSettlement: options.skipExternalAgentSettlement,
+        skipNativeRecoveryNotices: options.skipNativeRecoveryNotices,
         preserveProviderAttempt: Boolean(
           readNativeWorkspaceSyncReference(
             row.nativeWorkspaceSync,

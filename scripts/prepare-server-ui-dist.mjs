@@ -14,9 +14,10 @@ if (shouldReuse && existsSync(resolve(uiDist, "index.html"))) {
   console.log("  -> Reusing existing @paperclipai/ui dist output");
 } else {
   console.log("  -> Building @paperclipai/ui...");
-  const result = spawnSync("pnpm", ["--dir", repoRoot, "--filter", "@paperclipai/ui", "build"], {
+  const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+  const result = spawnSync(pnpmCmd, ["--filter", "@paperclipai/ui", "build"], {
+    cwd: repoRoot,
     stdio: "inherit",
-    shell: true,
   });
   if (result.status !== 0) {
     process.exit(result.status ?? 1);

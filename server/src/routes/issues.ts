@@ -1,3 +1,4 @@
+import { notifyNativeRecoveryNotices } from "../services/native-recovery-notice-notifications.js";
 import { notifyNativeStatusReassessment } from "../services/native-status-reassessment-notifications.js";
 import { notifyUnsafeWorkspaceExportRecovery } from "../services/unsafe-workspace-export-notifications.js";
 import { notifyChatInboundWakeNotices } from "../services/chat-inbound-wake-notice-notifications.js";
@@ -9933,6 +9934,7 @@ export function issueRoutes(
                 );
               }
               await notifyUnsafeWorkspaceExportRecovery(tx, { companyId: lockedIssue.companyId, issueId: lockedIssue.id });
+              await notifyNativeRecoveryNotices(tx, { companyId: lockedIssue.companyId, issueId: lockedIssue.id });
               const [reopened] = await tx
                 .update(issueRecoveryActions)
                 .set({ status: "active", outcome: null, resolvedAt: null })

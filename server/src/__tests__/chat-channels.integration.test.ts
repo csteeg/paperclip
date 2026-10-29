@@ -1,3 +1,6 @@
+import { resolveCommittedNativeRecoveryNotices, pendingNativeRecoveryNotices } from "../services/native-runtime/native-recovery-notices.js";
+import { issueRecoveryActionService } from "../services/issue-recovery-actions.js";
+import { projectCommittedRun } from "../services/native-runtime/native-run-projection.js";
 import { notifyNativeFinalizationWork } from "../services/native-finalization-notifications.js";
 import { nativeResponsePresentationWork } from "../services/native-runtime/native-response-presentation-work.js";
 import { notifyChatRunMilestones } from "../services/chat-run-milestone-notifications.js";
@@ -74468,6 +74471,54 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       repair,
     };
   }
+
+  it("repairs a committed reply and its recovery notice without reversing row locks", async () => {
+    const context = await committedChatResponseRecoveryFixture("telegram");
+    const scope = { companyId: context.fixture.companyId, issueId: context.issue.id, runId: context.runId };
+    let response: Promise<boolean> | undefined;
+    try {
+      const [run] = await readHeartbeatRunsById(context.runId);
+      await projectCommittedRun({ db, run, coordinator: context.coordinator });
+      const notice = await issueRecoveryActionService(db).upsertSourceScoped({
+        companyId: scope.companyId, sourceIssueId: scope.issueId, kind: "active_run_watchdog",
+        ownerType: "system", cause: "native_workspace_sync_out_failed", fingerprint: scope.runId,
+        evidence: { runId: scope.runId }, nextAction: "Retry finalization",
+        wakePolicy: { kind: "resume_native_run", runId: scope.runId },
+      });
+      expect(await pendingNativeRecoveryNotices(db, scope)).toHaveLength(1);
+      await db.transaction(async tx => {
+
+
+        await tx.select().from(nativeRunFinalizations)
+          .where(eq(nativeRunFinalizations.runId, scope.runId)).for("update");
+        const [backend] = await tx.execute(sql`select pg_backend_pid() as pid`) as unknown as Array<{ pid: number }>;
+        response = recoverCommittedNativeChatResponse(db, { ...scope, onlyWhenDue: true });
+
+        void response.catch(() => {});
+        await vi.waitFor(async () => {
+          const [state] = await db.execute(sql`select exists (
+            select 1 from pg_stat_activity where datname = current_database()
+              and ${backend.pid} = any(pg_blocking_pids(pid))
+          ) as blocked`) as unknown as Array<{ blocked: boolean }>;
+          expect(state.blocked).toBe(true);
+        });
+        await tx.execute(sql`set local lock_timeout = '1s'`);
+        await resolveCommittedNativeRecoveryNotices(tx as unknown as Db, scope, true);
+      });
+      await expect(response).resolves.toBe(true);
+      expect((await db.select().from(issueRecoveryActions).where(eq(issueRecoveryActions.id, notice.id)))[0])
+        .toMatchObject({ status: "resolved", outcome: "restored" });
+      const comments = await db.select().from(issueComments).where(eq(issueComments.createdByRunId, scope.runId));
+      expect(comments).toHaveLength(1);
+      expect(comments[0].body).toBe(context.result.summary);
+      expect(await readChatPublicationsByCommentId(comments[0].id)).toHaveLength(1);
+      await expect(recoverCommittedNativeChatResponse(db, scope)).resolves.toBe(false);
+      expect(await pendingNativeRecoveryNotices(db, scope)).toEqual([]);
+    } finally {
+      await response?.catch(() => {});
+      await context.service.shutdown();
+    }
+  });
 
   it.each(["slack", "telegram"] as const)(
     "recovers a committed %s answer once without rerunning or changing review/quarantine evidence",

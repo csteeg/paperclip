@@ -1967,7 +1967,7 @@ export function createHeartbeatRecovery(db: Db, dependencies: HeartbeatRecoveryD
 
   let settledProcessesDiscovered = false;
 
-  async function reapOrphanedRuns(opts?: { staleThresholdMs?: number; skipScheduledRetryCancellation?: boolean; skipCapturedInstructionCommit?: boolean; skipInstructionDirectoryCleanup?: boolean; skipStoppedInstructionCollection?: boolean; skipCancelledWorkspacePreservation?: boolean; skipObsoletePolicyReviews?: boolean; skipAutomaticCompletionReviews?: boolean; skipUnsafeWorkspaceExports?: boolean; skipNativePendingEffects?: boolean; skipNativeResponsePresentation?: boolean; skipNativeReviewResponse?: boolean; skipNativeStatusReassessment?: boolean; skipRetainedNativeSessionCleanup?: boolean; skipNativeWorkspaceFinalization?: boolean; skipNativeResultCommit?: boolean }) {
+  async function reapOrphanedRuns(opts?: { staleThresholdMs?: number; skipScheduledRetryCancellation?: boolean; skipCapturedInstructionCommit?: boolean; skipInstructionDirectoryCleanup?: boolean; skipStoppedInstructionCollection?: boolean; skipCancelledWorkspacePreservation?: boolean; skipObsoletePolicyReviews?: boolean; skipAutomaticCompletionReviews?: boolean; skipUnsafeWorkspaceExports?: boolean; skipNativePendingEffects?: boolean; skipNativeResponsePresentation?: boolean; skipNativeReviewResponse?: boolean; skipNativeStatusReassessment?: boolean; skipRetainedNativeSessionCleanup?: boolean; skipNativeWorkspaceFinalization?: boolean; skipNativeResultCommit?: boolean; skipNativeRunProjection?: boolean; skipNativeRecoveryNotices?: boolean; skipExternalConversationSettlement?: boolean; skipExternalAgentSettlement?: boolean }) {
     if (!opts?.skipCancelledWorkspacePreservation) await preserveCancelledNativeWorkspaces(db);
     const staleThresholdMs = opts?.staleThresholdMs ?? 0;
     const now = new Date();
@@ -1994,6 +1994,10 @@ export function createHeartbeatRecovery(db: Db, dependencies: HeartbeatRecoveryD
       skipNativeStatusReassessment: opts?.skipNativeStatusReassessment,
       skipNativeWorkspaceFinalization: opts?.skipNativeWorkspaceFinalization,
       skipNativeResultCommit: opts?.skipNativeResultCommit,
+      skipNativeRunProjection: opts?.skipNativeRunProjection,
+      skipExternalConversationSettlement: opts?.skipExternalConversationSettlement,
+      skipExternalAgentSettlement: opts?.skipExternalAgentSettlement,
+      skipNativeRecoveryNotices: opts?.skipNativeRecoveryNotices,
       environmentRuntime,
       pluginWorkerManager: dependencies.pluginWorkerManager,
       onWorkspaceSettled: settleRecoveredNativeWorkspace,

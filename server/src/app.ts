@@ -1195,7 +1195,10 @@ export async function createApp(
   publicMcpEvents?.start(deliveryWork);
   dotMcpEvents?.start(deliveryWork);
   if (publicMcpOAuth) grokDispatcher.start(deliveryWork);
-  const stopMuseMaintenance = startMuseMaintenance(db, deliveryWork);
+  const stopMuseMaintenance = startMuseMaintenance(db, deliveryWork, async () => {
+    const state = await connectionIntentHeartbeat.resolveSchedulingSuppression(true);
+    return !state.suppressed || state.reason === "task_drain";
+  });
   const resourceLifecycleDelivery = registerPluginLifecycleDelivery(deliveryWork, db, workerManager, lifecycle);
   await resourceLifecycleDelivery.ready;
   if (opts.feedbackExportService) {

@@ -1,3 +1,4 @@
+import { notifyExternalAgentSettlement } from "../../modules/external-agents/index.js";
 import { notifyNativeStatusReassessment } from "../native-status-reassessment-notifications.js";
 import { notifyUnsafeWorkspaceExportRecovery, notifyUnsafeWorkspaceExportRunChange } from "../unsafe-workspace-export-notifications.js";
 import { notifyCancelledWorkspacePreservation } from "../cancelled-workspace-preservation-notifications.js";
@@ -855,6 +856,7 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
           : "Automatic continuation source could not be verified before provider admission. Review the task and send a fresh request; this attempt will not automatically retry.";
         await notifyChatRunMilestones(tx, { companyId: current.companyId, issueId });
         await notifyInstructionCollection(tx, { companyId: current.companyId, runId: current.id });
+        await notifyExternalAgentSettlement(tx, { companyId: current.companyId, runId: current.id });
         await notifyCancelledWorkspacePreservation(tx, { companyId: current.companyId, runId: current.id });
         await notifyUnsafeWorkspaceExportRunChange(tx, current);
         [terminal] = await tx
@@ -980,6 +982,7 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
           await notifyChatRunMilestones(tx, { companyId: run.companyId, runId: run.id,
             issueId: run.nativeIssueId ?? run.issueId ?? readNonEmptyString(parseObject(run.contextSnapshot).issueId) ?? undefined });
           await notifyInstructionCollection(tx, { companyId: run.companyId, runId: run.id });
+          await notifyExternalAgentSettlement(tx, { companyId: run.companyId, runId: run.id });
           await notifyCancelledWorkspacePreservation(tx, { companyId: run.companyId, runId: run.id });
           await notifyUnsafeWorkspaceExportRunChange(tx, run);
           const [row] = await tx.update(heartbeatRuns).set({ status: "cancelled", finishedAt: new Date(),
@@ -1343,6 +1346,7 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
                     "Automatic continuation stopped by the committed chat conversation close. Send a fresh request in chat or on the Board.";
                   await notifyChatRunMilestones(tx, { companyId: run.companyId, issueId });
                   await notifyInstructionCollection(tx, { companyId: run.companyId, runId: run.id });
+                  await notifyExternalAgentSettlement(tx, { companyId: run.companyId, runId: run.id });
                   await notifyCancelledWorkspacePreservation(tx, { companyId: run.companyId, runId: run.id });
           await notifyUnsafeWorkspaceExportRunChange(tx, run);
                   const [cancelled] = await tx
@@ -1467,6 +1471,7 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
                 const reason = "Queued messages were discarded before dispatch";
                 await notifyChatRunMilestones(tx, { companyId: run.companyId, issueId });
                 await notifyInstructionCollection(tx, { companyId: run.companyId, runId: run.id });
+                await notifyExternalAgentSettlement(tx, { companyId: run.companyId, runId: run.id });
                 await notifyCancelledWorkspacePreservation(tx, { companyId: run.companyId, runId: run.id });
           await notifyUnsafeWorkspaceExportRunChange(tx, run);
                 const [cancelled] = await tx
@@ -3511,6 +3516,7 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
               ? "Cancelled because the issue was cancelled before the scheduled retry became due"
               : "Cancelled because the issue was reassigned before the scheduled retry became due";
             await notifyInstructionCollection(tx, { companyId: scheduledRun.companyId, runId: scheduledRun.id });
+            await notifyExternalAgentSettlement(tx, { companyId: scheduledRun.companyId, runId: scheduledRun.id });
             await notifyCancelledWorkspacePreservation(tx, { companyId: scheduledRun.companyId, runId: scheduledRun.id });
             await notifyUnsafeWorkspaceExportRunChange(tx, scheduledRun);
             await notifyScheduledRetryCancellation(tx, { companyId: scheduledRun.companyId, runId: scheduledRun.id });
@@ -3652,6 +3658,7 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
             activeExecutionRun.agentId !== issue.assigneeAgentId
           ) {
             await notifyInstructionCollection(tx, { companyId: activeExecutionRun.companyId, runId: activeExecutionRun.id });
+            await notifyExternalAgentSettlement(tx, { companyId: activeExecutionRun.companyId, runId: activeExecutionRun.id });
             await notifyCancelledWorkspacePreservation(tx, { companyId: activeExecutionRun.companyId, runId: activeExecutionRun.id });
             await notifyUnsafeWorkspaceExportRunChange(tx, activeExecutionRun);
             await notifyChatRunMilestones(tx, { companyId: activeExecutionRun.companyId, issueId: issue.id });
@@ -4912,19 +4919,22 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
           (targetIssue.assigneeAgentId !== candidate.agentId && !nativeReview) ||
           (candidate.reason === "native_completion_review" && !nativeReview)
         ) {
-          await db
-            .update(agentWakeupRequests)
-            .set({
-              status: "skipped",
-              finishedAt: new Date(),
-              error: !targetIssue
-                ? "Native status wake target no longer exists"
-                : ["done", "cancelled"].includes(targetIssue.status)
-                  ? `Native status wake target is already ${targetIssue.status}`
-                  : "Native status wake target has a different assignee",
-              updatedAt: new Date(),
-            })
-            .where(eq(agentWakeupRequests.id, candidate.id));
+          await db.transaction(async tx => {
+            await notifyChatInboundWakeNotices(tx, { companyId: candidate.companyId, issueId });
+            await tx
+              .update(agentWakeupRequests)
+              .set({
+                status: "skipped",
+                finishedAt: new Date(),
+                error: !targetIssue
+                  ? "Native status wake target no longer exists"
+                  : ["done", "cancelled"].includes(targetIssue.status)
+                    ? `Native status wake target is already ${targetIssue.status}`
+                    : "Native status wake target has a different assignee",
+                updatedAt: new Date(),
+              })
+              .where(eq(agentWakeupRequests.id, candidate.id));
+          });
           recovered += 1;
           continue;
         }

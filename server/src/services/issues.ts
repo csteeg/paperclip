@@ -1,3 +1,6 @@
+import { notifyExternalConversationSettlement } from "./external-conversation-settlement-notifications.js";
+import { notifyNativeRecoveryNotices } from "./native-recovery-notice-notifications.js";
+import { notifyNativeRunProjection } from "./native-run-projection-notifications.js";
 import { notifyNativeResultCommit } from "./native-result-commit-notifications.js";
 import { notifyNativeWorkspaceFinalization } from "./native-workspace-finalization-notifications.js";
 import { notifyNativeStatusReassessment } from "./native-status-reassessment-notifications.js";
@@ -11501,9 +11504,21 @@ export function issueService(db: Db) {
           || (patch.checkoutRunId !== undefined && patch.checkoutRunId !== receiptExisting.checkoutRunId)) {
           await notifyUnsafeWorkspaceExportRecovery(tx, { companyId: receiptExisting.companyId, issueId: id });
         }
+        if (patch.status !== undefined || patch.executionState !== undefined || patch.executionRunId !== undefined
+          || patch.monitorNextCheckAt !== undefined || patch.hiddenAt !== undefined || patch.originKind !== undefined
+          || patch.originId !== undefined || patch.conversationAgentId !== undefined || patch.assigneeAgentId !== undefined
+          || patch.assigneeUserId !== undefined || blockedByIssueIds !== undefined) {
+
+          const affectsDependents = patch.status !== undefined && patch.status !== receiptExisting.status
+            && (patch.status === "done" || receiptExisting.status === "done");
+          await notifyExternalConversationSettlement(tx, { companyId: receiptExisting.companyId,
+            issueId: affectsDependents ? undefined : id });
+        }
         if (patch.status !== undefined || patch.statusVersion !== undefined || patch.executionState !== undefined
           || patch.executionRunId !== undefined || patch.checkoutRunId !== undefined
           || patch.assigneeAgentId !== undefined || patch.assigneeUserId !== undefined || blockedByIssueIds !== undefined) {
+          await notifyNativeRecoveryNotices(tx, { companyId: receiptExisting.companyId, issueId: id });
+          await notifyNativeRunProjection(tx, { companyId: receiptExisting.companyId, issueId: id });
           await notifyNativeResultCommit(tx, { companyId: receiptExisting.companyId, issueId: id });
           await notifyNativeWorkspaceFinalization(tx, { companyId: receiptExisting.companyId, issueId: id });
           await notifyNativeStatusReassessment(tx, { companyId: receiptExisting.companyId, issueId: id });
@@ -11795,6 +11810,7 @@ export function issueService(db: Db) {
             parsedIncident?.issueId &&
             parsedIncident.companyId === existing.companyId
           ) {
+            await notifyExternalConversationSettlement(tx, { companyId: existing.companyId, issueId: parsedIncident.issueId });
             await tx
               .delete(issueRelations)
               .where(
@@ -11916,7 +11932,10 @@ export function issueService(db: Db) {
           await notifyTerminalWorkspaceWork(tx, `issue:${id}`);
           await requestRestorePointDeletion(tx, { sourceIssueId: id });
           const [owner] = await tx.select({ companyId: issues.companyId }).from(issues).where(eq(issues.id, id));
-          if (owner) await notifyApprovalWork(tx, owner.companyId);
+          if (owner) {
+            await notifyExternalConversationSettlement(tx, { companyId: owner.companyId });
+            await notifyApprovalWork(tx, owner.companyId);
+          }
           await notifyDecisionTargetIssueRemoval(tx, id);
           removedIssue = await tx
             .delete(issues)
@@ -12471,6 +12490,7 @@ export function issueService(db: Db) {
 
         await notifyTerminalWorkspaceWork(tx, `issue:${id}`);
         if (existing.checkoutRunId || existing.executionRunId || options.clearAssignee) {
+          await notifyExternalConversationSettlement(tx, { companyId: existing.companyId, issueId: id });
           await notifyNativeStatusReassessment(tx, { companyId: existing.companyId, issueId: id });
         }
         if (existing.checkoutRunId || existing.executionRunId) {
@@ -12666,6 +12686,10 @@ export function issueService(db: Db) {
 
       return db.transaction(async (tx) => {
         if (!(await lockIssueForCommentMutation(tx, commentId))) return null;
+        const [source] = await tx.select({ companyId: issueComments.companyId, issueId: issueComments.issueId })
+          .from(issueComments).where(eq(issueComments.id, commentId));
+        if (!source) return null;
+        await notifyExternalConversationSettlement(tx, source);
         const [comment] = await tx
           .delete(issueComments)
           .where(eq(issueComments.id, commentId))
@@ -12704,6 +12728,7 @@ export function issueService(db: Db) {
           .from(issueComments).where(and(eq(issueComments.id, commentId), isNull(issueComments.deletedAt)))
           .for("update");
         if (!source) return null;
+        await notifyExternalConversationSettlement(tx, source);
         await notifyChatInboundWakeNotices(tx, source);
         const now = new Date();
         const [comment] = await tx

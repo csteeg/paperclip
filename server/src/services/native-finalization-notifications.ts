@@ -1,3 +1,7 @@
+import { notifyExternalAgentSettlement } from "../modules/external-agents/index.js";
+import { notifyExternalConversationSettlement } from "./external-conversation-settlement-notifications.js";
+import { notifyNativeRecoveryNotices } from "./native-recovery-notice-notifications.js";
+import { notifyNativeRunProjection } from "./native-run-projection-notifications.js";
 import { notifyNativeResultCommit } from "./native-result-commit-notifications.js";
 import { notifyNativeWorkspaceFinalization } from "./native-workspace-finalization-notifications.js";
 import { notifyRetainedNativeSessionCleanup } from "./retained-native-session-cleanup-notifications.js";
@@ -10,6 +14,10 @@ export type NativeFinalizationWorkScope = { companyId: string; runId?: string; i
 
 export async function notifyNativeFinalizationWork(transaction: object, scope: NativeFinalizationWorkScope) {
   if (scope.issueId || scope.runId) {
+    await notifyExternalAgentSettlement(transaction, scope);
+    await notifyExternalConversationSettlement(transaction, scope);
+    await notifyNativeRecoveryNotices(transaction, scope);
+    await notifyNativeRunProjection(transaction, scope);
     await notifyNativeResultCommit(transaction, scope);
     await notifyNativeWorkspaceFinalization(transaction, scope);
     await notifyRetainedNativeSessionCleanup(transaction, scope);

@@ -1,3 +1,4 @@
+import { notifyExternalAgentSettlement } from "../../modules/external-agents/index.js";
 import { lockCurrentNativeWorkAssessmentEvidence } from "./work-assessments.js";
 import { hasNativeWorkspaceFinalizationOwner } from "./native-workspace-finalization-recovery-state.js";
 import { tryLockNativeWorkspaceFinalization } from "./native-workspace-finalization-ownership.js";
@@ -1098,6 +1099,7 @@ async function materializeDecisionEffect(input: {
           ),
         );
     }
+    await notifyExternalAgentSettlement(input.tx, { companyId: input.companyId, runId: input.runId });
     await notifyInstructionCollection(input.tx, { companyId: input.companyId, runId: input.runId });
     await notifyCancelledWorkspacePreservation(input.tx, { companyId: input.companyId, runId: input.runId });
     await notifyUnsafeWorkspaceExportRecovery(input.tx, { companyId: input.companyId, issueId: input.issue.id });
