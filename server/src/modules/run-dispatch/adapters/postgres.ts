@@ -1,3 +1,4 @@
+import { notifyExternalAgentSettlement } from "../../external-agents/index.js";
 import { notifyUnsafeWorkspaceExportRecovery } from "../../../services/unsafe-workspace-export-notifications.js";
 import { notifyCancelledWorkspacePreservation } from "../../../services/cancelled-workspace-preservation-notifications.js";
 import { notifyInstructionCollection } from "../../../services/instruction-collection-notifications.js";
@@ -716,6 +717,7 @@ export function createPostgresRunDispatchAdapter(
     input: CancelSuppressedRetryInput,
   ): Promise<CancelSuppressedRetryResult> {
     await notifyInstructionCollection(tx, { companyId: input.companyId, runId: input.runId });
+    await notifyExternalAgentSettlement(tx, { companyId: input.companyId, runId: input.runId });
     await notifyCancelledWorkspacePreservation(tx, { companyId: input.companyId, runId: input.runId });
     await notifyScheduledRetryCancellation(tx, { companyId: input.companyId, runId: input.runId });
     await notifyUnsafeWorkspaceExportRecovery(tx, { companyId: input.companyId, issueId: input.issueId ?? undefined });
@@ -926,6 +928,7 @@ export function createPostgresRunDispatchAdapter(
     providerDispatchNotStarted = false,
   ): Promise<CancelStaleQueuedRunOutcome> {
       await notifyInstructionCollection(tx, { companyId: run.companyId, runId: run.id });
+      await notifyExternalAgentSettlement(tx, { companyId: run.companyId, runId: run.id });
       await notifyCancelledWorkspacePreservation(tx, { companyId: run.companyId, runId: run.id });
       await notifyDeliveryWork(tx, DELIVERY_QUEUES.accounting, run.companyId);
       await notifyUnsafeWorkspaceExportRecovery(tx, { companyId: run.companyId, issueId });

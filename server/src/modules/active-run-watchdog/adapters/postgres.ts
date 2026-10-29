@@ -1,3 +1,4 @@
+import { notifyExternalAgentSettlement } from "../../external-agents/index.js";
 import { notifyNativeStatusReassessment } from "../../../services/native-status-reassessment-notifications.js";
 import { notifyUnsafeWorkspaceExportRecovery } from "../../../services/unsafe-workspace-export-notifications.js";
 import { notifyCancelledWorkspacePreservation } from "../../../services/cancelled-workspace-preservation-notifications.js";
@@ -342,6 +343,7 @@ export function createPostgresWatchdogAdapter(db: Db): WatchdogRunReader & Watch
 
     const transactionResult = await db.transaction(async (tx) => {
       await notifyInstructionCollection(tx, { companyId, runId: input.run.id });
+      await notifyExternalAgentSettlement(tx, { companyId, runId: input.run.id });
       await notifyCancelledWorkspacePreservation(tx, { companyId, runId: input.run.id });
       await notifyUnsafeWorkspaceExportRecovery(tx, { companyId, issueId: input.sourceIssue.id });
       await notifyNativeStatusReassessment(tx, { companyId, issueId: input.sourceIssue.id });

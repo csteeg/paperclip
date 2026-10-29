@@ -1,3 +1,4 @@
+import * as museTerminal from "../services/native-runtime/muse-terminal-reconciliation.js";
 import * as conversationLifecycle from "../services/slack-conversation-lifecycle.js";
 import { projectCommittedRun } from "../services/native-runtime/native-run-projection.js";
 import { heartbeatService } from "../services/heartbeat.js";
@@ -284,6 +285,22 @@ describe("committed native recovery notice lifecycle", () => {
     const lifecycle = createHeartbeatLifecycle(db, { emitTerminalAgentTaskRun: vi.fn() } as unknown as HeartbeatLifecycleDependencies);
     await lifecycle.setRunStatus(binding.runId, "succeeded", { nativePhase: "committed", errorCode: null });
     await flush(); expect((await action(pending.id)).status).toBe("resolved"); await quiet();
+  });
+  it.each([
+    { delegated: false, alreadyCommitted: false }, { delegated: true, alreadyCommitted: false },
+    { delegated: false, alreadyCommitted: true }, { delegated: true, alreadyCommitted: true },
+  ])("preserves resource settlement while delegating external assignments: %j", async ({ delegated, alreadyCommitted }) => {
+    const binding = await (alreadyCommitted ? committed() : accepted());
+    const settleAssignment = vi.spyOn(museTerminal, "reconcileMuseNativeTerminalRun");
+    const settled = vi.fn(async () => undefined);
+    await reconcileNativeFinalizations(db, [binding.runId], {
+      skipExternalAgentSettlement: delegated,
+      skipExternalConversationSettlement: true, skipNativeRecoveryNotices: true,
+      skipNativeResponsePresentation: true, skipNativeReviewResponse: true, onWorkspaceSettled: settled,
+    });
+    expect(settleAssignment).toHaveBeenCalledTimes(delegated ? 0 : 1);
+    if (!delegated) expect(settleAssignment).toHaveBeenCalledWith(db, expect.objectContaining({ id: binding.runId, companyId }));
+    expect(settled).toHaveBeenCalledWith(expect.objectContaining({ runId: binding.runId, succeeded: true }));
   });
   it.each([true, false])("preserves resource settlement while delegating conversations: %s", async delegated => {
     const binding = await committed();

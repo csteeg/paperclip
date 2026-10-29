@@ -3306,3 +3306,27 @@ stacked on its parent. Full-stack master propagation and fresh acceptance remain
 required. No merge or deployed host-sleep claim is made. See the PR for final
 verification and review evidence; a local test pass does not close earlier stack
 gate or suppression debts.
+
+
+## Slice 56 gates; slice 57 Muse terminal settlement
+
+Slice 56 [#17772](https://github.com/paperclipai/paperclip/pull/17772), at
+`4d1bc93840ae4bd238814d73249325246f69d76e`, has a successful authoritative Actions
+run and Greptile 5/5 with zero unresolved threads. Its external Entire Gates
+check still requires trail approval and draft assessment. The superseded run's
+cancelled checks are not a new code failure. Do not call all gates green.
+
+Slice 57, `codex/sleep-57-muse-terminal-settlement`, extends the existing Muse
+maintenance worker with original-binding terminal debt and scoped transaction
+wakes. No new table or independent timer is added. The
+[producer and lifecycle audit](2026-10-26-muse-terminal-settlement-sleep.md)
+records 433 passing affected cases and workspace typechecking, including the
+real finalization serialization regression and its fix. Periodic finalization
+delegates only this duty; default live/manual and resource callbacks remain.
+Build, publication and remote acceptance are still pending.
+
+Master was fetched again at `a67a18c171816b097f46eae78fc58c7e55c9c565`.
+Whole-stack master integration, older failed gates and suppression audits, and
+all remaining inventory reasons remain active. Nothing was merged. Existing
+active-transport replay polling remains a separate reason to inventory and
+migrate, rather than a false claim of whole-instance quiet.
