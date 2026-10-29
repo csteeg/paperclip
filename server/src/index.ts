@@ -71,6 +71,7 @@ import { reconcileSafeNativeReplacements } from "./services/native-runtime/nativ
 import { reconcileAbandonedExecutionControl } from "./services/execution-control-reconciliation.js";
 import { executionControlSchedule, registerExecutionControlWork } from "./services/execution-control-work.js";
 import { connectionIntentDeliveryService } from "./services/connection-intent-delivery.js";
+import { registerManagedAiHomeCleanupWork } from "./services/ai-connection-runtime.js";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import type { Server, RequestListener } from "node:http";
 import { createPaperclipHttpServer } from "./http/server.js";
@@ -1332,6 +1333,7 @@ async function startServerWithDatabaseTeardown(
     resolveNativeQuestion: (interaction) => deliverNativeQuestionResponse(db as any, interaction),
   });
   const deliveryWork = app.locals.deliveryWork as ReturnType<typeof createDeliveryWorkCoordinator>;
+  registerManagedAiHomeCleanupWork(deliveryWork);
   if (config.nativeHarnessBackupExpirationEnabled) {
     nativeHarnessBackupExpiration.registerCheckpointExpiration(deliveryWork);
   }
