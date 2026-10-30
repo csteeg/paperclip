@@ -147,6 +147,12 @@ const ANSI_CSI_RE = /\x1b\[[0-?]*[ -/]*[@-~]/g;
 // eslint-disable-next-line no-control-regex
 const CSI_HORIZONTAL_MOVE_RE = /\x1b\[[0-9;]*[GC]/g;
 
+// Cursor Forward sequence used by ConPTY when a previously painted cell is
+// unchanged. Credential anchors can reconstruct those skipped cells from their
+// exact known text; token lines still reject cursor movement and fail closed.
+// eslint-disable-next-line no-control-regex
+const CSI_CURSOR_FORWARD_RE = /\x1b\[([0-9]*)C/g;
+
 // Cursor position sequences (CSI <row>;<col>H and CSI <row>;<col>f): On Windows
 // ConPTY, Ink renders lines by positioning the cursor at absolute row/col
 // coordinates rather than emitting CRLF. Replacing cursor position sequences
@@ -467,10 +473,33 @@ const FULL_TOKEN_RE = /^sk-ant-oat01-[A-Za-z0-9_-]{20,}$/;
  * null when no line matches. Returns null when more than one line matches, so a
  * duplicate success block fails closed.
  */
-function singleAnchorIndex(lines: string[], anchor: string): number | null {
+function lineMatchesAnchor(line: string, anchor: string, cursorForwardMarker: string): boolean {
+  let lineOffset = 0;
+  let anchorOffset = 0;
+  while (true) {
+    const moveOffset = line.indexOf(cursorForwardMarker, lineOffset);
+    const segment = line.slice(lineOffset, moveOffset < 0 ? line.length : moveOffset);
+    if (!anchor.startsWith(segment, anchorOffset)) return false;
+    anchorOffset += segment.length;
+    if (moveOffset < 0) return anchorOffset === anchor.length;
+
+    const countStart = moveOffset + cursorForwardMarker.length;
+    const countEnd = line.indexOf("\u0001", countStart);
+    if (countEnd < 0) return false;
+    const countText = line.slice(countStart, countEnd);
+    if (!/^\d+$/.test(countText)) return false;
+    const count = Number(countText);
+    if (!Number.isSafeInteger(count) || count < 1 || anchorOffset + count > anchor.length) return false;
+    anchorOffset += count;
+    lineOffset = countEnd + 1;
+  }
+}
+
+function singleAnchorIndex(lines: string[], anchor: string, cursorForwardMarker: string): number | null {
   let found: number | null = null;
   for (let i = 0; i < lines.length; i += 1) {
-    if (lines[i].trim() !== anchor) continue;
+    const line = lines[i].trim();
+    if (line !== anchor && !lineMatchesAnchor(line, anchor, cursorForwardMarker)) continue;
     if (found !== null) return null;
     found = i;
   }
@@ -498,7 +527,16 @@ function singleAnchorIndex(lines: string[], anchor: string): number | null {
  */
 export function parseSetupTokenCredential(text: string): string | null {
   if (typeof text !== "string" || text.length === 0) return null;
-  const clean = stripTerminalControls(text);
+  // Keep cursor-forward moves as markers for exact anchor matching. ConPTY can
+  // omit unchanged screen cells from its output, so replacing a move with a
+  // space loses the original anchor text. Pick a marker absent from the input
+  // so terminal text cannot forge one; token fragments containing a move still
+  // fail their strict character check below.
+  let cursorForwardMarker = "\u0000PAPERCLIP_CUF_";
+  while (text.includes(cursorForwardMarker)) cursorForwardMarker += "_";
+  const withCursorForwardMarkers = text.replace(CSI_CURSOR_FORWARD_RE, (_sequence, count: string) =>
+    `${cursorForwardMarker}${count || "1"}\u0001`);
+  const clean = stripTerminalControls(withCursorForwardMarkers);
   // Canonicalize the record delimiter. The real terminal redraw joins the
   // before-anchor line, the token, and the after-anchor line with a bare
   // carriage return, or a CRLF pair, instead of a line feed. Map each CRLF and
@@ -509,8 +547,8 @@ export function parseSetupTokenCredential(text: string): string | null {
   const normalized = clean.replace(/\r\n|\r/g, "\n");
   const lines = normalized.split("\n");
 
-  const beforeIndex = singleAnchorIndex(lines, SETUP_TOKEN_BEFORE_ANCHOR);
-  const afterIndex = singleAnchorIndex(lines, SETUP_TOKEN_AFTER_ANCHOR);
+  const beforeIndex = singleAnchorIndex(lines, SETUP_TOKEN_BEFORE_ANCHOR, cursorForwardMarker);
+  const afterIndex = singleAnchorIndex(lines, SETUP_TOKEN_AFTER_ANCHOR, cursorForwardMarker);
   if (beforeIndex === null || afterIndex === null) return null;
   if (afterIndex <= beforeIndex) return null;
 
