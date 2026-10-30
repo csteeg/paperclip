@@ -215,7 +215,8 @@ describeEmbeddedPostgres("managed Claude transcript expiration", () => {
     const result = await service().tick();
 
     expect(result.skipped.recently_closed).toBe(1);
-    expect(result.nextDueAt).toBe(now.getTime() + 7 * DAY_MS);
+    const [issue] = await db.select({ updatedAt: issues.updatedAt }).from(issues).where(eq(issues.id, seeded.taskKey));
+    expect(result.nextDueAt).toBe(issue!.updatedAt.getTime() + 7 * DAY_MS);
   });
 
   it("schedules nothing when no transcript directory is left", async () => {
