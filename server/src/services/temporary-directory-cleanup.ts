@@ -1,4 +1,5 @@
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { logger } from "../middleware/logger.js";
@@ -16,7 +17,12 @@ function validTemporaryCleanupPath(directory: string) {
   if (!path.isAbsolute(directory) || path.basename(directory) === "..") return false;
   const parentName = path.basename(path.dirname(directory));
   const name = path.basename(directory);
-  return (path.dirname(directory) === os.tmpdir() && (name.startsWith("paperclip-ai-") || name.startsWith("paperclip-preserve-"))) ||
+  const tempRoot = path.resolve(os.tmpdir());
+  let canonicalTempRoot = tempRoot;
+  try { canonicalTempRoot = realpathSync.native(tempRoot); } catch { /* The temp directory may not exist yet. */ }
+  const parent = path.dirname(directory);
+  return ((parent === tempRoot || parent === canonicalTempRoot) &&
+    (name.startsWith("paperclip-ai-") || name.startsWith("paperclip-preserve-"))) ||
     (parentName === ".paperclip-recovered" && name.startsWith(".preparing-"));
 }
 
