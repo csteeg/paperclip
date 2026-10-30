@@ -28,7 +28,7 @@ async function makeRuntime(overrides: Partial<Omit<Runtime, "home">> = {}): Prom
 }
 
 function retain(
-  runtime: Runtime | undefined,
+  runtime: { home?: string; sessionIdentity: string } | undefined,
   options: { adapterType?: string; taskKey?: string | null; target?: unknown } = {},
 ) {
   return retainManagedClaudeTranscripts({
