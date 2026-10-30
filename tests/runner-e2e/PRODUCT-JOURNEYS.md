@@ -26,6 +26,11 @@ never start a server or depend on a tenant filesystem.
 | `task-create` | Company and signed-in board user | Create a task through the shared production composer, assign it to yourself, reopen and reload it, verify the saved prompt and no agent work |
 | `ask-question` | Company, configured agent capability, positive model allowance and exactly one permitted work run | Reuse the existing cross-model Ask question prompt; require one successful run with matching company/task/agent/model/environment, one saved exact answer, and visible readback after reload |
 | `task-properties` | Company, signed-in board user, task-write capability, prepared run-owned backlog task | Open its properties, assign it to the signed-in user, reload, check both UI and saved assignment; verify no agent run |
+| `plan-revise-accept` | Native agent; three work runs | Reuse the classic Plan story: canonical draft, browser revision request, new revision-bound confirmation, approval and exact saved final response |
+| `build-revise` | Native agent; two work runs; qualified Docker artifact oracle | Browser-download both ZIP versions, independently exercise source/CLI behavior, verify different hashes and preserve the original download |
+| `protected-actions` | Native agent; four work runs; authenticated reachable review-service fixture | Approve one action and decline another on separate owned tasks; verify zero calls before either decision, one after approval, zero after decline and a truthful saved explanation |
+| `create-skill-studio` | Native agent with skill-write permission; one work run | Create a uniquely named company skill, open its activity card, edit in Studio, reload and verify task-card readback |
+| `stop-redirect` | Native agent; three work runs; qualified Docker oracle | Download a verified checkpoint, Stop an active revision, require native cancellation acknowledgement, submit a new direction once and verify completion without original-run activity |
 | `cloud-onboarding` | Signed-in admitted Cloud account; fresh workspace; qualified bounded provider route | Create workspace in the portal, connect API key and native Codex agent in the wizard, complete a task, download and independently check its artifact |
 
 Supported acquisitions are managed self-hosted (`local`), registered existing
@@ -34,6 +39,24 @@ with onboarding. Its context can then satisfy the identical task-properties
 journey without another setup. A recipe reports `startingState: recipe`;
 reusing successful onboarding reports `onboarding`. Preconfigured state is never
 counted as onboarding coverage.
+
+The scripted onboarding request supplies a self-contained child brief. The
+parent must copy the full marked brief verbatim into `create_task.description`,
+including tool names, parameters, and the encoded input. It orders the child's
+work: create the files, publish `connection-proof.json` with that exact filename
+and workspace-relative content reference, save its Paperclip task document with
+the returned file link, then report completion. A Markdown workspace note does
+not replace the task document. It explains the native completion contract:
+include actual verification, omit the optional schema, and use receipt-derived
+deliverable references in evidence and file artifacts. Local input paths are verification
+details. Correcting rejected tool arguments stays within the same attempt;
+it does not retry the journey. The model still computes the result, publishes
+the file, saves the document, and completes the tasks. Independent download,
+math, provenance, document, and parent-link checks remain authoritative.
+Historical failed attempts retain their original fixture and outcome.
+The parent's final reply must use Markdown links to the saved child results,
+including the attachment's real content or download path. Naming a file or
+document key in inline code does not satisfy the existing parent-link check.
 
 Save this credential-free local target config outside the repository:
 
@@ -88,6 +111,31 @@ bot is not a general-work fixture.
 The private provider supplies its exact execution identity through the `agent`
 capability and collects normalized run usage. The existing Cloud provider still
 owns authentication, conditional leases, fixture ownership, and cleanup.
+
+The Plan, Stop and protected-action decline checks reload the owned task and bind its exact,
+unique visible reply to the final successful native run. A settled native turn
+can render its saved reply before the comments projection exists; that path also
+requires exactly one matching final assistant message in the complete durable
+event stream, with the same company, agent, run and validated PRP source. If the run
+has a projected selected completion comment, only that attributed comment can
+satisfy the check. A pending or suppressed comment can use the same proven native
+reply path. A finish summary by itself, an earlier turn, a progress
+bubble, or a cancelled run cannot satisfy it. Private receipts record the run,
+thread anchor and observed text; classic protocol comment matchers stay strict.
+Markdown replies compare complete text, GFM checkbox states and exact link destinations after parsing
+through the UI-owned projection of its existing Markdown renderer and GFM/issue-reference plugins. The observer receives the
+same visible-company prefix list used by the UI, so bare issue keys and URLs
+match their rendered links. Whitespace and inline formatting can change during rendering. A
+document or issue chip can replace a link label, but must retain its destination.
+Ordinary links retain their source label. Destination resolution uses the existing
+production company-route helper and the current task URL for fragments.
+Receipts retain both source Markdown and observed content. Unsupported structures
+such as images, raw HTML, tables and fenced code fail closed. Exact marker checks
+remain exact, and decline checks inspect both visible explanations and source
+text for unread service data.
+The decline oracle accepts this explicit native receipt without inventing an
+issue comment. The final run must start after the saved decline, and the usual
+truthful explanation, zero service calls and no unread marker checks still apply.
 A model allowance is an accounting threshold; reused direct-provider routes do
 not acquire the onboarding gateway's request-level cash guarantee. The question
 observer allows one run and waits at most four minutes. Cleanup stops only
@@ -135,7 +183,7 @@ contract before successful cleanup. Missing assertions or paid accounting proof
 turn the campaign into a failure while preserving valid cost receipts, so an
 invalid success cannot trigger disposable-stack deletion.
 
-Only post-journey screenshots are captured. Failed task/search screens are
+The shared Plan story additionally retains draft and revised task screenshots privately. Other screenshots capture the post-journey task. Failed task/search screens are
 retained only after tenant setup; authentication pages are excluded. Browser state, login codes, raw
 errors, credentials, request headers, and auth screenshots are excluded. All
 Cloud evidence is private; the public history publisher rejects these bundles.
@@ -180,3 +228,25 @@ separate onboarding gateway product change, trusted CI selection, and real
 runtime gateway admission remain live qualification prerequisites. Testing and staging use separate
 registries and credentials; only the declared testing control plane is admitted. Defining a story or passing structural checks is
 not evidence that its Cloud journey passed.
+
+## Reuse and daily QA promotion
+
+The classic matrix and deployment-targeted stories share Plan revision actions,
+artifact download/oracle code, Skill Studio editing and protected-action decisions.
+Their target adapters own login, agent/connection provisioning, environment
+identity, and cleanup. The managed local recipe currently provides browser-only
+capabilities; paid stories fail as unsupported until a native agent fixture is
+supplied. This does not turn a classic local pass into a QA Cloud pass.
+
+Paid deployment campaigns declare the exact sum of expected work runs (Ask 1,
+Plan 3, artifact revision 2, protected actions 4, Skill Studio 1, Stop/redirect 3).
+Each observer reads only its owned tasks and checks native company, agent, model
+and execution-environment identity. Setup is separately unpriced. Skills and
+service connections are uniquely owned; customer credentials and company-wide
+configuration are never copied into a journey.
+
+The private QA adapter keeps candidate cases available for manual qualification.
+A candidate's presence in this source catalog is not qualification. It enters the
+saved daily TestOps plan only after an inspected real QA Cloud pass including
+usage, artifact/decision evidence and cleanup. The daily driver runs that saved
+plan against the registered QA tenant; it does not substitute a local instance.

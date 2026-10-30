@@ -6972,7 +6972,10 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       expect(f.wakeup).not.toHaveBeenCalled();
       const allowed = { ...payload, sender: { id: 42, login: "octocat", type: "User" }, issue: { ...payload.issue, user: payload.sender } };
       await send(allowed);
-      await expect.poll(async () => (await readChatConversationsByEndpointId(f.endpoint.id)).length).toBe(1);
+      // A transient `chat_endpoints` row lock defers admission with a retry
+      // floor of 1000 ms (`chat-channels/inbound/wakeups.ts`), so allow one
+      // deferred retry instead of the 1000 ms poll default.
+      await expect.poll(async () => (await readChatConversationsByEndpointId(f.endpoint.id)).length, { timeout: 10_000 }).toBe(1);
       const [conversation] = await readChatConversationsByEndpointId(f.endpoint.id);
       const comments = await readIssueCommentsByIssueId(conversation.issueId!);
       expect(comments).toHaveLength(1);
@@ -16294,7 +16297,11 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
         await expect.poll(async () => (await f.checkpoint()).value, { timeout: 5000 }).toMatchObject({
           generation: Number(oldWindow.generation) + 1, outcome: "epoch_initialized" });
         expect(f.requests).toEqual([]);
-        expect(coordinator.nextWakeAt()!).toBeLessThan(Date.now() + 90_000);
+        // The checkpoint commits before this coordinator pass rearms its deadline.
+        await expect.poll(() => {
+          const next = coordinator.nextWakeAt();
+          return next !== null && next < Date.now() + 90_000;
+        }, { timeout: 5000 }).toBe(true);
       } finally { release?.(); await pending; await coordinator.stop(); }
     });
 
@@ -36853,7 +36860,10 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       await expect.poll(async () => db.select({ status: chatActions.status }).from(chatActions)
         .where(and(eq(chatActions.endpointId, lane.endpoint.id), eq(chatActions.kind, "slack_session_sync"))),
         { timeout: 10_000 }).toEqual([{ status: "processed" }]);
-      await vi.waitFor(() => expect(coordinator.nextWakeAt()).toBeNull(), { timeout: 10_000 });
+      await vi.waitFor(() => {
+        expect(coordinator.nextWakeAt()).toBeNull();
+        expect(idleWorkSnapshot().active).toBe(0);
+      }, { timeout: 10_000 });
       const scans = vi.spyOn(db, "select");
       try {
         await new Promise(resolve => setTimeout(resolve, 1200));
