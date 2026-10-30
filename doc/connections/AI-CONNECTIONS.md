@@ -628,6 +628,10 @@ Credentials stay in the temporary home and cleanup still deletes them. The ACP
 engine ignores the temporary-home paths in its session fingerprint only when the
 transcripts are kept. Runs without a task, such as unscoped timer wakes, remote
 targets, and other harnesses keep nothing.
+Retention also requires a Paperclip-generated managed `HOME`; an explicit agent
+`HOME` override has no generated home to retain. For confined runs, Paperclip
+mounts the server-approved per-task transcript directory instead of resolving the
+agent-writable `projects` symlink in the Claude config directory.
 
 Private file modes do not isolate agents that run as the same OS user. Workspace
 filesystem confinement mounts only the run's own transcript directory, so a confined
