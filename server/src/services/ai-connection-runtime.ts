@@ -458,12 +458,16 @@ export async function prepareManagedAiRuntime(
     let stableHome = false;
     if (configuredClaudeHome) {
       home = undefined;
-    } else {
+    } else if (harness === "claude_local") {
       const claimed = await claimManagedAiHome(
         path.join(os.tmpdir(), `paperclip-ai-${input.companyId}-${selection.grant.id}`),
       );
       home = claimed.home;
       stableHome = claimed.stable;
+    } else {
+      // Stable-home reuse is only for Claude prompt-cache reuse. Other managed
+      // runtimes keep Paperclip's existing per-run home isolation.
+      home = await mkdtemp(path.join(os.tmpdir(), `paperclip-ai-${input.companyId}-${selection.grant.id}-`));
     }
     if (harness === "antigravity_runtime" && home) home = await realpath(home);
     const effectiveHome = configuredClaudeHome ?? home!;
