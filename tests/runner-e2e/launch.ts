@@ -33,6 +33,7 @@ import {
 import { isImmutableDaytonaImage, runnerMatrix } from "./catalog.js";
 import { renderRunnerE2EDashboard } from "./dashboard.js";
 import { packageEvidence } from "./evidence.js";
+import { privateCellEvidenceOwner } from "./manual-private-report-assets.js";
 import { readManualPrivateHandoff, sealManualResultEvidence, preserveOriginalFrameworkResult, sealStandardOriginalEvidence, type ManualPrivateHandoff } from "./manual-private-handoff.js";
 import { requiresPrivateManualEvidence } from "./manual-private-retention.js";
 import { copySharedEvidence } from "./shared-evidence.js";
@@ -837,6 +838,7 @@ async function runAttempt(input: {
         uploadDir,
         secrets: credentials,
         expectPassScreenshot: result.status === "passed",
+        ...(manualPrivateHandoff ? { privateCell: { owner: await privateCellEvidenceOwner(manualPrivateHandoff, candidate.id), layout: "original" as const } } : {}),
       });
       const originalEvidence = evidence, originalFeaturePassed = result.status === "passed";
       if (evidence.leaks.length > 0 || evidence.missing.length > 0) {
@@ -862,6 +864,7 @@ async function runAttempt(input: {
           uploadDir,
           secrets: credentials,
           expectPassScreenshot: false,
+          ...(manualPrivateHandoff ? { privateCell: { owner: await privateCellEvidenceOwner(manualPrivateHandoff, candidate.id), layout: "original" as const } } : {}),
         });
       }
       if (manualPrivateHandoff) await sealStandardOriginalEvidence({ context: manualPrivateHandoff,
@@ -1083,6 +1086,14 @@ async function main() {
   }
 
   if (process.env.PAPERCLIP_E2E_OPERATIONS_MANIFEST && executions.some(execution => execution.task.flow === "provider_connection")) throw new Error("Provider connection campaign has no budgeted routing qualification");
+  if (executions.some(execution => execution.task.flow === "antigravity_agent_journey")) {
+    if (options.connectionConfig || options.githubReviewConfig || options.provisionGitHubRepository) throw new Error("Use --antigravity-journey-config for the Antigravity journey.");
+    const { runAntigravityJourneyCampaign } = await import("./antigravity-journey-launch.js");
+    await runAntigravityJourneyCampaign({ executions, catalog: runnerMatrix, configFile: options.antigravityJourneyConfig, repositoryRoot,
+      preflight: options.antigravityJourneyPreflight, recoverFile: options.antigravityJourneyRecover });
+    return;
+  }
+  if (options.antigravityJourneyConfig || options.antigravityJourneyPreflight || options.antigravityJourneyRecover) throw new Error("Antigravity journey options require its explicit registered cell.");
   if (executions.some(execution => execution.task.flow === "github_review_journey")) {
     if (options.connectionConfig) throw new Error("Use --github-review-config for the GitHub journey.");
     const { runGitHubReviewCampaign } = await import("./github-review-launch.js");

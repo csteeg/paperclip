@@ -1792,6 +1792,7 @@ export function heartbeatService(
     runOptions: {
       nativeLeaseOwner?: string;
       nativeRestartRecovery?: NativeRestartRecoveryClaim;
+      onNativeExecutionLeaseAcquired?: () => Promise<void>;
     } = {},
   ) {
     return withRunExecutionTiming(runId, () => executeRunAttempt(runId, runOptions));
@@ -1799,7 +1800,7 @@ export function heartbeatService(
 
   async function executeRunAttempt(
     runId: string,
-    runOptions: { nativeLeaseOwner?: string; nativeRestartRecovery?: NativeRestartRecoveryClaim },
+    runOptions: { nativeLeaseOwner?: string; nativeRestartRecovery?: NativeRestartRecoveryClaim; onNativeExecutionLeaseAcquired?: () => Promise<void> },
   ) {
     const attemptStartedAtMs = Date.now();
     let attestedQuestionResponseAtMs: number | null = null;
@@ -3283,6 +3284,7 @@ export function heartbeatService(
           adapterConfig: agent.adapterConfig,
           agent: {
             id: agent.id,
+            companyId: agent.companyId,
             status: runningAgent.status,
             adapterType: agent.adapterType,
           },
