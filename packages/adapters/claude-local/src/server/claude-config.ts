@@ -106,20 +106,31 @@ async function copyTreeWithoutSymlinks(sourceDir: string, targetDir: string): Pr
 async function copyManagedClaudeSkills(
   sourceSkillsDir: string,
   targetSkillsDir: string,
-  skillFiles: Array<{ path: string }>,
+  skillFiles: Array<{ path: string; targetPath?: string }>,
 ): Promise<void> {
   await fs.mkdir(targetSkillsDir, { recursive: true, mode: 0o700 });
-  const skillDirs = [...new Set(skillFiles.map((entry) => path.dirname(entry.path)))].filter((entry) => entry !== ".");
-  for (const skillDir of skillDirs) {
-    const targetSkillDir = path.join(targetSkillsDir, skillDir);
-    const targetExists = await fs.lstat(targetSkillDir).then(() => true).catch((error) => {
+  const skillDirs = new Map<string, string>();
+  for (const entry of skillFiles) {
+    if (path.basename(entry.path).toLowerCase() !== "skill.md") continue;
+    const sourceSkillDir = path.dirname(entry.path);
+    const targetSkillDir = path.dirname(entry.targetPath ?? entry.path);
+    if (sourceSkillDir === "." || targetSkillDir === ".") continue;
+    const existingSource = skillDirs.get(targetSkillDir);
+    if (existingSource && existingSource !== sourceSkillDir) {
+      throw new Error(`Claude profile contains multiple skills that map to the same name: ${targetSkillDir}`);
+    }
+    skillDirs.set(targetSkillDir, sourceSkillDir);
+  }
+  for (const [targetSkillDir, sourceSkillDir] of skillDirs) {
+    const targetDirectory = path.join(targetSkillsDir, targetSkillDir);
+    const targetExists = await fs.lstat(targetDirectory).then(() => true).catch((error) => {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
       throw error;
     });
     // Paperclip's task-selected skills already occupy this name in the managed
     // config. Keep that link and avoid replacing it with a personal skill.
     if (targetExists) continue;
-    await copyTreeWithoutSymlinks(path.join(sourceSkillsDir, skillDir), targetSkillDir);
+    await copyTreeWithoutSymlinks(path.join(sourceSkillsDir, sourceSkillDir), targetDirectory);
   }
 }
 
@@ -416,16 +427,41 @@ export async function prepareManagedClaudePluginRuntime(input: {
     path.basename(entry.path).toLowerCase() === "skill.md" &&
     !excludedSkillNames.has(path.basename(path.dirname(entry.path)).toLowerCase()),
   );
-  const selectedSkillDirectories = new Set(skillFiles.map((entry) => path.dirname(entry.path)));
-  const managedSkillFiles = skills.filter((entry) => [...selectedSkillDirectories].some((directory) =>
-    entry.path.startsWith(`${directory}${path.sep}`),
-  ));
+  const skillDirectoryTargets = new Map<string, string>();
+  for (const entry of skillFiles) {
+    const sourceDirectory = path.dirname(entry.path);
+    const segments = sourceDirectory.split(path.sep);
+    // Claude.ai account skills are stored in a private bundle folder below
+    // `skills/synced`, but Claude Code's normal personal-skill discovery only
+    // recognizes `skills/<skill-name>/SKILL.md`. Import the leaf skill folder
+    // so managed runs can use the copied skill without requiring account sync.
+    const targetDirectory = segments[0]?.toLowerCase() === "synced" && segments.length >= 3
+      ? path.join(...segments.slice(2))
+      : sourceDirectory;
+    const existingSource = skillDirectoryTargets.get(targetDirectory);
+    if (existingSource && existingSource !== sourceDirectory) {
+      throw new Error(`Claude profile contains multiple skills that map to the same name: ${targetDirectory}`);
+    }
+    skillDirectoryTargets.set(targetDirectory, sourceDirectory);
+  }
+  const selectedSkillDirectories = new Set(skillDirectoryTargets.keys());
+  const managedSkillFiles = skills.flatMap((entry) => {
+    for (const [targetDirectory, sourceDirectory] of skillDirectoryTargets) {
+      if (!entry.path.startsWith(`${sourceDirectory}${path.sep}`)) continue;
+      return [{
+        ...entry,
+        targetPath: path.join(targetDirectory, path.relative(sourceDirectory, entry.path)),
+      }];
+    }
+    return [];
+  });
   if (importMode === "copy" && !input.runId) {
     throw new Error("Claude profile copy mode requires a run ID");
   }
   const snapshotKey = importMode === "copy"
     ? input.runId!.replace(/[^a-zA-Z0-9_-]/g, "_")
     : createHash("sha256").update(JSON.stringify({
+      skillLayoutVersion: 2,
       enabledPlugins,
       installs: installSnapshots
         .filter(({ files }) => files.length > 0)
@@ -458,7 +494,7 @@ export async function prepareManagedClaudePluginRuntime(input: {
         }, null, 2), { mode: 0o600 });
       }
       if (skillFiles.length > 0) {
-        await copyManagedClaudeSkills(sourceSkillsRoot, path.join(stagingDir, "skills"), skillFiles);
+        await copyManagedClaudeSkills(sourceSkillsRoot, path.join(stagingDir, "skills"), managedSkillFiles);
       }
       try {
         await fs.rename(stagingDir, snapshotDir);
@@ -497,13 +533,16 @@ export async function prepareManagedClaudePluginRuntime(input: {
       stateDir,
       configDir: input.configDir,
       skillDirectories: [...selectedSkillDirectories],
-      skillFiles: managedSkillFiles,
+      skillFiles: managedSkillFiles.map((entry) => ({
+        path: entry.targetPath ?? entry.path,
+        contentHash: entry.contentHash,
+      })),
     });
   } else if (skillFiles.length > 0) {
     await copyManagedClaudeSkills(
       path.join(snapshotDir, "skills"),
       path.join(input.configDir, "skills"),
-      skillFiles,
+      managedSkillFiles.map((entry) => ({ path: entry.targetPath ?? entry.path })),
     );
   }
   return { pluginRoot: installs.length > 0 ? path.join(snapshotDir, "plugins") : null, skillCount: skillFiles.length };

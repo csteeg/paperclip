@@ -241,6 +241,38 @@ describe("prepareManagedClaudePluginRuntime", () => {
       .resolves.toBe('{"version":2}');
   });
 
+  it("imports synced account skills into Claude Code's discoverable personal skill layout", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-managed-claude-synced-skills-"));
+    cleanupDirs.push(root);
+    const sourceDir = path.join(root, "personal-claude");
+    const bundleDir = path.join(sourceDir, "skills", "synced", "account-bundle");
+    const skillDir = path.join(bundleDir, "careconnections-huisstijl");
+    const configDir = path.join(root, "managed-run", "provider");
+    await fs.mkdir(path.join(skillDir, "references"), { recursive: true });
+    await fs.writeFile(path.join(skillDir, "SKILL.md"), "CareConnections style guidance\n");
+    await fs.writeFile(path.join(skillDir, "references", "colors.md"), "Brand colors\n");
+    await fs.writeFile(path.join(sourceDir, "settings.json"), JSON.stringify({ enabledPlugins: {} }));
+
+    const result = await prepareManagedClaudePluginRuntime({
+      env: {
+        PAPERCLIP_HOME: path.join(root, "paperclip-data"),
+        PAPERCLIP_INSTANCE_ID: "test-instance",
+        PAPERCLIP_CLAUDE_PLUGIN_SOURCE_DIR: sourceDir,
+      },
+      companyId: "company-1",
+      agentId: "agent-1",
+      configDir,
+      importMode: "cache",
+    });
+    expect(result.skillCount).toBe(1);
+    await expect(fs.readFile(path.join(configDir, "skills", "careconnections-huisstijl", "SKILL.md"), "utf8"))
+      .resolves.toBe("CareConnections style guidance\n");
+    await expect(fs.readFile(path.join(configDir, "skills", "careconnections-huisstijl", "references", "colors.md"), "utf8"))
+      .resolves.toBe("Brand colors\n");
+    await expect(fs.access(path.join(configDir, "skills", "synced")))
+      .rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("copies the selected profile once per run without modifying the source profile", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-managed-claude-copy-"));
     cleanupDirs.push(root);
