@@ -1,3 +1,4 @@
+import { notifyNativeEnvironmentSettlement } from "../native-environment-settlement-notifications.js";
 import { notifyExternalAgentSettlement } from "../../modules/external-agents/index.js";
 import { notifyNativeRecoveryNotices } from "../native-recovery-notice-notifications.js";
 import { resolveCommittedNativeRecoveryNotices } from "./native-recovery-notices.js";
@@ -1640,6 +1641,7 @@ export async function finalizeNativeRun(input: {
         if (input.projectRunStatus) await notifyExternalAgentSettlement(tx, { companyId: run.companyId, runId: run.id });
         await notifyNativeRecoveryNotices(tx, { companyId: run.companyId, runId: run.id });
         await notifyNativeRunProjection(tx, { companyId: run.companyId, runId: run.id });
+        await notifyNativeEnvironmentSettlement(tx, { companyId: run.companyId, runId: run.id });
         await notifyRetainedNativeSessionCleanup(tx, { companyId: run.companyId, runId: run.id });
         if (input.projectRunStatus) await notifyInstructionCollection(tx, { companyId: run.companyId, runId: run.id });
         if (input.projectRunStatus) await notifyCancelledWorkspacePreservation(tx, { companyId: run.companyId, runId: run.id });

@@ -80,20 +80,23 @@ export async function prepareSandboxStopAndRetain(db: Db, lease: Lease) {
 }
 
 /** Historical release rows can lack a stop receipt. Re-inspect the exact
- * recorded allocation using stop-only dispatch; never infer that it stopped. */
+ * recorded allocation using stop-only dispatch; never infer that it stopped.
+ * The preservation owner verifies source eligibility and exclusive allocation
+ * ownership before calling. Lease reuse policy does not authorize destruction. */
 export async function prepareHistoricalSandboxStopVerification(db: Db, lease: typeof environmentLeases.$inferSelect) {
   if (lease.status !== "released" || !lease.heartbeatRunId || !lease.providerLeaseId ||
-      !["retain_on_failure", "ephemeral"].includes(lease.leasePolicy) || lease.metadata?.pendingCleanupInFlight === true)
+      lease.metadata?.pendingCleanupInFlight === true)
     return null;
   return prepareStopAndRetain(db, lease, "released");
 }
 
 /** A repair-only resume invalidates the old stop receipt atomically. This is
- * separate from ordinary release; a released timestamp alone cannot grant it. */
+ * separate from ordinary release; a released timestamp alone cannot grant it.
+ * Source eligibility belongs to the preservation owner, including accepted
+ * native exports whose original allocation policy is reusable. */
 export async function prepareStoppedSandboxForRecovery(db: Db, lease: typeof environmentLeases.$inferSelect) {
   if (!hasRemoteTerminationReceipt(lease) || lease.status !== "released"
-    || (lease.metadata?.remoteExecutionTermination as { state?: string })?.state !== "stopped"
-    || !["retain_on_failure", "ephemeral"].includes(lease.leasePolicy)) return null;
+    || (lease.metadata?.remoteExecutionTermination as { state?: string })?.state !== "stopped") return null;
   return prepareStopAndRetain(db, lease, "released");
 }
 
@@ -116,7 +119,7 @@ async function prepareStopAndRetain(db: Db, lease: Lease, fromStatus: "active" |
     sql`${environmentLeases.provider} is not distinct from ${lease.provider}`,
     sql`${environmentLeases.providerLeaseId} is not distinct from ${lease.providerLeaseId}`,
     sql`${environmentLeases.metadata} is not distinct from ${lease.metadata === null ? null : JSON.stringify(lease.metadata)}::jsonb`,
-  )).returning());
+  )).returning(), { companyId: lease.companyId, runId: lease.heartbeatRunId ?? undefined });
   return updated ?? null;
 }
 
@@ -151,7 +154,7 @@ export async function settleStopOnlyCleanup(db: Db, lease: Lease, options: { att
       sql`${environmentLeases.metadata}->'sandboxStopAndRetain' = ${JSON.stringify(lease.metadata?.[SANDBOX_STOP_AND_RETAIN_KEY])}::jsonb`,
       sql`${environmentLeases.metadata}->>'pluginId' is not distinct from ${intent.pluginId}`,
     )).returning();
-  });
+  }, { companyId: lease.companyId, runId: lease.heartbeatRunId ?? undefined });
   return updated ?? null;
 }
 

@@ -66,7 +66,7 @@ export async function preserveNativeWorkspaceExportLease(db: Db, run: typeof hea
         pluginId: lease.metadata?.pluginId },
       pendingCleanupAttemptId: requestId, pendingCleanupInFlight: false, pendingCleanupLeaseExpiresAtMs: 0,
       pendingCleanupRetryAfterMs: 0, pendingCleanupRetryAttempts: 0, pendingCleanupRetryCapWarned: false },
-  }).where(eq(environmentLeases.id, lease.id)));
+  }).where(eq(environmentLeases.id, lease.id)), { companyId: run.companyId, runId: run.id });
 }
 
 /** Only verified copyback plus commitment permits the original ephemeral
@@ -125,6 +125,6 @@ export async function settleNativeWorkspaceExportResume(db: Db, lease: Lease, op
       sql`${environmentLeases.metadata}->'nativeWorkspaceExportResume'->>'requestId' = ${marker.requestId}`,
       sql`${environmentLeases.metadata}->>'pluginId' = ${marker.pluginId}`,
     )).returning();
-  });
+  }, { companyId: lease.companyId, runId: lease.heartbeatRunId ?? undefined });
   return row ?? null;
 }
