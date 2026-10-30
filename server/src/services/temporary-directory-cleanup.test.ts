@@ -6,8 +6,33 @@ import path from "node:path";
 let instanceHome: string | undefined;
 let temporaryDirectory: string | undefined;
 
+type CleanupTask = {
+  retryMs: number;
+  runDuringDrain: boolean;
+  run(signal: AbortSignal): Promise<unknown>;
+  hasPending(): Promise<boolean>;
+};
+
+function registerCleanupTask(cleanup: typeof import("./temporary-directory-cleanup.js")) {
+  let task: CleanupTask | undefined;
+  let stopped = false;
+  const worker = cleanup.registerTemporaryDirectoryCleanupWork({
+    register(_queue: string, definition: CleanupTask) {
+      task = definition;
+      return { wake: () => { if (!stopped) void definition.run(new AbortController().signal); } };
+    },
+  } as never);
+  return {
+    run: () => task!.run(new AbortController().signal),
+    hasPending: () => task!.hasPending(),
+    stop: () => { stopped = true; },
+    wake: worker.wake,
+  };
+}
+
 afterEach(async () => {
   vi.doUnmock("../home-paths.js");
+  vi.doUnmock("node:fs/promises");
   vi.resetModules();
   vi.unstubAllEnvs();
   if (instanceHome) await rm(instanceHome, { recursive: true, force: true });
@@ -35,4 +60,89 @@ it("reconstructs persisted temporary-directory cleanup after a server restart", 
 
   expect(JSON.parse(await readFile(ledger, "utf8"))).toEqual([]);
   await expect(stat(temporaryDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+async function prepareCleanupModules(failFirstRemoval: () => boolean) {
+  const instanceRoot = path.join(instanceHome!, "instances", "default");
+  await mkdir(instanceRoot, { recursive: true });
+  vi.stubEnv("PAPERCLIP_HOME", instanceHome!);
+  vi.doMock("../home-paths.js", () => ({ resolvePaperclipInstanceRoot: () => instanceRoot }));
+  vi.doMock("node:fs/promises", async () => {
+    const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    return {
+      ...actual,
+      rm: async (...args: Parameters<typeof actual.rm>) => {
+        if (args[0] === temporaryDirectory && failFirstRemoval())
+          throw Object.assign(new Error("fixture lock"), { code: "EBUSY" });
+        return actual.rm(...args);
+      },
+    };
+  });
+  vi.resetModules();
+  return {
+    ledger: path.join(instanceRoot, "pending-temporary-directory-cleanup.json"),
+    cleanup: await import("./temporary-directory-cleanup.js"),
+  };
+}
+
+it("persists a failed removal and lets a fresh worker retry it", async () => {
+  instanceHome = await mkdtemp(path.join(os.tmpdir(), "paperclip-cleanup-home-"));
+  temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), "paperclip-ai-cleanup-"));
+  let fail = true;
+  const fixture = await prepareCleanupModules(() => {
+    if (!fail) return false;
+    fail = false;
+    return true;
+  });
+
+  await fixture.cleanup.queueTemporaryDirectoryCleanup(temporaryDirectory);
+  expect(JSON.parse(await readFile(fixture.ledger, "utf8"))).toEqual([temporaryDirectory]);
+  await expect(stat(temporaryDirectory)).resolves.toBeDefined();
+
+  vi.doUnmock("node:fs/promises");
+  vi.resetModules();
+  const freshCleanup = await import("./temporary-directory-cleanup.js");
+  const worker = registerCleanupTask(freshCleanup);
+  expect(await worker.hasPending()).toBe(true);
+  await worker.run();
+  await expect(stat(temporaryDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(JSON.parse(await readFile(fixture.ledger, "utf8"))).toEqual([]);
+});
+
+it("keeps late cleanup work owned after worker shutdown until the final sweep", async () => {
+  instanceHome = await mkdtemp(path.join(os.tmpdir(), "paperclip-cleanup-home-"));
+  temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), "paperclip-ai-cleanup-"));
+  let fail = false;
+  const fixture = await prepareCleanupModules(() => {
+    if (!fail) return false;
+    fail = false;
+    return true;
+  });
+  const worker = registerCleanupTask(fixture.cleanup);
+  worker.stop();
+
+  fail = true;
+  await fixture.cleanup.queueTemporaryDirectoryCleanup(temporaryDirectory);
+  expect(JSON.parse(await readFile(fixture.ledger, "utf8"))).toEqual([temporaryDirectory]);
+  await expect(stat(temporaryDirectory)).resolves.toBeDefined();
+  worker.wake();
+  await expect(stat(temporaryDirectory)).resolves.toBeDefined();
+
+  await fixture.cleanup.retryTemporaryDirectoryCleanupNow();
+  await expect(stat(temporaryDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(JSON.parse(await readFile(fixture.ledger, "utf8"))).toEqual([]);
+});
+
+it("handles concurrent requests for the same temporary directory", async () => {
+  instanceHome = await mkdtemp(path.join(os.tmpdir(), "paperclip-cleanup-home-"));
+  temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), "paperclip-ai-cleanup-"));
+  const fixture = await prepareCleanupModules(() => false);
+
+  await Promise.all([
+    fixture.cleanup.queueTemporaryDirectoryCleanup(temporaryDirectory),
+    fixture.cleanup.queueTemporaryDirectoryCleanup(temporaryDirectory),
+  ]);
+
+  await expect(stat(temporaryDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(JSON.parse(await readFile(fixture.ledger, "utf8"))).toEqual([]);
 });
