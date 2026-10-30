@@ -142,7 +142,7 @@ describe("retainManagedClaudeTranscripts", () => {
 });
 
 describe("managed Claude transcript expiration sweep", () => {
-  it("resumes a bounded sweep after discovering new scopes without rechecking completed scopes", async () => {
+  it("preserves rescan work after a failed discovery without rechecking completed scopes", async () => {
     const root = path.join(guestDir, "instance");
     const transcriptsDir = path.join(root, "companies", "company-1", "agents", "agent-1", "claude-transcripts");
     await fs.mkdir(transcriptsDir, { recursive: true });
@@ -164,7 +164,14 @@ describe("managed Claude transcript expiration sweep", () => {
     const newEarlierScope = path.join(transcriptsDir, "0000000000000000");
     await fs.mkdir(newEarlierScope);
     await fs.writeFile(path.join(newEarlierScope, "task.json"), JSON.stringify({ taskKey: "new-task" }));
+    const brokenCompanyAgents = path.join(root, "companies", "company-2", "agents");
+    await fs.mkdir(path.dirname(brokenCompanyAgents), { recursive: true });
+    await fs.writeFile(brokenCompanyAgents, "not a directory");
     service.requestRescan();
+
+    await expect(service.tick()).rejects.toThrow();
+    await fs.rm(brokenCompanyAgents);
+    await fs.mkdir(brokenCompanyAgents);
 
     const second = await service.tick();
     expect(second).toMatchObject({ checked: 2, truncated: false });

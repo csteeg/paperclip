@@ -187,7 +187,8 @@ export function managedClaudeTranscriptExpirationService(db: Db, defaults: Manag
   let sweepDueAt: number | null = null;
   let sweepScopes: Scope[] | null = null;
   const completedScopes = new Set<string>();
-  let rescanRequested = false;
+  let rescanVersion = 0;
+  let scannedRescanVersion = -1;
 
   async function expireScope(
     scope: Scope,
@@ -256,8 +257,8 @@ export function managedClaudeTranscriptExpirationService(db: Db, defaults: Manag
       checked: 0, expired: 0, clearedTaskSessions: 0, failed: 0, truncated: false, skipped: {}, nextDueAt: null,
     };
 
-    if (!sweepScopes || rescanRequested) {
-      rescanRequested = false;
+    if (!sweepScopes || scannedRescanVersion < rescanVersion) {
+      const scanVersion = rescanVersion;
       const scopes = new Map((sweepScopes ?? []).map((scope) => [scope.dir, scope]));
       for (const owner of await listTranscriptDirs(root)) {
         const transcriptsDir = transcriptsDirOf(root, owner);
@@ -269,6 +270,7 @@ export function managedClaudeTranscriptExpirationService(db: Db, defaults: Manag
         }
       }
       sweepScopes = [...scopes.values()].sort((a, b) => (a.dir < b.dir ? -1 : a.dir > b.dir ? 1 : 0));
+      scannedRescanVersion = scanVersion;
     }
     const scopes = sweepScopes;
     const notYetDue = scopes.filter((scope) => scope.task && scope.task.lastUsed >= cutoff);
@@ -295,7 +297,7 @@ export function managedClaudeTranscriptExpirationService(db: Db, defaults: Manag
     }
     if (result.failed > 0) result.nextDueAt = earliest(result.nextDueAt, now + MANAGED_CLAUDE_TRANSCRIPT_CLEANUP_RETRY_MS);
     sweepDueAt = earliest(sweepDueAt, result.nextDueAt);
-    if (rescanRequested) {
+    if (scannedRescanVersion < rescanVersion) {
       result.truncated = true;
       result.nextDueAt = now + 1000;
       return result;
@@ -309,7 +311,7 @@ export function managedClaudeTranscriptExpirationService(db: Db, defaults: Manag
     return result;
   }
 
-  return { tick, requestRescan: () => { rescanRequested = true; } };
+  return { tick, requestRescan: () => { rescanVersion += 1; } };
 }
 
 async function hasRecentSiblingScope(scope: Scope, taskKey: string, cutoff: Date): Promise<boolean> {
