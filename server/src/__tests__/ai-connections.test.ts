@@ -2022,6 +2022,28 @@ console.log(JSON.stringify({ type: "result", subtype: "success", result: "hello"
       await Promise.all([first.cleanup(), second.cleanup()]);
     }
   });
+  it("keeps Claude subscription homes per-run unless transcript retention is enabled", async () => {
+    const envKey = "PAPERCLIP_MANAGED_CLAUDE_TRANSCRIPT_RETENTION_ENABLED";
+    const previousValue = process.env[envKey];
+    delete process.env[envKey];
+    const subscription = { ...input, binding: { ...binding, method: "subscription" as const }, responsibleUserId: "alice", config: { model: "same-model" } };
+    try {
+      const account = (await service.list(companyId, "alice")).find(account => account.provider === "anthropic" && account.method === "subscription")!;
+      await service.setDefault(companyId, "alice", account.grantId);
+      const first = await prepareManagedAiRuntime(db, subscription);
+      const firstHome = first.home;
+      await first.cleanup();
+      const second = await prepareManagedAiRuntime(db, subscription);
+      try {
+        expect(second.home).not.toBe(firstHome);
+      } finally {
+        await second.cleanup();
+      }
+    } finally {
+      if (previousValue === undefined) delete process.env[envKey];
+      else process.env[envKey] = previousValue;
+    }
+  });
   it("runs a same-agent OpenAI subscription child alongside a still-open parent", async () => {
     const userId = "subscription-contention-user";
     await db.insert(companyMemberships).values({ companyId, principalId: userId, principalType: "user", status: "active", membershipRole: "member" });

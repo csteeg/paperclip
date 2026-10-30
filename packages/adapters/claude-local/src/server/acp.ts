@@ -410,7 +410,11 @@ export function createClaudeAcpExecutor(options: ClaudeAcpExecutorOptions = {}):
       legacyRemoteExecution: ctx.executionTransport?.remoteExecution,
     });
     const acpConfig = buildClaudeAcpConfig(ctx.config, target?.kind === "remote" ? {} : process.env);
-    if (acpConfig.managedAiConnection && target?.kind !== "remote") {
+    const profileImportMode = asString(
+      parseObject(acpConfig.env).PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE,
+      "off",
+    ).trim().toLowerCase();
+    if (acpConfig.managedAiConnection && target?.kind !== "remote" && profileImportMode !== "off") {
       const availableSkills = await readPaperclipRuntimeSkillEntries(ctx.config, moduleDir);
       const selectedSkillNames = new Set(resolveClaudeDesiredSkillNames(ctx.config, availableSkills));
       const excludedSkillNames = availableSkills

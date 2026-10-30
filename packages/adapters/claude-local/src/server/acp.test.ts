@@ -269,6 +269,32 @@ function buildContext(root: string, overrides: Partial<AdapterExecutionContext> 
 }
 
 describe("claude_local ACP lane", () => {
+  it("preserves Paperclip's managed ACP defaults when profile import is off", async () => {
+    const root = await makeTempRoot("paperclip-claude-acp-managed-default-");
+    const existingPluginCache = path.join(root, "existing-plugin-cache");
+    const meta: AdapterInvocationMeta[] = [];
+    const execute = createClaudeAcpExecutor({
+      createRuntime: (options: FakeRuntimeOptions) => new FakeRuntime(options) as never,
+    });
+    const result = await execute(buildContext(root, {
+      config: {
+        engine: "acp",
+        cwd: root,
+        stateDir: path.join(root, "state"),
+        env: {
+          CLAUDE_CONFIG_DIR: path.join(root, "managed-home", "provider"),
+          CLAUDE_CODE_PLUGIN_CACHE_DIR: existingPluginCache,
+        },
+        managedAiConnection: { provider: "anthropic", method: "api_key" },
+      },
+      onMeta: async (payload) => { meta.push(payload); },
+    }));
+
+    expect(result.exitCode).toBe(0);
+    expect(meta[0]?.env?.CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL).toBeUndefined();
+    expect(meta[0]?.env?.CLAUDE_CODE_PLUGIN_CACHE_DIR).toBe(existingPluginCache);
+  });
+
   it("imports opted-in plugins and skills into a managed local ACP run", async () => {
     const root = await makeTempRoot("paperclip-claude-acp-managed-plugins-");
     const sourceDir = path.join(root, "personal-claude-config");

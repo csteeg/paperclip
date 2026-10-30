@@ -125,6 +125,25 @@ describe("claude_local ACP startup fallback", () => {
     expect(runAdapterExecutionTargetProcess).not.toHaveBeenCalled();
   });
 
+  it("preserves the managed CLI marketplace environment when profile import is off", async () => {
+    const ctx = buildContext({
+      engine: "cli",
+      managedAiConnection: { provider: "anthropic", method: "subscription" },
+      env: {
+        CLAUDE_CONFIG_DIR: "C:/managed/provider",
+        CLAUDE_CODE_PLUGIN_CACHE_DIR: "C:/existing/plugin-cache",
+      },
+    });
+
+    await execute(ctx as never);
+
+    const call = runAdapterExecutionTargetProcess.mock.calls[0] as unknown as [
+      string, unknown, string, string[], { env: NodeJS.ProcessEnv },
+    ] | undefined;
+    expect(call?.[4].env.CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL).toBeUndefined();
+    expect(call?.[4].env.CLAUDE_CODE_PLUGIN_CACHE_DIR).toBe("C:/existing/plugin-cache");
+  });
+
   it("trusts the Paperclip API URL when network access is allowlisted", async () => {
     const paperclipApiUrl = "http://127.0.0.1:4310";
     vi.stubEnv("PAPERCLIP_API_URL", paperclipApiUrl);
