@@ -12,7 +12,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { localEncryptedProvider } from "../secrets/local-encrypted-provider.js";
 import { promises as fs } from "node:fs";
-import { mkdtemp, realpath, rm, access, readFile, writeFile, stat } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm, access, readFile, writeFile, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { and, eq, sql } from "drizzle-orm";

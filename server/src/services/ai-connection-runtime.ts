@@ -335,13 +335,16 @@ export async function prepareManagedAiRuntime(
     })();
     const antigravitySubscription = harness === "antigravity_runtime" && selection.attribution.method === "subscription";
     const originalCredential = antigravitySubscription ? sanitizeAntigravityCredential(value) : value;
-    const agentEnv = stripAiAuthBindings(input.config.env);
-    const configuredClaudeHome = harness === "claude_local" && typeof agentEnv.HOME === "string" && agentEnv.HOME.trim()
-      ? path.resolve(agentEnv.HOME.trim())
+    const agentConfigEnv = input.config.env && typeof input.config.env === "object"
+      ? input.config.env as Record<string, unknown>
+      : {};
+    const configuredClaudeHome = harness === "claude_local" && typeof agentConfigEnv.HOME === "string" && agentConfigEnv.HOME.trim()
+      ? path.resolve(agentConfigEnv.HOME.trim())
       : undefined;
-    const configuredClaudeConfigDir = harness === "claude_local" && typeof agentEnv.CLAUDE_CONFIG_DIR === "string" && agentEnv.CLAUDE_CONFIG_DIR.trim()
-      ? path.resolve(agentEnv.CLAUDE_CONFIG_DIR.trim())
+    const configuredClaudeConfigDir = harness === "claude_local" && typeof agentConfigEnv.CLAUDE_CONFIG_DIR === "string" && agentConfigEnv.CLAUDE_CONFIG_DIR.trim()
+      ? path.resolve(agentConfigEnv.CLAUDE_CONFIG_DIR.trim())
       : undefined;
+    const agentEnv = stripAiAuthBindings(agentConfigEnv);
     // Managed Claude keeps the safe, disposable home by default. Explicit agent
     // paths are opt-in and are never included in this runtime's cleanup target.
     home = configuredClaudeHome ? undefined : await mkdtemp(
