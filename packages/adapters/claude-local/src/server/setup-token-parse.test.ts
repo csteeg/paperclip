@@ -625,6 +625,12 @@ describe("parseSetupTokenCredential", () => {
     expect(parseSetupTokenCredential(text)).toBe(FULL_TOKEN);
   });
 
+  it("reads the token when ConPTY skips unchanged anchor characters with cursor-forward sequences", () => {
+    const afterAnchor = "Stor\x1b[2Cthis\x1b[1Ctok\x1b[1Cn securely. You won't be able to see it again.";
+    const text = [SETUP_TOKEN_BEFORE_ANCHOR, "", FULL_TOKEN, "", afterAnchor].join("\n");
+    expect(parseSetupTokenCredential(text)).toBe(FULL_TOKEN);
+  });
+
   it("returns null for a token-shaped value before submit", () => {
     // The prompt screen holds a token-shaped value but no success anchors. The
     // parser fails closed, so an early value never delivers.
