@@ -13,7 +13,7 @@ export type LocalBrowserLoginState = {
   outcome?: "success" | "failure";
   error?: string;
   submitCode?: (code: string) => void;
-  abort: () => void;
+  abort: () => Promise<void>;
 };
 
 // Unix uses the existing Python PTY bridge. Windows has no Python `pty` module;
@@ -49,10 +49,19 @@ sys.exit(os.waitstatus_to_exitcode(status))
 /** Run the same browser-code login used by sandbox connections on the local host. */
 export function startLocalBrowserLogin(provider: "anthropic" | "openai", home: string): LocalBrowserLoginState {
   const controller = new AbortController();
-  const state: LocalBrowserLoginState = { abort: () => controller.abort() };
+  let runnerFinished: Promise<void> = Promise.resolve();
+  const state: LocalBrowserLoginState = { abort: async () => { controller.abort(); await runnerFinished; } };
   const args = provider === "anthropic" ? ["setup-token"] : ["login", "--device-auth"];
   let child: ChildProcessWithoutNullStreams | null = null;
-  let windowsPty: import("node-pty").IPty | null = null;
+  type WindowsPty = {
+    kill(): void;
+    write(data: string): void;
+    onData(listener: (data: string) => void): unknown;
+    onExit(listener: (event: { exitCode: number }) => void): unknown;
+    on?(event: string, listener: () => void): void;
+  };
+  let windowsPty: WindowsPty | null = null;
+  let activeProcessExit: Promise<void> = Promise.resolve();
   let stopped = false;
   const stop = () => {
     stopped = true;
@@ -105,9 +114,14 @@ export function startLocalBrowserLogin(provider: "anthropic" | "openai", home: s
         // A ConPTY is required: piping stdin/stdout to `claude setup-token` is
         // not equivalent to an interactive terminal. Only fixed provider args
         // are passed; never interpolate a browser code or a token into a shell.
-        let nodePty: typeof import("node-pty");
+        let nodePty: {
+          spawn(file: string, args: string[], options: {
+            name: string; cols: number; rows: number; cwd: string; env: Record<string, string>;
+          }): WindowsPty;
+        };
         try {
-          nodePty = await import("node-pty");
+          const optionalDependency = "node-pty";
+          nodePty = await import(optionalDependency) as typeof nodePty;
         } catch {
           state.error = "Windows browser sign-in needs the node-pty ConPTY dependency. Reinstall Paperclip and start sign-in again.";
           throw new Error("Windows login terminal unavailable");
@@ -122,7 +136,7 @@ export function startLocalBrowserLogin(provider: "anthropic" | "openai", home: s
         const ptyEnv = Object.fromEntries(
           Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
         );
-        return new Promise((resolve, reject) => {
+        const processExit = new Promise<{ exitCode: number | null }>((resolve, reject) => {
           if (controller.signal.aborted || stopped) {
             reject(new Error("Local sign-in cancelled"));
             return;
@@ -131,7 +145,7 @@ export function startLocalBrowserLogin(provider: "anthropic" | "openai", home: s
             windowsPty = nodePty.spawn("powershell.exe",
               ["-NoLogo", "-NoProfile", "-EncodedCommand", encoded],
               { name: "xterm-256color", cols: 120, rows: 30, cwd: process.cwd(), env: ptyEnv });
-            (windowsPty as unknown as { on?: (event: string, listener: () => void) => void }).on?.("error", () => {
+            windowsPty.on?.("error", () => {
               /* Ignore socket errors during teardown */
             });
             windowsPty.onData(onData);
@@ -142,8 +156,10 @@ export function startLocalBrowserLogin(provider: "anthropic" | "openai", home: s
             reject(new Error("Windows ConPTY startup failed"));
           }
         });
+        activeProcessExit = processExit.then(() => undefined, () => undefined);
+        return processExit;
       }
-      return new Promise((resolve, reject) => {
+      const processExit = new Promise<{ exitCode: number | null }>((resolve, reject) => {
         child = spawn("python3", ["-u", "-c", PYTHON_PTY_BRIDGE, executable, ...args], { env, stdio: ["pipe", "pipe", "pipe"] });
         child.stdout.on("data", (bytes: Buffer) => onData(bytes.toString("utf8")));
         // Provider output may contain secrets. Never log or retain stderr.
@@ -154,6 +170,8 @@ export function startLocalBrowserLogin(provider: "anthropic" | "openai", home: s
         });
         child.once("close", (exitCode) => resolve({ exitCode }));
       });
+      activeProcessExit = processExit.then(() => undefined, () => undefined);
+      return processExit;
     },
     write(input: string) {
       try {
@@ -164,14 +182,14 @@ export function startLocalBrowserLogin(provider: "anthropic" | "openai", home: s
       }
     },
     stop,
-    async dispose() { stop(); },
+    async dispose() { stop(); await activeProcessExit; },
     async readFile(file: string) { const { readLocalAiCredentialFile } = await import("./local-ai-credential-file.js"); return Buffer.from(await readLocalAiCredentialFile(file)); },
   };
   if (provider === "anthropic") {
     let deliverCode: ((code: string) => void) | undefined;
     const codeReady = new Promise<string>((resolve) => { deliverCode = resolve; });
     state.submitCode = (code) => { deliverCode?.(code); deliverCode = undefined; };
-    void runSetupTokenLogin(driver, {
+    runnerFinished = runSetupTokenLogin(driver, {
       timeoutMs: 300_000, signal: controller.signal,
       onPrompt: (prompt) => { state.authorizationUrl = prompt.url; },
       provideCode: (signal) => new Promise<string>((resolve, reject) => {
@@ -192,7 +210,7 @@ export function startLocalBrowserLogin(provider: "anthropic" | "openai", home: s
     }).then((result) => { state.outcome = result.outcome === "success" ? "success" : "failure"; })
       .catch(() => { state.outcome = "failure"; });
   } else {
-    void runDeviceLogin(driver, {
+    runnerFinished = runDeviceLogin(driver, {
       timeoutMs: 300_000, signal: controller.signal,
       onPrompt: (prompt) => { state.authorizationUrl = prompt.url; state.code = prompt.code; },
     }).then((result) => { state.outcome = result.outcome === "success" ? "success" : "failure"; })
