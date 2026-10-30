@@ -58,9 +58,17 @@ describe("retainManagedClaudeTranscripts", () => {
     }
   });
 
+  it("does not retain transcripts in an explicitly configured HOME", async () => {
+    const runtime = await makeRuntime();
+    expect(await retain({ ...runtime, home: undefined })).toBeUndefined();
+    await expect(fs.lstat(path.join(runtime.home, "provider", "projects"))).rejects.toThrow();
+  });
+
   it("keeps a transcript for the task's next run after the credential home is deleted", async () => {
     const firstRun = await makeRuntime();
-    expect(await retain(firstRun)).toBe(firstRun.home);
+    const retained = await retain(firstRun);
+    expect(retained?.home).toBe(firstRun.home);
+    expect(retained?.transcriptDir).toBeTruthy();
     await writeTranscript(firstRun.home);
     await fs.writeFile(path.join(firstRun.home, "provider", ".credentials.json"), "secret");
     await fs.rm(firstRun.home, { recursive: true, force: true });

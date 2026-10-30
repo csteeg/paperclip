@@ -10,6 +10,7 @@ export async function prepareManagedClaudeAcpConfig(input: {
   companyId: string;
   agentId: string;
   runId: string;
+  excludedSkillNames?: string[];
 }): Promise<{ env: Record<string, unknown>; importMessage?: string }> {
   const env = parseObject(input.configEnv);
   const configDir = typeof env.CLAUDE_CONFIG_DIR === "string" ? env.CLAUDE_CONFIG_DIR : "";
@@ -43,6 +44,7 @@ export async function prepareManagedClaudeAcpConfig(input: {
           : undefined,
         autoDiscoverSource: true,
         importMode,
+        excludedSkillNames: input.excludedSkillNames,
       });
 
   return {

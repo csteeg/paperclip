@@ -23,7 +23,6 @@ import { decideCodexAuthMerge, withAccountHomeSecretMutationLock } from "@paperc
 import { WORKSPACE_RESTORE_LOCK_TIMEOUT_CODE } from "@paperclipai/adapter-utils/workspace-restore-merge";
 import type { AdapterExecutionTarget } from "@paperclipai/adapter-utils/execution-target";
 import { runAdapterExecutionTargetProcess } from "@paperclipai/adapter-utils/execution-target";
-import { managedAiHomeEnvironment } from "@paperclipai/adapter-utils/server-utils";
 import { decideGrokAuthMerge } from "@paperclipai/adapter-grok-local/server";
 import { NativeEnvironmentProbeCleanupError, sanitizeAntigravityCredential } from "../vendor/paperclip-runner/index.js";
 import { readLocalAiCredentialFile } from "./local-ai-credential-file.js";
@@ -271,6 +270,17 @@ async function reclaimStaleManagedAiHome(baseDir: string, now: () => number): Pr
   return true;
 }
 
+async function tryAcquireManagedAiHomeClaimLock(baseDir: string): Promise<(() => Promise<void>) | null> {
+  const lockDir = `${baseDir}.claim-lock`;
+  try {
+    await mkdir(lockDir, { mode: 0o700 });
+    return async () => { await rm(lockDir, { recursive: true, force: true }); };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return null;
+    throw error;
+  }
+}
+
 export async function claimManagedAiHome(
   baseDir: string,
   now: () => number = Date.now,
@@ -280,7 +290,16 @@ export async function claimManagedAiHome(
       await mkdir(baseDir, { mode: 0o700 });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      if (attempt === 0 && (await reclaimStaleManagedAiHome(baseDir, now))) continue;
+      if (attempt === 0) {
+        const releaseLock = await tryAcquireManagedAiHomeClaimLock(baseDir);
+        if (releaseLock) {
+          try {
+            if (await reclaimStaleManagedAiHome(baseDir, now)) continue;
+          } finally {
+            await releaseLock();
+          }
+        }
+      }
       break;
     }
     try {

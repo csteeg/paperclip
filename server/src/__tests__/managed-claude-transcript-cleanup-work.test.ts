@@ -92,8 +92,9 @@ describe("registerManagedClaudeTranscriptCleanupWork", () => {
         .mockResolvedValueOnce(result({ nextDueAt: due }))
         .mockImplementationOnce(() => new Promise<ManagedClaudeTranscriptExpirationResult>((resolve) => { resolveSecondPass = resolve; }))
         .mockResolvedValueOnce(result());
+      const requestRescan = vi.fn();
       const c = coordinator();
-      registerManagedClaudeTranscriptCleanupWork(c, { tick }, vi.fn());
+      registerManagedClaudeTranscriptCleanupWork(c, { tick, requestRescan }, vi.fn());
       await vi.advanceTimersByTimeAsync(1);
       expect(tick).toHaveBeenCalledTimes(1);
 
@@ -108,6 +109,7 @@ describe("registerManagedClaudeTranscriptCleanupWork", () => {
         taskKey: "task-2",
         target: { kind: "local" } as never,
       });
+      expect(requestRescan).toHaveBeenCalledTimes(1);
 
       resolveSecondPass(result());
       await vi.advanceTimersByTimeAsync(1);

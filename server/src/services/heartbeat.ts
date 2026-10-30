@@ -2940,8 +2940,13 @@ export function heartbeatService(
         runtime: managedAiRuntime, adapterType: agent.adapterType, companyId: agent.companyId, agentId: agent.id,
         taskKey: deriveTaskKey(context, null), target: executionTarget,
       });
-      if (managedAiRetainedHome) context.managedAiRetainedHome = managedAiRetainedHome;
-      else delete context.managedAiRetainedHome;
+      if (managedAiRetainedHome) {
+        context.managedAiRetainedHome = managedAiRetainedHome.home;
+        context.managedAiTranscriptDir = managedAiRetainedHome.transcriptDir;
+      } else {
+        delete context.managedAiRetainedHome;
+        delete context.managedAiTranscriptDir;
+      }
       const gitExecutionEnv = await timePreparation("github_environment", () => prepareGitHubExecutionEnvironment({
         target: executionTarget,
         cwd: executionWorkspace.cwd,

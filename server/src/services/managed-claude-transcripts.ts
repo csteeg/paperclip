@@ -30,16 +30,16 @@ export function managedClaudeTranscriptRetentionEnabled(): boolean {
 let onScopeRetained: (() => void) | null = null;
 
 export async function retainManagedClaudeTranscripts(input: {
-  runtime: { home: string; sessionIdentity: string } | undefined;
+  runtime: { home?: string; sessionIdentity: string } | undefined;
   adapterType: string;
   companyId: string;
   agentId: string;
   taskKey: string | null;
   target: AdapterExecutionTarget | null | undefined;
-}): Promise<string | undefined> {
+}): Promise<{ home: string; transcriptDir: string } | undefined> {
   const { runtime, taskKey } = input;
   if (!managedClaudeTranscriptRetentionEnabled()) return undefined;
-  if (!runtime || !taskKey || input.adapterType !== "claude_local" || (input.target && input.target.kind !== "local")) return undefined;
+  if (!runtime?.home || !taskKey || input.adapterType !== "claude_local" || (input.target && input.target.kind !== "local")) return undefined;
   try {
     const scopeDir = resolveManagedClaudeTranscriptsDir(input.companyId, input.agentId, runtime.sessionIdentity, taskKey);
     const projectsDir = path.join(scopeDir, PROJECTS_DIR);
@@ -47,7 +47,7 @@ export async function retainManagedClaudeTranscripts(input: {
     await fs.writeFile(path.join(scopeDir, TASK_FILE), JSON.stringify({ taskKey }), { mode: 0o600 });
     await fs.symlink(await fs.realpath(projectsDir), path.join(runtime.home, "provider", PROJECTS_DIR));
     onScopeRetained?.();
-    return runtime.home;
+    return { home: runtime.home, transcriptDir: projectsDir };
   } catch (err) {
     logger.warn({ err, agentId: input.agentId }, "Could not retain Claude transcripts; this run will not be resumable");
     return undefined;
@@ -187,6 +187,7 @@ export function managedClaudeTranscriptExpirationService(db: Db, defaults: Manag
   let cursor: string | null = null;
   let sweepDueAt: number | null = null;
   let sweepScopes: Scope[] | null = null;
+  let rescanRequested = false;
 
   async function expireScope(
     scope: Scope,
@@ -255,6 +256,12 @@ export function managedClaudeTranscriptExpirationService(db: Db, defaults: Manag
       checked: 0, expired: 0, clearedTaskSessions: 0, failed: 0, truncated: false, skipped: {}, nextDueAt: null,
     };
 
+    if (rescanRequested) {
+      rescanRequested = false;
+      cursor = null;
+      sweepScopes = null;
+    }
+
     if (!sweepScopes) {
       const scopes: Scope[] = [];
       for (const owner of await listTranscriptDirs(root)) {
@@ -293,6 +300,13 @@ export function managedClaudeTranscriptExpirationService(db: Db, defaults: Manag
     }
     if (result.failed > 0) result.nextDueAt = earliest(result.nextDueAt, now + MANAGED_CLAUDE_TRANSCRIPT_CLEANUP_RETRY_MS);
     sweepDueAt = earliest(sweepDueAt, result.nextDueAt);
+    if (rescanRequested) {
+      result.truncated = true;
+      result.nextDueAt = now + 1000;
+      cursor = null;
+      sweepScopes = null;
+      return result;
+    }
     if (!result.truncated) {
       result.nextDueAt = sweepDueAt;
       cursor = null;
@@ -302,7 +316,7 @@ export function managedClaudeTranscriptExpirationService(db: Db, defaults: Manag
     return result;
   }
 
-  return { tick };
+  return { tick, requestRescan: () => { rescanRequested = true; } };
 }
 
 async function hasRecentSiblingScope(scope: Scope, taskKey: string, cutoff: Date): Promise<boolean> {
@@ -323,7 +337,8 @@ function earliest(a: number | null, b: number | null): number | null {
 
 export function registerManagedClaudeTranscriptCleanupWork(
   coordinator: ReturnType<typeof createDeliveryWorkCoordinator>,
-  service: ReturnType<typeof managedClaudeTranscriptExpirationService>,
+  service: Pick<ReturnType<typeof managedClaudeTranscriptExpirationService>, "tick"> &
+    Partial<Pick<ReturnType<typeof managedClaudeTranscriptExpirationService>, "requestRescan">>,
   onResult: (result: ManagedClaudeTranscriptExpirationResult) => void,
 ) {
   let next: number | null = null;
@@ -338,6 +353,9 @@ export function registerManagedClaudeTranscriptCleanupWork(
     hasPending: async () => false,
     nextRunAt: () => next,
   });
-  onScopeRetained = () => worker.wake();
+  onScopeRetained = () => {
+    service.requestRescan?.();
+    worker.wake();
+  };
   return worker;
 }

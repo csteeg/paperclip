@@ -627,8 +627,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   }
   const networkScope = parseLocalProcessNetworkScope(config.networkScope);
   const filesystemScope = parseLocalProcessFilesystemScope(config.filesystemScope);
-  const managedTranscriptDir = filesystemScope && !executionTargetIsRemote && config.managedAiConnection && sharedClaudeConfigDir
-    ? await fs.realpath(path.join(sharedClaudeConfigDir, "projects")).catch(() => null)
+  const approvedManagedTranscriptDir = asString(ctx.context.managedAiTranscriptDir, "");
+  const managedTranscriptDir = filesystemScope && !executionTargetIsRemote && config.managedAiConnection && approvedManagedTranscriptDir
+    ? approvedManagedTranscriptDir
     : null;
   const localProcessSandbox: LocalProcessSandboxOptions | null =
     (filesystemScope || networkScope) && !executionTargetIsRemote
