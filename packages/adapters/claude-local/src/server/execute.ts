@@ -613,7 +613,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         excludedSkillNames: mountableSkillEntries.map((entry) => entry.runtimeName),
       })
     : null;
-  if (config.managedAiConnection) {
+  if (config.managedAiConnection && claudeProfileImportMode !== "off") {
     env.CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL = "1";
     env.CLAUDE_CODE_PLUGIN_CACHE_DIR = managedClaudePluginRuntime?.pluginRoot ?? path.join(sharedClaudeConfigDir, "plugins");
     if (managedClaudePluginRuntime?.pluginRoot) {

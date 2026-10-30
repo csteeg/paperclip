@@ -29,6 +29,7 @@ import { readLocalAiCredentialFile } from "./local-ai-credential-file.js";
 import { prepareAntigravityCredentialWriteback } from "./native-runtime/antigravity-runner-credentials.js";
 import { quotaCredentialHash, quotaCredentialRecovery, RetiredCredentialRecoveryError } from "./quota-credential-recovery.js";
 import { assertAiCredentialCleanupSettled, bindRetainedAiCredentialHome, reconcileRetainedAiCleanup, retainAiCredentialCleanup, type RetainedAiCleanupScope } from "./retained-ai-credential-cleanup.js";
+import { managedClaudeTranscriptRetentionEnabled } from "./managed-claude-transcripts.js";
 
 export function isAiConnectionBusy(error: unknown): error is HttpError {
   return error instanceof HttpError && error.status === 422 &&
@@ -453,20 +454,19 @@ export async function prepareManagedAiRuntime(
     const configuredClaudeHome = harness === "claude_local" && typeof agentEnv.HOME === "string" && agentEnv.HOME.trim()
       ? path.resolve(agentEnv.HOME.trim())
       : undefined;
-    // Managed Claude keeps the safe, disposable home by default. Explicit agent
-    // paths are opt-in and are never included in this runtime's cleanup target.
+    // Keep Paperclip's per-run home unless transcript retention is explicitly
+    // enabled. Explicit agent paths are never included in this cleanup target.
     let stableHome = false;
     if (configuredClaudeHome) {
       home = undefined;
-    } else if (harness === "claude_local") {
+    } else if (harness === "claude_local" && managedClaudeTranscriptRetentionEnabled()) {
       const claimed = await claimManagedAiHome(
         path.join(os.tmpdir(), `paperclip-ai-${input.companyId}-${selection.grant.id}`),
       );
       home = claimed.home;
       stableHome = claimed.stable;
     } else {
-      // Stable-home reuse is only for Claude prompt-cache reuse. Other managed
-      // runtimes keep Paperclip's existing per-run home isolation.
+      // Other managed runtimes retain Paperclip's existing per-run isolation.
       home = await mkdtemp(path.join(os.tmpdir(), `paperclip-ai-${input.companyId}-${selection.grant.id}-`));
     }
     if (harness === "antigravity_runtime" && home) home = await realpath(home);

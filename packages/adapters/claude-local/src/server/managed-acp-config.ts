@@ -50,8 +50,10 @@ export async function prepareManagedClaudeAcpConfig(input: {
   return {
     env: {
       ...env,
-      CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL: "1",
-      CLAUDE_CODE_PLUGIN_CACHE_DIR: managedPlugins.pluginRoot ?? path.join(configDir, "plugins"),
+      ...(importMode !== "off" ? {
+        CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL: "1",
+        CLAUDE_CODE_PLUGIN_CACHE_DIR: managedPlugins.pluginRoot ?? path.join(configDir, "plugins"),
+      } : {}),
     },
     ...(managedPlugins.pluginRoot || managedPlugins.skillCount > 0
       ? { importMessage: `[paperclip] Imported ${managedPlugins.skillCount} personal Claude skills using ${importMode} mode for local ACP.\n` }
