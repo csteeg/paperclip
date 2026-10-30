@@ -82,11 +82,16 @@ describe("native Windows subscription login PTY", () => {
     mocks.runSetup.mockImplementation(fakeRunner);
     const login = startLocalBrowserLogin("anthropic", "C:\\private\\login-home");
     await waitForSpawn();
-    login.abort();
+    const abortCompleted = vi.fn();
+    const aborted = login.abort().then(abortCompleted);
+    await Promise.resolve();
+    expect(abortCompleted).not.toHaveBeenCalled();
     // The real login runner races the abort against the child exit. The fixture
     // supplies an exit after cancellation to settle its pending startup promise.
     events.onExit({ exitCode: 1 });
+    await aborted;
     await vi.waitFor(() => expect(login.outcome).toBe("failure"));
+    expect(abortCompleted).toHaveBeenCalledOnce();
     expect(pty.kill).toHaveBeenCalled();
   });
 

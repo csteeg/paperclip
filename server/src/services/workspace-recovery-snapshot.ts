@@ -16,6 +16,7 @@ import { getStorageService, type StorageService } from "../storage/index.js";
 import { logger } from "../middleware/logger.js";
 import { SystemRecoveryFailure } from "./system-recovery-state.js";
 import { recoveryRunAncestry } from "./recovery-run-ancestry.js";
+import { queueTemporaryDirectoryCleanup } from "./temporary-directory-cleanup.js";
 
 const storedFileSchema = z.object({ objectKey: z.string().min(1), sha256: z.string().regex(/^[a-f0-9]{64}$/), byteSize: z.number().int().positive() });
 type StoredFile = z.infer<typeof storedFileSchema>;
@@ -138,9 +139,7 @@ export async function preserveWorkspaceSnapshot(input: {
       .where(eq(workspaceOperations.id, operation.id));
     return operation.id;
   } finally {
-    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }).catch((err) => {
-      logger.warn({ dir: root, err }, "Failed to remove temporary workspace snapshot directory");
-    });
+    await queueTemporaryDirectoryCleanup(root);
   }
 }
 
@@ -195,9 +194,7 @@ export async function attachPreservedWorkspaceSnapshots(input: {
         await rename(staging, destination);
         results.push({ operationId: operation.id, path: destination, sourceRunId });
       } finally {
-        await rm(staging, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }).catch((err) => {
-          logger.warn({ dir: staging, err }, "Failed to remove temporary workspace snapshot staging directory");
-        });
+        await queueTemporaryDirectoryCleanup(staging);
       }
     }
   }
