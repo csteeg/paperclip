@@ -321,12 +321,17 @@ project authentication and provider-routing overrides are rejected. Managed
 failure cannot reactivate host or legacy credentials.
 
 Managed Claude runtime paths and profile imports can be set per agent in its
-Environment variables. By default each invocation receives a private temporary
-`HOME` and `CLAUDE_CONFIG_DIR`, and Paperclip removes only that generated home
-after the run. Set `HOME` or `CLAUDE_CONFIG_DIR` explicitly to opt into stable
-agent-owned paths. Paperclip never removes either configured path. Use a distinct
-writable path per agent: sharing one path can share credentials, plugin settings,
-and session files, and concurrent runs may write to it at the same time.
+Environment variables. By default each invocation receives a private generated
+`HOME` and `CLAUDE_CONFIG_DIR`, and Paperclip removes that generated home after
+the run. For managed connections without an explicit `HOME`, Paperclip uses a
+stable per-company and per-connection home path when it can claim it. It still
+removes and recreates the directory contents after each run. Overlapping runs
+use separate random homes. This stable path lets Claude reuse path-dependent
+prompt-cache entries; it does not preserve Claude config or transcripts. Set
+`HOME` or `CLAUDE_CONFIG_DIR` explicitly to opt into stable agent-owned paths.
+Paperclip never removes either configured path. Use a distinct writable path per
+agent: sharing one path can share credentials, plugin settings, and session
+files, and concurrent runs may write to it at the same time.
 
 Profile import is controlled independently with `PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE`
 (`off`, `copy`, or `cache`) and `PAPERCLIP_CLAUDE_PLUGIN_SOURCE_DIR`. Import is
