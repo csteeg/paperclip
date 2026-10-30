@@ -26,6 +26,7 @@ import {
   prepareClaudeConfigSeed,
   prepareManagedClaudePluginRuntime,
   prepareSandboxClaudeProbeRuntime,
+  resolveManagedClaudeRuntimeStateDir,
 } from "./claude-config.js";
 
 describe("prepareClaudeConfigSeed", () => {
@@ -279,6 +280,127 @@ describe("prepareManagedClaudePluginRuntime", () => {
     await expect(fs.readFile(path.join(agentSource, "skills", "careconnections", "SKILL.md"), "utf8"))
       .resolves.toBe("selected profile skill");
     await expect(fs.access(serverSource)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("refreshes only imported skills in a persistent managed config", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-managed-claude-skill-refresh-"));
+    cleanupDirs.push(root);
+    const sourceDir = path.join(root, "personal-claude");
+    const managedSkill = path.join(sourceDir, "skills", "careconnections");
+    const managedScript = path.join(managedSkill, "scripts", "helper.js");
+    const removedSkill = path.join(sourceDir, "skills", "retired");
+    const targetSkills = path.join(root, "agent-home", "provider", "skills");
+    const agentOwnedSkill = path.join(targetSkills, "agent-owned");
+    const configDir = path.dirname(targetSkills);
+    await fs.mkdir(managedSkill, { recursive: true });
+    await fs.mkdir(path.dirname(managedScript), { recursive: true });
+    await fs.mkdir(removedSkill, { recursive: true });
+    await fs.mkdir(agentOwnedSkill, { recursive: true });
+    await fs.writeFile(path.join(managedSkill, "SKILL.md"), "CareConnections v1");
+    await fs.writeFile(managedScript, "helper v1");
+    await fs.writeFile(path.join(removedSkill, "SKILL.md"), "Retired skill");
+    await fs.writeFile(path.join(agentOwnedSkill, "SKILL.md"), "Agent-owned skill");
+    const env = { PAPERCLIP_HOME: path.join(root, "paperclip-data") };
+    const prepare = () => prepareManagedClaudePluginRuntime({
+      env,
+      companyId: "company-1",
+      agentId: "agent-1",
+      configDir,
+      sourceDir,
+      importMode: "cache",
+    });
+
+    await prepare();
+    await expect(fs.readFile(path.join(targetSkills, "careconnections", "SKILL.md"), "utf8"))
+      .resolves.toBe("CareConnections v1");
+    await expect(fs.readFile(path.join(targetSkills, "careconnections", "scripts", "helper.js"), "utf8"))
+      .resolves.toBe("helper v1");
+
+    const manifestDir = path.join(resolveManagedClaudeRuntimeStateDir(env, "company-1", "agent-1"), "managed-plugin-cache", "skill-imports");
+    const [manifestName] = await fs.readdir(manifestDir);
+    const manifestPath = path.join(manifestDir, manifestName);
+    const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8"));
+    manifest.skills.careconnections.complete = false;
+    await fs.writeFile(manifestPath, JSON.stringify(manifest));
+    await fs.rm(path.join(targetSkills, "careconnections", "scripts", "helper.js"));
+    await prepare();
+    await expect(fs.readFile(path.join(targetSkills, "careconnections", "scripts", "helper.js"), "utf8"))
+      .resolves.toBe("helper v1");
+
+    await fs.writeFile(path.join(targetSkills, "careconnections", "SKILL.md"), "Cached skill remains in place");
+    await prepare();
+    await expect(fs.readFile(path.join(targetSkills, "careconnections", "SKILL.md"), "utf8"))
+      .resolves.toBe("Cached skill remains in place");
+
+    await fs.writeFile(path.join(managedSkill, "SKILL.md"), "CareConnections v2");
+    await fs.rm(removedSkill, { recursive: true, force: true });
+    const addedSkill = path.join(sourceDir, "skills", "new-skill");
+    await fs.mkdir(addedSkill, { recursive: true });
+    await fs.writeFile(path.join(addedSkill, "SKILL.md"), "New skill");
+
+    await prepare();
+
+    await expect(fs.readFile(path.join(targetSkills, "careconnections", "SKILL.md"), "utf8"))
+      .resolves.toBe("CareConnections v2");
+    await expect(fs.access(path.join(targetSkills, "retired")))
+      .rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.readFile(path.join(targetSkills, "new-skill", "SKILL.md"), "utf8"))
+      .resolves.toBe("New skill");
+    await fs.writeFile(managedScript, "helper v2");
+    await prepare();
+    await expect(fs.readFile(path.join(targetSkills, "careconnections", "scripts", "helper.js"), "utf8"))
+      .resolves.toBe("helper v2");
+    await expect(fs.readFile(path.join(agentOwnedSkill, "SKILL.md"), "utf8"))
+      .resolves.toBe("Agent-owned skill");
+  });
+
+  it("preserves an agent-owned skill symlink that collides with an imported skill", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-managed-claude-skill-link-"));
+    cleanupDirs.push(root);
+    const sourceSkill = path.join(root, "personal-claude", "skills", "careconnections");
+    const linkedSkill = path.join(root, "agent-owned", "careconnections");
+    const configDir = path.join(root, "agent-home", "provider");
+    await fs.mkdir(sourceSkill, { recursive: true });
+    await fs.mkdir(path.dirname(linkedSkill), { recursive: true });
+    await fs.mkdir(linkedSkill, { recursive: true });
+    await fs.writeFile(path.join(sourceSkill, "SKILL.md"), "Personal skill");
+    await fs.writeFile(path.join(linkedSkill, "SKILL.md"), "Agent-owned skill");
+    await fs.mkdir(path.join(configDir, "skills"), { recursive: true });
+    await fs.symlink(linkedSkill, path.join(configDir, "skills", "careconnections"), "junction");
+
+    await expect(prepareManagedClaudePluginRuntime({
+      env: { PAPERCLIP_HOME: path.join(root, "paperclip-data") },
+      companyId: "company-1",
+      agentId: "agent-1",
+      configDir,
+      sourceDir: path.join(root, "personal-claude"),
+      importMode: "cache",
+    })).resolves.toMatchObject({ skillCount: 1 });
+
+    await expect(fs.readFile(path.join(linkedSkill, "SKILL.md"), "utf8"))
+      .resolves.toBe("Agent-owned skill");
+  }, 10_000);
+
+  it("does not create an empty skills directory when every imported skill is excluded", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-managed-claude-excluded-skill-"));
+    cleanupDirs.push(root);
+    const sourceSkill = path.join(root, "personal-claude", "skills", "careconnections");
+    const configDir = path.join(root, "agent-home", "provider");
+    await fs.mkdir(sourceSkill, { recursive: true });
+    await fs.writeFile(path.join(sourceSkill, "SKILL.md"), "Excluded skill");
+
+    await prepareManagedClaudePluginRuntime({
+      env: { PAPERCLIP_HOME: path.join(root, "paperclip-data") },
+      companyId: "company-1",
+      agentId: "agent-1",
+      configDir,
+      sourceDir: path.join(root, "personal-claude"),
+      importMode: "cache",
+      excludedSkillNames: ["careconnections"],
+    });
+
+    await expect(fs.access(path.join(configDir, "skills")))
+      .rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("auto-discovers the active Claude config directory when profile import is enabled", async () => {

@@ -118,6 +118,7 @@ export const DELIVERY_QUEUES = {
   caseHandoffs: "case-handoffs",
   nativeCheckpointExpiration: "native-checkpoint-expiration",
   temporaryDirectoryCleanup: "temporary-directory-cleanup",
+  managedClaudeTranscriptCleanup: "managed-claude-transcript-cleanup",
 } as const;
 export type DeliveryQueue = typeof DELIVERY_QUEUES[keyof typeof DELIVERY_QUEUES];
 

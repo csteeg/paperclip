@@ -38,14 +38,16 @@ import {
   asBoolean,
   asNumber,
   asString,
+  isPaperclipSkillSourceMissing,
   parseObject,
+  readPaperclipRuntimeSkillEntries,
 } from "@paperclipai/adapter-utils/server-utils";
 import {
   materializeRemoteClaudeConfig,
-  prepareManagedClaudePluginRuntime,
   prepareClaudeConfigSeed,
   prepareSandboxClaudeProbeRuntime,
 } from "./claude-config.js";
+import { prepareManagedClaudeAcpConfig } from "./managed-acp-config.js";
 import {
   buildAdapterTestTargetCheck,
   buildClaudeLoginRequiredHint,
@@ -58,6 +60,7 @@ import { detectClaudeLoginRequired, extractClaudeRetryNotBefore, isClaudeProvide
 import { buildClaudeProbePermissionArgs, claudeSandboxPermissionEnv } from "./permissions.js";
 import { ADAPTER_AUTH_MISSING_CHECK_CODE } from "./auth-check.js";
 import { resolveClaudeModel, SANDBOX_INSTALL_COMMAND } from "../index.js";
+import { resolveClaudeDesiredSkillNames } from "./skills.js";
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const packageRootDir = path.resolve(moduleDir, "../..");
@@ -407,51 +410,23 @@ export function createClaudeAcpExecutor(options: ClaudeAcpExecutorOptions = {}):
       legacyRemoteExecution: ctx.executionTransport?.remoteExecution,
     });
     const acpConfig = buildClaudeAcpConfig(ctx.config, target?.kind === "remote" ? {} : process.env);
-    const acpEnv = parseObject(acpConfig.env);
     if (acpConfig.managedAiConnection && target?.kind !== "remote") {
-      const configDir = typeof acpEnv.CLAUDE_CONFIG_DIR === "string" ? acpEnv.CLAUDE_CONFIG_DIR : "";
-      const managedHomeOverrides = parseObject(acpConfig.managedAiHomeOverrides);
-      const hasExplicitConfigDir = managedHomeOverrides.claudeConfigDir === true;
-      const rawImportMode = typeof acpEnv.PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE === "string"
-        ? acpEnv.PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE.trim().toLowerCase()
-        : "off";
-      if (!["off", "copy", "cache"].includes(rawImportMode)) {
-        throw new Error("PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE must be off, copy, or cache");
-      }
-      const importMode = rawImportMode as "off" | "copy" | "cache";
-      if (importMode !== "off" && hasExplicitConfigDir) {
-        throw new Error(
-          "Claude profile import cannot write into an explicitly configured CLAUDE_CONFIG_DIR. Disable profile import or remove the config directory override.",
-        );
-      }
-      if (importMode === "copy" && managedHomeOverrides.home === true) {
-        throw new Error("Claude profile copy mode requires Paperclip's temporary HOME. Choose cache mode or clear the HOME override.");
-      }
-      const managedPlugins = importMode === "off"
-        ? { pluginRoot: null, skillCount: 0 }
-        : await prepareManagedClaudePluginRuntime({
-            env: process.env,
-            companyId: ctx.agent.companyId,
-            agentId: ctx.agent.id,
-            runId: ctx.runId,
-            configDir,
-            sourceDir: typeof acpEnv.PAPERCLIP_CLAUDE_PLUGIN_SOURCE_DIR === "string"
-              ? acpEnv.PAPERCLIP_CLAUDE_PLUGIN_SOURCE_DIR
-              : undefined,
-            autoDiscoverSource: true,
-            importMode,
-          });
-      acpConfig.env = {
-        ...acpEnv,
-        CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL: "1",
-        CLAUDE_CODE_PLUGIN_CACHE_DIR: managedPlugins.pluginRoot ?? path.join(configDir, "plugins"),
-      };
-      if (managedPlugins.pluginRoot || managedPlugins.skillCount > 0) {
-        await ctx.onLog(
-          "stdout",
-          `[paperclip] Imported ${managedPlugins.skillCount} personal Claude skills using ${importMode} mode for local ACP.\n`,
-        );
-      }
+      const availableSkills = await readPaperclipRuntimeSkillEntries(ctx.config, moduleDir);
+      const selectedSkillNames = new Set(resolveClaudeDesiredSkillNames(ctx.config, availableSkills));
+      const excludedSkillNames = availableSkills
+        .filter((entry) => selectedSkillNames.has(entry.key) && !isPaperclipSkillSourceMissing(entry))
+        .map((entry) => entry.runtimeName);
+      const managedConfig = await prepareManagedClaudeAcpConfig({
+        configEnv: acpConfig.env,
+        managedAiHomeOverrides: acpConfig.managedAiHomeOverrides,
+        processEnv: process.env,
+        companyId: ctx.agent.companyId,
+        agentId: ctx.agent.id,
+        runId: ctx.runId,
+        excludedSkillNames,
+      });
+      acpConfig.env = managedConfig.env;
+      if (managedConfig.importMessage) await ctx.onLog("stdout", managedConfig.importMessage);
     }
     const result = await currentExecutor({ ...ctx, config: acpConfig });
     return mapClaudeAcpAuthErrorCode(result);

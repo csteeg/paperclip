@@ -321,12 +321,17 @@ project authentication and provider-routing overrides are rejected. Managed
 failure cannot reactivate host or legacy credentials.
 
 Managed Claude runtime paths and profile imports can be set per agent in its
-Environment variables. By default each invocation receives a private temporary
-`HOME` and `CLAUDE_CONFIG_DIR`, and Paperclip removes only that generated home
-after the run. Set `HOME` or `CLAUDE_CONFIG_DIR` explicitly to opt into stable
-agent-owned paths. Paperclip never removes either configured path. Use a distinct
-writable path per agent: sharing one path can share credentials, plugin settings,
-and session files, and concurrent runs may write to it at the same time.
+Environment variables. By default each invocation receives a private generated
+`HOME` and `CLAUDE_CONFIG_DIR`, and Paperclip removes that generated home after
+the run. For managed connections without an explicit `HOME`, Paperclip uses a
+stable per-company and per-connection home path when it can claim it. It still
+removes and recreates the directory contents after each run. Overlapping runs
+use separate random homes. This stable path lets Claude reuse path-dependent
+prompt-cache entries; it does not preserve Claude config or transcripts. Set
+`HOME` or `CLAUDE_CONFIG_DIR` explicitly to opt into stable agent-owned paths.
+Paperclip never removes either configured path. Use a distinct writable path per
+agent: sharing one path can share credentials, plugin settings, and session
+files, and concurrent runs may write to it at the same time.
 
 Profile import is controlled independently with `PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE`
 (`off`, `copy`, or `cache`) and `PAPERCLIP_CLAUDE_PLUGIN_SOURCE_DIR`. Import is
@@ -608,6 +613,36 @@ identity, a different grant or responsible user, or a changed credential generat
 requires a fresh session. The metadata is removed before passing session params
 to an adapter. Temporary authentication-home paths do not change the configuration
 fingerprint. These checks do not relax current connection authorization.
+
+Managed Claude (`claude_local`) on a local target can keep its conversation
+transcripts so that a later run of the same task resumes the session. This is off by
+default. Set `PAPERCLIP_MANAGED_CLAUDE_TRANSCRIPT_RETENTION_ENABLED=true` to turn it
+on. When it is off, managed Claude behaves like managed Grok: the transcripts are
+deleted with the temporary home and each run starts a fresh provider session.
+
+When it is on, transcripts are stored in
+`companies/<company>/agents/<agent>/claude-transcripts/`. Each task and session
+identity (grant, responsible user, credential, and credential epoch) gets its own
+directory, so a replaced credential does not see the earlier conversations.
+Credentials stay in the temporary home and cleanup still deletes them. The ACP
+engine ignores the temporary-home paths in its session fingerprint only when the
+transcripts are kept. Runs without a task, such as unscoped timer wakes, remote
+targets, and other harnesses keep nothing.
+Retention also requires a Paperclip-generated managed `HOME`; an explicit agent
+`HOME` override has no generated home to retain. For confined runs, Paperclip
+mounts the server-approved per-task transcript directory instead of resolving the
+agent-writable `projects` symlink in the Claude config directory.
+
+Private file modes do not isolate agents that run as the same OS user. Workspace
+filesystem confinement mounts only the run's own transcript directory, so a confined
+run cannot read other tasks' transcripts. An unconfined local run executes as the
+server's OS user and can read every transcript directory, the same as any other
+server-owned file. Turn retention on only when every local agent on the instance may
+see the conversations of the others, for example on a single-owner instance.
+
+A scheduled cleanup pass deletes the transcripts of a task after its issue has been
+closed for `PAPERCLIP_MANAGED_CLAUDE_TRANSCRIPT_RETENTION_DAYS` days (see
+`doc/recoverable-disk-cleanup.md`).
 
 Quota polling has a 20-second response deadline. Once a managed OAuth refresh
 starts, it has its own 60-second request lifetime so the replacement token body

@@ -627,6 +627,10 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   }
   const networkScope = parseLocalProcessNetworkScope(config.networkScope);
   const filesystemScope = parseLocalProcessFilesystemScope(config.filesystemScope);
+  const approvedManagedTranscriptDir = asString(ctx.context.managedAiTranscriptDir, "");
+  const managedTranscriptDir = filesystemScope && !executionTargetIsRemote && config.managedAiConnection && approvedManagedTranscriptDir
+    ? approvedManagedTranscriptDir
+    : null;
   const localProcessSandbox: LocalProcessSandboxOptions | null =
     (filesystemScope || networkScope) && !executionTargetIsRemote
       ? {
@@ -635,6 +639,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
           managedPaths: [
             { path: sharedClaudeConfigDir, access: "rw" },
             { path: path.join(path.dirname(sharedClaudeConfigDir), ".claude.json"), access: "rw" },
+            ...(managedTranscriptDir ? [{ path: managedTranscriptDir, access: "rw" as const }] : []),
             { path: promptBundle.addDir, access: "ro" },
             { path: localMcpConfigDir, access: "ro" },
             ...(managedClaudePluginRuntime?.pluginRoot

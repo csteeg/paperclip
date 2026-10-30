@@ -4,7 +4,7 @@ import type { PluginTaskCredentialWritebackBinding } from "./plugin-task-credent
 import { OPENROUTER_ATTRIBUTION_HEADERS, openRouterClaudeHeaders } from "@paperclipai/shared/openrouter-attribution";
 import { createHash } from "node:crypto";
 import { HttpError, unprocessable } from "../errors.js";
-import { mkdtemp, mkdir, writeFile, readFile, realpath } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, rm, rename, lstat, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { and, eq } from "drizzle-orm";
@@ -210,6 +210,115 @@ function managedAiHomeEnvironment(home: string): Record<string, string> {
   };
 }
 
+const MANAGED_AI_HOME_CLAIM_FILE = ".paperclip-home-claim.json";
+export const MANAGED_AI_STABLE_HOME_STALE_AFTER_MS = 2 * 60 * 60 * 1000;
+
+async function pidStartTimeMs(pid: number): Promise<number | undefined> {
+  try {
+    return (await lstat(`/proc/${pid}`)).ctimeMs;
+  } catch {
+    return undefined;
+  }
+}
+
+async function claimOwnerGone(claim: { pid?: unknown; startedAtMs?: unknown }): Promise<boolean> {
+  const pid = claim.pid;
+  if (typeof pid !== "number") return true;
+  try {
+    process.kill(pid, 0);
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ESRCH";
+  }
+  if (typeof claim.startedAtMs !== "number") return false;
+  const currentStartedAtMs = await pidStartTimeMs(pid);
+  return currentStartedAtMs !== undefined && Math.abs(currentStartedAtMs - claim.startedAtMs) > 2000;
+}
+
+async function isOwnedPrivateDirectory(target: string): Promise<boolean> {
+  try {
+    const stat = await lstat(target);
+    return stat.isDirectory() && stat.uid === process.getuid?.() && (stat.mode & 0o077) === 0;
+  } catch {
+    return false;
+  }
+}
+
+async function writeManagedAiHomeClaim(
+  baseDir: string,
+  claim: { pid: number; claimedAt: number; startedAtMs?: number; retryPending?: true },
+): Promise<void> {
+  await writeFile(path.join(baseDir, MANAGED_AI_HOME_CLAIM_FILE), JSON.stringify(claim), { mode: 0o600 });
+}
+
+async function reclaimStaleManagedAiHome(baseDir: string, now: () => number): Promise<boolean> {
+  if (!(await isOwnedPrivateDirectory(baseDir))) return false;
+  let claim: { pid?: unknown; claimedAt?: unknown; startedAtMs?: unknown; retryPending?: unknown } | undefined;
+  try {
+    claim = JSON.parse(await readFile(path.join(baseDir, MANAGED_AI_HOME_CLAIM_FILE), "utf8"));
+  } catch {}
+  if (claim?.retryPending) return false;
+  const claimedAt = typeof claim?.claimedAt === "number" ? claim.claimedAt : undefined;
+  const expired = claimedAt !== undefined && now() - claimedAt >= MANAGED_AI_STABLE_HOME_STALE_AFTER_MS;
+  if (!expired || !(await claimOwnerGone(claim ?? {}))) return false;
+  const graveyard = `${baseDir}.stale-${process.pid}-${now()}`;
+  try {
+    await rename(baseDir, graveyard);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+  await rm(graveyard, { recursive: true, force: true });
+  return true;
+}
+
+async function tryAcquireManagedAiHomeClaimLock(baseDir: string): Promise<(() => Promise<void>) | null> {
+  const lockDir = `${baseDir}.claim-lock`;
+  try {
+    await mkdir(lockDir, { mode: 0o700 });
+    return async () => { await rm(lockDir, { recursive: true, force: true }); };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return null;
+    throw error;
+  }
+}
+
+export async function claimManagedAiHome(
+  baseDir: string,
+  now: () => number = Date.now,
+): Promise<{ home: string; stable: boolean }> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await mkdir(baseDir, { mode: 0o700 });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      if (attempt === 0) {
+        const releaseLock = await tryAcquireManagedAiHomeClaimLock(baseDir);
+        if (releaseLock) {
+          try {
+            if (await reclaimStaleManagedAiHome(baseDir, now)) continue;
+          } finally {
+            await releaseLock();
+          }
+        }
+      }
+      break;
+    }
+    try {
+      const startedAtMs = await pidStartTimeMs(process.pid);
+      await writeManagedAiHomeClaim(baseDir, {
+        pid: process.pid,
+        claimedAt: now(),
+        ...(startedAtMs !== undefined ? { startedAtMs } : {}),
+      });
+    } catch {
+      await rm(baseDir, { recursive: true, force: true }).catch(() => {});
+      break;
+    }
+    return { home: baseDir, stable: true };
+  }
+  return { home: await mkdtemp(`${baseDir}-`), stable: false };
+}
+
 /** Only the server-created credential home is volatile; retain all other config. */
 export function managedAiSessionFingerprintConfig(
   config: Record<string, unknown>,
@@ -335,24 +444,32 @@ export async function prepareManagedAiRuntime(
     })();
     const antigravitySubscription = harness === "antigravity_runtime" && selection.attribution.method === "subscription";
     const originalCredential = antigravitySubscription ? sanitizeAntigravityCredential(value) : value;
-    const agentConfigEnv = input.config.env && typeof input.config.env === "object"
+    const rawAgentEnv = input.config.env && typeof input.config.env === "object"
       ? input.config.env as Record<string, unknown>
       : {};
-    const configuredClaudeHome = harness === "claude_local" && typeof agentConfigEnv.HOME === "string" && agentConfigEnv.HOME.trim()
-      ? path.resolve(agentConfigEnv.HOME.trim())
+    const configuredClaudeConfigDir = harness === "claude_local" && typeof rawAgentEnv.CLAUDE_CONFIG_DIR === "string" && rawAgentEnv.CLAUDE_CONFIG_DIR.trim()
+      ? path.resolve(rawAgentEnv.CLAUDE_CONFIG_DIR.trim())
       : undefined;
-    const configuredClaudeConfigDir = harness === "claude_local" && typeof agentConfigEnv.CLAUDE_CONFIG_DIR === "string" && agentConfigEnv.CLAUDE_CONFIG_DIR.trim()
-      ? path.resolve(agentConfigEnv.CLAUDE_CONFIG_DIR.trim())
+    const agentEnv = stripAiAuthBindings(rawAgentEnv);
+    const configuredClaudeHome = harness === "claude_local" && typeof agentEnv.HOME === "string" && agentEnv.HOME.trim()
+      ? path.resolve(agentEnv.HOME.trim())
       : undefined;
-    const agentEnv = stripAiAuthBindings(agentConfigEnv);
     // Managed Claude keeps the safe, disposable home by default. Explicit agent
     // paths are opt-in and are never included in this runtime's cleanup target.
-    home = configuredClaudeHome ? undefined : await mkdtemp(
-      path.join(
-        os.tmpdir(),
-        `paperclip-ai-${input.companyId}-${selection.grant.id}-`,
-      ),
-    );
+    let stableHome = false;
+    if (configuredClaudeHome) {
+      home = undefined;
+    } else if (harness === "claude_local") {
+      const claimed = await claimManagedAiHome(
+        path.join(os.tmpdir(), `paperclip-ai-${input.companyId}-${selection.grant.id}`),
+      );
+      home = claimed.home;
+      stableHome = claimed.stable;
+    } else {
+      // Stable-home reuse is only for Claude prompt-cache reuse. Other managed
+      // runtimes keep Paperclip's existing per-run home isolation.
+      home = await mkdtemp(path.join(os.tmpdir(), `paperclip-ai-${input.companyId}-${selection.grant.id}-`));
+    }
     if (harness === "antigravity_runtime" && home) home = await realpath(home);
     const effectiveHome = configuredClaudeHome ?? home!;
     const providerHome = path.join(effectiveHome, "provider");
@@ -615,6 +732,15 @@ export async function prepareManagedAiRuntime(
         return await (antigravitySubscription
           ? withAccountHomeSecretMutationLock(undefined, input.companyId, cleanup) : cleanup());
       } catch (error) {
+        if (stableHome && home && subscriptionFile && !homeRemoved) {
+          const startedAtMs = await pidStartTimeMs(process.pid);
+          await writeManagedAiHomeClaim(home, {
+            pid: process.pid,
+            claimedAt: Date.now(),
+            ...(startedAtMs !== undefined ? { startedAtMs } : {}),
+            retryPending: true,
+          }).catch(() => {});
+        }
         if (retainedCleanupScope && !homeRemoved) retainAiCredentialCleanup({ scope: retainedCleanupScope, cleanup: cleanupRuntime });
         throw error;
       }
