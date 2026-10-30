@@ -77,28 +77,46 @@ type Scope = Owner & { dir: string; task: { taskKey: string; lastUsed: Date } | 
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
 async function isRealDirectory(target: string): Promise<boolean> {
-  const stat = await fs.lstat(target).catch(() => null);
+  const stat = await fs.lstat(target).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  });
   return Boolean(stat?.isDirectory() && !stat.isSymbolicLink());
 }
 
 async function readTaskKey(scopeDir: string): Promise<{ taskKey: string; lastUsed: Date } | null> {
+  const file = path.join(scopeDir, TASK_FILE);
+  const stat = await fs.lstat(file).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  });
+  if (!stat?.isFile() || stat.size > 4096) return null;
+  const contents = await fs.readFile(file, "utf8").catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  });
+  if (contents === null) return null;
   try {
-    const file = path.join(scopeDir, TASK_FILE);
-    const stat = await fs.lstat(file);
-    if (!stat.isFile() || stat.size > 4096) return null;
-    const { taskKey } = JSON.parse(await fs.readFile(file, "utf8")) as { taskKey?: unknown };
+    const { taskKey } = JSON.parse(contents) as { taskKey?: unknown };
     return typeof taskKey === "string" && taskKey ? { taskKey, lastUsed: stat.mtime } : null;
   } catch {
     return null;
   }
 }
 
+async function readdirIfPresent(target: string): Promise<string[]> {
+  return fs.readdir(target).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  });
+}
+
 async function listTranscriptDirs(root: string): Promise<Owner[]> {
   const found: Owner[] = [];
   const companiesDir = path.join(root, "companies");
-  for (const companyId of (await fs.readdir(companiesDir).catch(() => [] as string[])).filter((id) => ID_PATTERN.test(id))) {
+  for (const companyId of (await readdirIfPresent(companiesDir)).filter((id) => ID_PATTERN.test(id))) {
     const agentsDir = path.join(companiesDir, companyId, "agents");
-    for (const agentId of (await fs.readdir(agentsDir).catch(() => [] as string[])).filter((id) => ID_PATTERN.test(id))) {
+    for (const agentId of (await readdirIfPresent(agentsDir)).filter((id) => ID_PATTERN.test(id))) {
       found.push({ companyId, agentId });
     }
   }
@@ -110,7 +128,7 @@ function transcriptsDirOf(root: string, owner: Owner): string {
 }
 
 async function settleLeftovers(transcriptsDir: string) {
-  for (const name of await fs.readdir(transcriptsDir).catch(() => [] as string[])) {
+  for (const name of await readdirIfPresent(transcriptsDir)) {
     const target = path.join(transcriptsDir, name);
     if (name.startsWith(RETIRING_PREFIX)) {
       const [scope, id] = name.slice(RETIRING_PREFIX.length).split(".");
@@ -136,7 +154,6 @@ function liveRunCondition(scope: Scope, taskKey: string) {
 type RetentionBlocker = { reason: string; dueAt?: number };
 
 async function retentionBlocker(tx: Tx, scope: Scope, taskKey: string, cutoff: Date, retentionDays: number): Promise<RetentionBlocker | null> {
-  const recheckAt = cutoff.getTime() + (retentionDays + 1) * DAY_MS;
   const [agent] = await tx
     .select({ id: agents.id })
     .from(agents)
@@ -144,18 +161,21 @@ async function retentionBlocker(tx: Tx, scope: Scope, taskKey: string, cutoff: D
   if (!agent) return null;
   if (UUID_PATTERN.test(taskKey)) {
     const [issue] = await tx
-      .select({ status: issues.status, completedAt: issues.completedAt, cancelledAt: issues.cancelledAt })
+      .select({ status: issues.status, completedAt: issues.completedAt, cancelledAt: issues.cancelledAt, updatedAt: issues.updatedAt })
       .from(issues)
       .where(and(eq(issues.id, taskKey), eq(issues.companyId, scope.companyId)))
       .for("share");
     if (issue) {
-      if (!CLOSED_ISSUE_STATUSES.includes(issue.status)) return { reason: "issue_open", dueAt: recheckAt };
+      if (!CLOSED_ISSUE_STATUSES.includes(issue.status)) return { reason: "issue_open" };
       const closedAt = issue.completedAt ?? issue.cancelledAt;
-      if (!closedAt) return { reason: "recently_closed", dueAt: recheckAt };
-      if (new Date(closedAt) >= cutoff) return { reason: "recently_closed", dueAt: new Date(closedAt).getTime() + retentionDays * DAY_MS };
+      if (!closedAt) {
+        const updatedAt = new Date(issue.updatedAt);
+        if (updatedAt >= cutoff) return { reason: "recently_closed", dueAt: updatedAt.getTime() + retentionDays * DAY_MS };
+      }
+      if (closedAt && new Date(closedAt) >= cutoff) return { reason: "recently_closed", dueAt: new Date(closedAt).getTime() + retentionDays * DAY_MS };
     }
   }
-  return (await hasLiveRun(tx, scope, taskKey)) ? { reason: "live_run", dueAt: recheckAt } : null;
+  return (await hasLiveRun(tx, scope, taskKey)) ? { reason: "live_run" } : null;
 }
 
 async function hasLiveRun(db: Db | Tx, scope: Scope, taskKey: string): Promise<boolean> {
@@ -166,6 +186,7 @@ async function hasLiveRun(db: Db | Tx, scope: Scope, taskKey: string): Promise<b
 export function managedClaudeTranscriptExpirationService(db: Db, defaults: ManagedClaudeTranscriptExpirationOptions = {}) {
   let cursor: string | null = null;
   let sweepDueAt: number | null = null;
+  let sweepScopes: Scope[] | null = null;
 
   async function expireScope(
     scope: Scope,
@@ -178,9 +199,10 @@ export function managedClaudeTranscriptExpirationService(db: Db, defaults: Manag
       result.skipped[blocker.reason] = (result.skipped[blocker.reason] ?? 0) + 1;
       if (blocker.dueAt != null && (result.nextDueAt === null || blocker.dueAt < result.nextDueAt)) result.nextDueAt = blocker.dueAt;
     };
-    const { task } = scope;
-    if (!task) return skip({ reason: "task_unknown" });
-    if (task.lastUsed >= cutoff) return skip({ reason: "recently_used" });
+    const currentTask = await readTaskKey(scope.dir);
+    scope = { ...scope, task: currentTask };
+    if (!currentTask) return skip({ reason: "task_unknown" });
+    if (currentTask.lastUsed >= cutoff) return skip({ reason: "recently_used" });
     if (!(await isRealDirectory(scope.dir))) return skip({ reason: "unsafe_path" });
 
     const id = randomUUID();
@@ -190,19 +212,19 @@ export function managedClaudeTranscriptExpirationService(db: Db, defaults: Manag
     let blocker: RetentionBlocker | null;
     try {
       blocker = await db.transaction(async (tx) => {
-        const found = await retentionBlocker(tx, scope, task.taskKey, cutoff, retentionDays);
+        const found = await retentionBlocker(tx, scope, currentTask.taskKey, cutoff, retentionDays);
         if (found) return found;
         await fs.rename(scope.dir, retiring);
         retired = true;
-        if (await hasLiveRun(tx, scope, task.taskKey)) return { reason: "live_run", dueAt: cutoff.getTime() + (retentionDays + 1) * DAY_MS };
-        if (sessionInUse) return null;
+        if (await hasLiveRun(tx, scope, currentTask.taskKey)) return { reason: "live_run" };
+        if (sessionInUse || await hasRecentSiblingScope(scope, currentTask.taskKey, cutoff)) return null;
         const cleared = await tx
           .delete(agentTaskSessions)
           .where(and(
             eq(agentTaskSessions.companyId, scope.companyId),
             eq(agentTaskSessions.agentId, scope.agentId),
             eq(agentTaskSessions.adapterType, "claude_local"),
-            eq(agentTaskSessions.taskKey, task.taskKey),
+            eq(agentTaskSessions.taskKey, currentTask.taskKey),
           ))
           .returning({ id: agentTaskSessions.id });
         result.clearedTaskSessions += cleared.length;
@@ -233,23 +255,26 @@ export function managedClaudeTranscriptExpirationService(db: Db, defaults: Manag
       checked: 0, expired: 0, clearedTaskSessions: 0, failed: 0, truncated: false, skipped: {}, nextDueAt: null,
     };
 
-    const scopes: Scope[] = [];
-    for (const owner of await listTranscriptDirs(root)) {
-      const transcriptsDir = transcriptsDirOf(root, owner);
-      await settleLeftovers(transcriptsDir).catch((err) => logger.warn({ err }, "managed Claude transcript cleanup skipped leftovers"));
-      for (const name of await fs.readdir(transcriptsDir).catch(() => [] as string[])) {
-        if (!SCOPE_PATTERN.test(name)) continue;
-        const dir = path.join(transcriptsDir, name);
-        scopes.push({ ...owner, dir, task: await readTaskKey(dir) });
+    if (!sweepScopes) {
+      const scopes: Scope[] = [];
+      for (const owner of await listTranscriptDirs(root)) {
+        const transcriptsDir = transcriptsDirOf(root, owner);
+        await settleLeftovers(transcriptsDir);
+        for (const name of await readdirIfPresent(transcriptsDir)) {
+          if (!SCOPE_PATTERN.test(name)) continue;
+          const dir = path.join(transcriptsDir, name);
+          scopes.push({ ...owner, dir, task: await readTaskKey(dir) });
+        }
       }
+      sweepScopes = scopes.sort((a, b) => (a.dir < b.dir ? -1 : a.dir > b.dir ? 1 : 0));
     }
+    const scopes = sweepScopes;
     const notYetDue = scopes.filter((scope) => scope.task && scope.task.lastUsed >= cutoff);
     const inUse = new Set(notYetDue.map((scope) => `${path.dirname(scope.dir)}\0${scope.task!.taskKey}`));
     for (const scope of notYetDue) {
       const due = scope.task!.lastUsed.getTime() + retentionDays * DAY_MS;
       if (result.nextDueAt === null || due < result.nextDueAt) result.nextDueAt = due;
     }
-    scopes.sort((a, b) => (a.dir < b.dir ? -1 : a.dir > b.dir ? 1 : 0));
     const pending = cursor ? scopes.filter((scope) => scope.dir > cursor!) : scopes;
     for (const scope of pending) {
       if (!shouldContinue() || result.checked >= maxEntries) {
@@ -272,11 +297,24 @@ export function managedClaudeTranscriptExpirationService(db: Db, defaults: Manag
       result.nextDueAt = sweepDueAt;
       cursor = null;
       sweepDueAt = null;
+      sweepScopes = null;
     }
     return result;
   }
 
   return { tick };
+}
+
+async function hasRecentSiblingScope(scope: Scope, taskKey: string, cutoff: Date): Promise<boolean> {
+  const transcriptsDir = path.dirname(scope.dir);
+  for (const name of await readdirIfPresent(transcriptsDir)) {
+    if (!SCOPE_PATTERN.test(name)) continue;
+    const siblingDir = path.join(transcriptsDir, name);
+    if (siblingDir === scope.dir) continue;
+    const siblingTask = await readTaskKey(siblingDir);
+    if (siblingTask?.taskKey === taskKey && siblingTask.lastUsed >= cutoff) return true;
+  }
+  return false;
 }
 
 function earliest(a: number | null, b: number | null): number | null {

@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { promises as fs } from "node:fs";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { agents, agentTaskSessions, companies, createDb, heartbeatRuns, issues } from "@paperclipai/db";
 import {
@@ -159,13 +159,13 @@ describeEmbeddedPostgres("managed Claude transcript expiration", () => {
   it.each([
     [{ issueStatus: "in_progress" }, "issue_open"],
     [{ runStatus: "running" }, "live_run"],
-  ] as const)("rechecks after a day while a directory is held back by %o", async (input, reason) => {
+  ] as const)("does not schedule passive rechecks while a directory is held back by %o", async (input, reason) => {
     await seed(input);
 
     const result = await service().tick();
 
     expect(result.skipped[reason]).toBe(1);
-    expect(result.nextDueAt).toBe(now.getTime() + DAY_MS);
+    expect(result.nextDueAt).toBeNull();
   });
 
   it("keeps a held-back directory's recheck across a sweep split into batches", async () => {
@@ -179,17 +179,43 @@ describeEmbeddedPostgres("managed Claude transcript expiration", () => {
     expect([first.truncated, second.truncated]).toEqual([true, false]);
     expect(await exists(held.scopeDir)).toBe(true);
     expect(await exists(expirable.scopeDir)).toBe(false);
-    expect(second.nextDueAt).toBe(now.getTime() + DAY_MS);
+    expect(second.nextDueAt).toBeNull();
   });
 
-  it("rechecks after a day when a closed issue has no closing time", async () => {
+  it("does not rediscover every task file between bounded batches", async () => {
+    await seed({ companyId: "00000000-0000-4000-8000-000000000001" });
+    await seed({ companyId: "ffffffff-ffff-4fff-bfff-ffffffffffff" });
+    const readFile = vi.spyOn(fs, "readFile");
+    try {
+      const sweep = managedClaudeTranscriptExpirationService(db, { retentionDays: 7, now, instanceRoot, maxEntries: 1 });
+      expect((await sweep.tick()).truncated).toBe(true);
+      const afterFirst = readFile.mock.calls.filter(([file]) => String(file).endsWith("task.json")).length;
+      expect((await sweep.tick()).truncated).toBe(false);
+      const afterSecond = readFile.mock.calls.filter(([file]) => String(file).endsWith("task.json")).length;
+      expect(afterSecond - afterFirst).toBe(1);
+    } finally {
+      readFile.mockRestore();
+    }
+  });
+
+  it("propagates transient task metadata read failures so cleanup can retry", async () => {
+    await seed();
+    const readFile = vi.spyOn(fs, "readFile").mockRejectedValueOnce(Object.assign(new Error("temporary read failure"), { code: "EIO" }));
+    try {
+      await expect(service().tick()).rejects.toMatchObject({ code: "EIO" });
+    } finally {
+      readFile.mockRestore();
+    }
+  });
+
+  it("uses the issue update time when a closed issue has no closing timestamp", async () => {
     const seeded = await seed();
     await db.update(issues).set({ completedAt: null, cancelledAt: null }).where(eq(issues.id, seeded.taskKey));
 
     const result = await service().tick();
 
     expect(result.skipped.recently_closed).toBe(1);
-    expect(result.nextDueAt).toBe(now.getTime() + DAY_MS);
+    expect(result.nextDueAt).toBe(now.getTime() + 7 * DAY_MS);
   });
 
   it("schedules nothing when no transcript directory is left", async () => {
