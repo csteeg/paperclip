@@ -184,9 +184,9 @@ async function hasLiveRun(db: Db | Tx, scope: Scope, taskKey: string): Promise<b
 }
 
 export function managedClaudeTranscriptExpirationService(db: Db, defaults: ManagedClaudeTranscriptExpirationOptions = {}) {
-  let cursor: string | null = null;
   let sweepDueAt: number | null = null;
   let sweepScopes: Scope[] | null = null;
+  const completedScopes = new Set<string>();
   let rescanRequested = false;
 
   async function expireScope(
@@ -256,24 +256,19 @@ export function managedClaudeTranscriptExpirationService(db: Db, defaults: Manag
       checked: 0, expired: 0, clearedTaskSessions: 0, failed: 0, truncated: false, skipped: {}, nextDueAt: null,
     };
 
-    if (rescanRequested) {
+    if (!sweepScopes || rescanRequested) {
       rescanRequested = false;
-      cursor = null;
-      sweepScopes = null;
-    }
-
-    if (!sweepScopes) {
-      const scopes: Scope[] = [];
+      const scopes = new Map((sweepScopes ?? []).map((scope) => [scope.dir, scope]));
       for (const owner of await listTranscriptDirs(root)) {
         const transcriptsDir = transcriptsDirOf(root, owner);
         await settleLeftovers(transcriptsDir);
         for (const name of await readdirIfPresent(transcriptsDir)) {
           if (!SCOPE_PATTERN.test(name)) continue;
           const dir = path.join(transcriptsDir, name);
-          scopes.push({ ...owner, dir, task: await readTaskKey(dir) });
+          scopes.set(dir, { ...owner, dir, task: await readTaskKey(dir) });
         }
       }
-      sweepScopes = scopes.sort((a, b) => (a.dir < b.dir ? -1 : a.dir > b.dir ? 1 : 0));
+      sweepScopes = [...scopes.values()].sort((a, b) => (a.dir < b.dir ? -1 : a.dir > b.dir ? 1 : 0));
     }
     const scopes = sweepScopes;
     const notYetDue = scopes.filter((scope) => scope.task && scope.task.lastUsed >= cutoff);
@@ -282,14 +277,14 @@ export function managedClaudeTranscriptExpirationService(db: Db, defaults: Manag
       const due = scope.task!.lastUsed.getTime() + retentionDays * DAY_MS;
       if (result.nextDueAt === null || due < result.nextDueAt) result.nextDueAt = due;
     }
-    const pending = cursor ? scopes.filter((scope) => scope.dir > cursor!) : scopes;
+    const pending = scopes.filter((scope) => !completedScopes.has(scope.dir));
     for (const scope of pending) {
       if (!shouldContinue() || result.checked >= maxEntries) {
         result.truncated = true;
         break;
       }
       result.checked++;
-      cursor = scope.dir;
+      completedScopes.add(scope.dir);
       try {
         const sessionInUse = Boolean(scope.task) && inUse.has(`${path.dirname(scope.dir)}\0${scope.task!.taskKey}`);
         await expireScope(scope, cutoff, retentionDays, sessionInUse, result);
@@ -303,15 +298,13 @@ export function managedClaudeTranscriptExpirationService(db: Db, defaults: Manag
     if (rescanRequested) {
       result.truncated = true;
       result.nextDueAt = now + 1000;
-      cursor = null;
-      sweepScopes = null;
       return result;
     }
     if (!result.truncated) {
       result.nextDueAt = sweepDueAt;
-      cursor = null;
       sweepDueAt = null;
       sweepScopes = null;
+      completedScopes.clear();
     }
     return result;
   }

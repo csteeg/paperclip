@@ -87,7 +87,7 @@ async function filesystemConfinementRuns(): Promise<boolean> {
 
 const confinementRuns = await filesystemConfinementRuns();
 
-function buildContext(config: Record<string, unknown> = {}) {
+function buildContext(config: Record<string, unknown> = {}, context: Record<string, unknown> = {}) {
   return {
     runId: "run-1",
     agent: {
@@ -104,7 +104,7 @@ function buildContext(config: Record<string, unknown> = {}) {
       taskKey: null,
     },
     config: { model: "claude-opus-5", ...config },
-    context: {},
+    context,
     onLog: vi.fn(async () => {}),
   };
 }
@@ -256,17 +256,23 @@ describe("claude_local ACP startup fallback", () => {
         managedAiConnection: { provider: "anthropic", method: "subscription" },
         env: { CLAUDE_CONFIG_DIR: providerHome },
       };
-      const transcriptMount = { path: await fs.realpath(durableTranscripts), access: "rw" };
+      const transcriptMount = { path: durableTranscripts, access: "rw" };
       const sandboxPaths = () => runAdapterExecutionTargetProcess.mock.calls
         .map((call) => (call as unknown[])[4] as { localProcessSandbox?: { managedPaths: unknown[] } })
         .find((options) => options?.localProcessSandbox)?.localProcessSandbox?.managedPaths;
 
-      await execute(buildContext({ ...managedConfig, filesystemScope: "workspace" }) as never);
+      await execute(buildContext({ ...managedConfig, filesystemScope: "workspace" }, {
+        managedAiTranscriptDir: durableTranscripts,
+      }) as never);
       expect(sandboxPaths()).toContainEqual(transcriptMount);
       const siblingTranscripts = path.join(path.dirname(await fs.realpath(durableTranscripts)), "other-task");
       for (const mount of sandboxPaths() as Array<{ path: string }>) {
         expect(siblingTranscripts.startsWith(`${mount.path}${path.sep}`)).toBe(false);
       }
+
+      vi.clearAllMocks();
+      await execute(buildContext({ ...managedConfig, filesystemScope: "workspace" }) as never);
+      expect(sandboxPaths()).not.toContainEqual(transcriptMount);
 
       vi.clearAllMocks();
       await execute(buildContext({ ...managedConfig, networkScope: "allowlist" }) as never);
@@ -295,7 +301,7 @@ describe("claude_local ACP startup fallback", () => {
         managedAiConnection: { provider: "anthropic", method: "subscription" },
         env: { CLAUDE_CONFIG_DIR: providerHome },
         filesystemScope: "workspace",
-      }) as never);
+      }, { managedAiTranscriptDir: own }) as never);
       const sandbox = runAdapterExecutionTargetProcess.mock.calls
         .map((call) => (call as unknown[])[4] as { localProcessSandbox?: LocalProcessSandboxOptions })
         .find((options) => options?.localProcessSandbox)!.localProcessSandbox!;

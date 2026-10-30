@@ -4,7 +4,10 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { retainManagedClaudeTranscripts } from "./managed-claude-transcripts.js";
+import {
+  managedClaudeTranscriptExpirationService,
+  retainManagedClaudeTranscripts,
+} from "./managed-claude-transcripts.js";
 
 let guestDir: string;
 
@@ -135,5 +138,35 @@ describe("retainManagedClaudeTranscripts", () => {
 
     await expect(fs.lstat(path.join(remote.home, "provider", "projects"))).rejects.toThrow();
     await expect(fs.lstat(path.join(codex.home, "provider", "projects"))).rejects.toThrow();
+  });
+});
+
+describe("managed Claude transcript expiration sweep", () => {
+  it("resumes a bounded sweep after discovering new scopes without rechecking completed scopes", async () => {
+    const root = path.join(guestDir, "instance");
+    const transcriptsDir = path.join(root, "companies", "company-1", "agents", "agent-1", "claude-transcripts");
+    await fs.mkdir(transcriptsDir, { recursive: true });
+    for (let index = 1; index <= 201; index += 1) {
+      const id = index.toString(16).padStart(16, "0");
+      const dir = path.join(transcriptsDir, id);
+      await fs.mkdir(dir);
+      await fs.writeFile(path.join(dir, "task.json"), JSON.stringify({ taskKey: `task-${id}` }));
+    }
+    const service = managedClaudeTranscriptExpirationService({} as never, {
+      instanceRoot: root,
+      maxEntries: 200,
+      now: new Date(),
+    });
+
+    const first = await service.tick();
+    expect(first).toMatchObject({ checked: 200, truncated: true });
+
+    const newEarlierScope = path.join(transcriptsDir, "0000000000000000");
+    await fs.mkdir(newEarlierScope);
+    await fs.writeFile(path.join(newEarlierScope, "task.json"), JSON.stringify({ taskKey: "new-task" }));
+    service.requestRescan();
+
+    const second = await service.tick();
+    expect(second).toMatchObject({ checked: 2, truncated: false });
   });
 });

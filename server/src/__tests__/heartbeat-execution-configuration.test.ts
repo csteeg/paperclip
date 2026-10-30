@@ -369,17 +369,22 @@ describePostgres("heartbeat execution configuration through adapter dispatch", (
   });
 
   it("passes the retained managed home to the adapter only when transcripts were kept", async () => {
-    const retain = vi.spyOn(managedClaudeTranscripts, "retainManagedClaudeTranscripts").mockResolvedValueOnce("/retained-home");
+    const retain = vi.spyOn(managedClaudeTranscripts, "retainManagedClaudeTranscripts").mockResolvedValueOnce({
+      home: "/retained-home",
+      transcriptDir: "/retained-home-transcripts",
+    });
     const kept = await execute(await seed(true));
     expect(kept.finished.status, kept.finished.error ?? undefined).toBe("succeeded");
     expect(retain).toHaveBeenCalledWith(expect.objectContaining({
       adapterType, taskKey: kept.input?.context.issueId, runtime: expect.objectContaining({ home: expect.any(String) }),
     }));
     expect(kept.input?.context.managedAiRetainedHome).toBe("/retained-home");
+    expect(kept.input?.context.managedAiTranscriptDir).toBe("/retained-home-transcripts");
 
     const fresh = await execute(await seed(true), { managedAiRetainedHome: "/stale-home" });
     expect(fresh.finished.status, fresh.finished.error ?? undefined).toBe("succeeded");
     expect(fresh.input?.context).not.toHaveProperty("managedAiRetainedHome");
+    expect(fresh.input?.context).not.toHaveProperty("managedAiTranscriptDir");
   });
 
   it("delivers the selected credential in an isolated home and removes it after completion", async () => {
