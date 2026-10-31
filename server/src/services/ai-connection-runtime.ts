@@ -4,7 +4,7 @@ import type { PluginTaskCredentialWritebackBinding } from "./plugin-task-credent
 import { OPENROUTER_ATTRIBUTION_HEADERS, openRouterClaudeHeaders } from "@paperclipai/shared/openrouter-attribution";
 import { createHash } from "node:crypto";
 import { HttpError, unprocessable } from "../errors.js";
-import { mkdtemp, mkdir, writeFile, readFile, rm, rename, lstat, realpath } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, rm, rename, lstat, realpath, chmod } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { and, eq } from "drizzle-orm";
@@ -244,6 +244,21 @@ async function isOwnedPrivateDirectory(target: string): Promise<boolean> {
   }
 }
 
+async function ensureOwnedPrivateDirectory(target: string): Promise<boolean> {
+  try {
+    await mkdir(target, { recursive: true, mode: 0o700 });
+    let stat = await lstat(target);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== process.getuid?.()) return false;
+    if ((stat.mode & 0o077) !== 0) {
+      await chmod(target, 0o700);
+      stat = await lstat(target);
+    }
+    return stat.isDirectory() && !stat.isSymbolicLink() && stat.uid === process.getuid?.() && (stat.mode & 0o077) === 0;
+  } catch {
+    return false;
+  }
+}
+
 async function managedAiHomeClaimMayBeStale(baseDir: string, now: () => number): Promise<boolean> {
   if (!(await isOwnedPrivateDirectory(baseDir))) return false;
   let claim: { pid?: unknown; claimedAt?: unknown; startedAtMs?: unknown; retryPending?: unknown } | undefined;
@@ -283,7 +298,9 @@ async function reclaimStaleManagedAiHome(baseDir: string, now: () => number): Pr
 async function reclaimManagedAiHomeWithLock(baseDir: string, now: () => number): Promise<boolean> {
   const identity = process.platform === "win32" ? path.resolve(baseDir).toLowerCase() : path.resolve(baseDir);
   const lockKey = createHash("sha256").update(identity).digest("hex");
-  const lockHome = path.join(os.tmpdir(), "paperclip-ai-home-claims", lockKey);
+  const lockRoot = path.join(os.tmpdir(), "paperclip-ai-home-claims");
+  const lockHome = path.join(lockRoot, lockKey);
+  if (!(await ensureOwnedPrivateDirectory(lockRoot)) || !(await ensureOwnedPrivateDirectory(lockHome))) return false;
   return withWorktreePortRegistryLock(lockHome, () => reclaimStaleManagedAiHome(baseDir, now));
 }
 
