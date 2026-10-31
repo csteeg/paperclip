@@ -1,3 +1,4 @@
+import { preserveAcceptedRunUsageProjectionSql } from "../usage-receipts.js";
 import { notifyNativeEnvironmentSettlement } from "../native-environment-settlement-notifications.js";
 import { notifyExternalAgentSettlement } from "../../modules/external-agents/index.js";
 import { notifyExternalConversationSettlement } from "../external-conversation-settlement-notifications.js";
@@ -1204,6 +1205,7 @@ export function createHeartbeatLifecycle(db: Db, dependencies: HeartbeatLifecycl
             .set({
               status,
               ...patch,
+              ...(patch?.usageJson ? { usageJson: preserveAcceptedRunUsageProjectionSql(patch.usageJson) } : {}),
               executionStatusDeliveryId: randomUUID(),
               updatedAt: new Date(),
             })
