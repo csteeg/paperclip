@@ -19,6 +19,7 @@ import {
 import { resolvePaperclipInstanceRootForAdapter } from "@paperclipai/adapter-utils/server-utils";
 import { shellQuote } from "@paperclipai/adapter-utils/ssh";
 import { classifyThrownErrorClass, logSandboxProbeDiagnostic } from "./probe-diagnostics.js";
+import { selectManagedPluginMarketplaces, writeManagedPluginMarketplaces } from "./managed-plugin-marketplaces.js";
 
 const SEEDED_SHARED_FILES = ["settings.json", "CLAUDE.md"] as const;
 
@@ -352,7 +353,7 @@ async function resolveManagedClaudePluginInstalls(
 /**
  * Copies enabled plugin payloads and plain skills from an explicitly configured
  * profile into persistent per-agent cache state. Credentials, MCP settings,
- * hooks outside plugins, and marketplace sources are deliberately excluded.
+ * hooks outside plugins, and marketplace credentials are deliberately excluded.
  */
 export async function prepareManagedClaudePluginRuntime(input: {
   env: NodeJS.ProcessEnv;
@@ -406,10 +407,11 @@ export async function prepareManagedClaudePluginRuntime(input: {
 
   const sourceCacheRoot = path.join(sourceDir, "plugins", "cache");
   const sourceSkillsRoot = path.join(sourceDir, "skills");
-  const [settings, installed, skills] = await Promise.all([
+  const [settings, installed, skills, knownMarketplaces] = await Promise.all([
     readJsonObject(path.join(sourceDir, "settings.json")),
     readJsonObject(path.join(sourceDir, "plugins", "installed_plugins.json")),
     fileMetadata(sourceSkillsRoot, { excludeHiddenPaths: true }),
+    readJsonObject(path.join(sourceDir, "plugins", "known_marketplaces.json")),
   ]);
   const rawEnabledPlugins = settings?.enabledPlugins;
   const enabledPlugins = rawEnabledPlugins && typeof rawEnabledPlugins === "object" && !Array.isArray(rawEnabledPlugins)
@@ -427,6 +429,7 @@ export async function prepareManagedClaudePluginRuntime(input: {
     });
   }
   const installs = installSnapshots.filter(({ files }) => files.length > 0).map(({ install }) => install);
+  const marketplaces = selectManagedPluginMarketplaces(knownMarketplaces, installs.map(({ id }) => id));
   const excludedSkillNames = new Set(
     (input.excludedSkillNames ?? []).map((name) => name.trim().toLowerCase()).filter(Boolean),
   );
@@ -483,6 +486,8 @@ export async function prepareManagedClaudePluginRuntime(input: {
     ? input.runId!.replace(/[^a-zA-Z0-9_-]/g, "_")
     : createHash("sha256").update(JSON.stringify({
       skillLayoutVersion: 2,
+      marketplaceLayoutVersion: 1,
+      marketplaces,
       enabledPlugins,
       installs: installSnapshots
         .filter(({ files }) => files.length > 0)
@@ -513,6 +518,7 @@ export async function prepareManagedClaudePluginRuntime(input: {
           version: installed?.version ?? 2,
           plugins: rewrittenPlugins,
         }, null, 2), { mode: 0o600 });
+        await writeManagedPluginMarketplaces(stagingDir, snapshotDir, marketplaces);
       }
       if (skillFiles.length > 0) {
         await copyManagedClaudeSkills(sourceSkillsRoot, path.join(stagingDir, "skills"), managedSkillFiles);

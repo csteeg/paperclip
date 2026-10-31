@@ -183,6 +183,13 @@ describe("prepareManagedClaudePluginRuntime", () => {
       version: 2,
       plugins: { "superpowers@superpowers": [{ scope: "user", installPath: sourcePlugin, version: "1.0.0" }] },
     }));
+    await fs.writeFile(path.join(sourceDir, "plugins", "known_marketplaces.json"), JSON.stringify({
+      superpowers: {
+        source: { source: "github", repo: "obra/superpowers", headers: { Authorization: "must-not-copy" } },
+        installLocation: sourceDir,
+      },
+      unused: { source: { source: "github", repo: "private/unused" } },
+    }));
 
     const env: NodeJS.ProcessEnv = {
       PAPERCLIP_HOME: path.join(root, "paperclip-data"),
@@ -215,8 +222,12 @@ describe("prepareManagedClaudePluginRuntime", () => {
     expect(installed.plugins["superpowers@superpowers"][0].installPath)
       .toBe(path.join(result.pluginRoot!, "cache", "superpowers", "superpowers", "1.0.0"));
     expect(JSON.stringify(installed)).not.toContain(sourceDir);
-    await expect(fs.access(path.join(result.pluginRoot!, "known_marketplaces.json")))
-      .rejects.toMatchObject({ code: "ENOENT" });
+    const marketplaces = JSON.parse(await fs.readFile(path.join(result.pluginRoot!, "known_marketplaces.json"), "utf8"));
+    expect(Object.keys(marketplaces)).toEqual(["superpowers"]);
+    expect(marketplaces.superpowers.source).toEqual({ source: "github", repo: "obra/superpowers" });
+    expect(JSON.stringify(marketplaces)).not.toContain("must-not-copy");
+    const catalog = JSON.parse(await fs.readFile(path.join(marketplaces.superpowers.installLocation, ".claude-plugin", "marketplace.json"), "utf8"));
+    expect(catalog.plugins).toEqual([{ name: "superpowers", source: "./" }]);
     await expect(fs.access(path.join(configDir, ".credentials.json")))
       .rejects.toMatchObject({ code: "ENOENT" });
     await expect(fs.readFile(path.join(sourceDir, ".credentials.json"), "utf8"))
