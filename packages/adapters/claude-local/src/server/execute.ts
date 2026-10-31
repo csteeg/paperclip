@@ -99,7 +99,7 @@ import { resolveClaudeDesiredSkillNames } from "./skills.js";
 import { isBedrockModelId } from "./models.js";
 import { prepareClaudePromptBundle } from "./prompt-cache.js";
 import { buildClaudeExecutionPermissionArgs, claudeSandboxPermissionEnv } from "./permissions.js";
-import { resolveClaudeModel, SANDBOX_INSTALL_COMMAND } from "../index.js";
+import { resolveClaudeModel, resolveClaudeRuntimeSettings, SANDBOX_INSTALL_COMMAND } from "../index.js";
 import {
   createClaudeAcpExecutor,
   resolveClaudeExecutionEngineForRun,
@@ -464,12 +464,8 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const hasExplicitClaudeConfigDir = config.managedAiConnection
     ? managedAiHomeOverrides.claudeConfigDir === true
     : typeof configEnv.CLAUDE_CONFIG_DIR === "string" && configEnv.CLAUDE_CONFIG_DIR.trim().length > 0;
-  const rawClaudeProfileImportMode = asString(configEnv.PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE, "off").trim().toLowerCase();
-  if (!["off", "copy", "cache"].includes(rawClaudeProfileImportMode)) {
-    throw new Error("PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE must be off, copy, or cache");
-  }
-  const claudeProfileImportMode = rawClaudeProfileImportMode as "off" | "copy" | "cache";
-  const claudeProfileSourceDir = asString(configEnv.PAPERCLIP_CLAUDE_PLUGIN_SOURCE_DIR, "").trim();
+  const { profileImportMode: claudeProfileImportMode, profileSourceDir: claudeProfileSourceDir } =
+    resolveClaudeRuntimeSettings(config, configEnv);
   const instructionsFilePath = asString(config.instructionsFilePath, "").trim();
   const instructionsFileDir = instructionsFilePath ? `${path.dirname(instructionsFilePath)}/` : "";
   const runtimeConfig = await buildClaudeRuntimeConfig({

@@ -35,7 +35,8 @@ describeEmbeddedPostgres("managed Claude transcript expiration", () => {
   beforeAll(async () => {
     tempDb = await startEmbeddedPostgresTestDatabase("paperclip-claude-transcript-expiration-");
     db = createDb(tempDb.connectionString);
-  }, 20_000);
+  // Cold embedded PostgreSQL startup and migrations can exceed 20s on Windows.
+  }, 120_000);
 
   afterEach(async () => {
     await db.delete(agentTaskSessions);
@@ -126,6 +127,22 @@ describeEmbeddedPostgres("managed Claude transcript expiration", () => {
     expect(await exists(seeded.scopeDir)).toBe(false);
     expect(await fs.readdir(seeded.transcriptsDir)).toEqual([]);
     expect(await taskSessionCount()).toBe(0);
+  });
+
+  it("uses the recorded per-agent window instead of the instance default", async () => {
+    const seeded = await seed({ closedDaysAgo: 10, lastUsedDaysAgo: 10 });
+    const taskFile = path.join(seeded.scopeDir, "task.json");
+    const metadata = JSON.parse(await fs.readFile(taskFile, "utf8"));
+    await fs.writeFile(taskFile, JSON.stringify({ ...metadata, retentionDays: 14 }));
+    const lastUsed = new Date(now.getTime() - 10 * DAY_MS);
+    await fs.utimes(taskFile, lastUsed, lastUsed);
+    const cleanup = service();
+    const kept = await cleanup.tick();
+    expect(kept.expired).toBe(0);
+    expect(kept.nextDueAt).toBe(now.getTime() + 4 * DAY_MS);
+    await expect(fs.access(seeded.scopeDir)).resolves.toBeUndefined();
+    const expired = await cleanup.tick({ now: new Date(now.getTime() + 5 * DAY_MS) });
+    expect(expired.expired).toBe(1);
   });
 
   it.each([

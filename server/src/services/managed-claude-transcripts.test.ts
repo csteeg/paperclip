@@ -22,7 +22,7 @@ afterEach(async () => {
   await fs.rm(guestDir, { recursive: true, force: true });
 });
 
-type Runtime = { home: string; sessionIdentity: string };
+type Runtime = { home: string; sessionIdentity: string; config?: Record<string, unknown> };
 
 async function makeRuntime(overrides: Partial<Omit<Runtime, "home">> = {}): Promise<Runtime> {
   const home = await fs.mkdtemp(path.join(guestDir, "run-home-"));
@@ -31,7 +31,7 @@ async function makeRuntime(overrides: Partial<Omit<Runtime, "home">> = {}): Prom
 }
 
 function retain(
-  runtime: { home?: string; sessionIdentity: string } | undefined,
+  runtime: { home?: string; sessionIdentity: string; config?: Record<string, unknown> } | undefined,
   options: { adapterType?: string; taskKey?: string | null; target?: unknown } = {},
 ) {
   return retainManagedClaudeTranscripts({
@@ -52,6 +52,28 @@ async function writeTranscript(home: string) {
 }
 
 describe("retainManagedClaudeTranscripts", () => {
+  it("opts in per agent when the instance default is off and records its retention policy", async () => {
+    vi.stubEnv("PAPERCLIP_MANAGED_CLAUDE_TRANSCRIPT_RETENTION_ENABLED", "false");
+    const enabled = await makeRuntime({ config: { transcriptRetentionEnabled: true, transcriptRetentionDays: 14 } });
+    const disabled = await makeRuntime({ sessionIdentity: "another-account" });
+    const [kept, skipped] = await Promise.all([retain(enabled), retain(disabled)]);
+    expect(kept?.transcriptDir).toBeTruthy();
+    expect(skipped).toBeUndefined();
+    const metadata = JSON.parse(await fs.readFile(path.join(path.dirname(kept!.transcriptDir), "task.json"), "utf8"));
+    expect(metadata.retentionDays).toBe(14);
+    await expect(fs.lstat(path.join(disabled.home, "provider", "projects"))).rejects.toThrow();
+  });
+
+  it("allows typed off to override an enabled instance and legacy agent value", async () => {
+    const runtime = await makeRuntime({ config: { transcriptRetentionEnabled: false, env: { PAPERCLIP_MANAGED_CLAUDE_TRANSCRIPT_RETENTION_ENABLED: "true" } } });
+    expect(await retain(runtime)).toBeUndefined();
+  });
+
+  it("never installs a transcript link for an explicitly configured Claude directory", async () => {
+    const runtime = await makeRuntime({ config: { transcriptRetentionEnabled: true, managedAiHomeOverrides: { claudeConfigDir: true } } });
+    expect(await retain(runtime)).toBeUndefined();
+    await expect(fs.lstat(path.join(runtime.home, "provider", "projects"))).rejects.toThrow();
+  });
   it("keeps nothing unless retention is turned on", async () => {
     for (const value of [undefined, "false", "1"]) {
       vi.stubEnv("PAPERCLIP_MANAGED_CLAUDE_TRANSCRIPT_RETENTION_ENABLED", value);
@@ -143,6 +165,20 @@ describe("retainManagedClaudeTranscripts", () => {
 });
 
 describe("managed Claude transcript expiration sweep", () => {
+  it("schedules a recorded agent policy without applying the shorter instance window", async () => {
+    const root = path.join(guestDir, "instance");
+    const dir = path.join(root, "companies", "company-1", "agents", "agent-1", "claude-transcripts", "0000000000000000");
+    await fs.mkdir(dir, { recursive: true });
+    const file = path.join(dir, "task.json");
+    await fs.writeFile(file, JSON.stringify({ taskKey: "task-1", retentionDays: 14 }));
+    const now = new Date();
+    const day = 24 * 60 * 60 * 1000;
+    const usedAt = new Date(now.getTime() - 10 * day);
+    await fs.utimes(file, usedAt, usedAt);
+    const result = await managedClaudeTranscriptExpirationService({} as never, { instanceRoot: root, retentionDays: 7, now }).tick();
+    expect(result).toMatchObject({ expired: 0, failed: 0, nextDueAt: usedAt.getTime() + 14 * day });
+    await expect(fs.access(file)).resolves.toBeUndefined();
+  });
   it("rechecks completed scopes after a rescan, including after a failed discovery", async () => {
     const root = path.join(guestDir, "instance");
     const transcriptsDir = path.join(root, "companies", "company-1", "agents", "agent-1", "claude-transcripts");

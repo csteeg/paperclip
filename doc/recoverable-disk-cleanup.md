@@ -700,7 +700,8 @@ behavior applies.
 
 ## Managed Claude transcripts
 
-When `PAPERCLIP_MANAGED_CLAUDE_TRANSCRIPT_RETENTION_ENABLED=true`, managed Claude
+When an agent enables `transcriptRetentionEnabled` (or its legacy environment /
+instance fallback `PAPERCLIP_MANAGED_CLAUDE_TRANSCRIPT_RETENTION_ENABLED=true`), managed Claude
 keeps each task's transcripts in
 `<instance>/companies/<company>/agents/<agent>/claude-transcripts/<scope>/`. The
 `task.json` file in that directory names the task, and each run that uses the
@@ -736,4 +737,4 @@ an interrupted deletion.
 | Environment variable | Default | Effect |
 | --- | --- | --- |
 | `PAPERCLIP_MANAGED_CLAUDE_TRANSCRIPT_RETENTION_ENABLED` | `false` | Set `true` to keep managed Claude transcripts between runs |
-| `PAPERCLIP_MANAGED_CLAUDE_TRANSCRIPT_RETENTION_DAYS` | `7` | Days an issue must be closed, and its transcripts unused, before they are deleted (minimum `1`) |
+| `PAPERCLIP_MANAGED_CLAUDE_TRANSCRIPT_RETENTION_DAYS` | `7` | Default days an issue must be closed, and its transcripts unused, before deletion; a task's recorded per-agent `transcriptRetentionDays` takes precedence (minimum `1`) |

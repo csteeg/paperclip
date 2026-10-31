@@ -84,11 +84,11 @@ resource allocation waits for approval.
 
 ### `agent-configuration`
 
-Claude local configuration includes **Local Claude skills and plugins** with
-Off, Copy for each run, and Cache per agent. It edits the existing environment
-binding; it does not change runtime defaults. The
+Claude **Advanced → Run policies** includes import mode, optional profile source,
+per-agent transcript retention, and retention days. Typed fields override legacy
+environment bindings without changing unset defaults. The
 [selector regression](../../ui/src/adapters/claude-local/config-fields.test.tsx)
-covers create/edit saves, legacy environment values, and preservation of secret
+covers create/edit saves, legacy environment fallback, and preservation of secret
 references. Live plugin execution remains a separate provider check.
 
 Open `/agents/:agentId` and the configuration/instruction surfaces it exposes.

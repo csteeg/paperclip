@@ -9,6 +9,16 @@ vi.mock("./claude-config.js", () => ({ prepareManagedClaudePluginRuntime }));
 import { prepareManagedClaudeAcpConfig } from "./managed-acp-config.js";
 
 describe("prepareManagedClaudeAcpConfig", () => {
+  it("uses typed import settings ahead of legacy environment values", async () => {
+    prepareManagedClaudePluginRuntime.mockClear();
+    await prepareManagedClaudeAcpConfig({
+      config: { profileImportMode: "copy", profileSourceDir: "C:/trusted-profile" },
+      configEnv: { CLAUDE_CONFIG_DIR: "C:/managed/provider", PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE: "cache" },
+      managedAiHomeOverrides: {}, processEnv: {}, companyId: "company-1", agentId: "agent-1", runId: "run-1",
+    });
+    expect(prepareManagedClaudePluginRuntime).toHaveBeenCalledWith(expect.objectContaining({ importMode: "copy", sourceDir: "C:/trusted-profile" }));
+    prepareManagedClaudePluginRuntime.mockClear();
+  });
   it("preserves Paperclip's default ACP environment when profile import is off", async () => {
     const env = {
       CLAUDE_CONFIG_DIR: "C:/managed/provider",

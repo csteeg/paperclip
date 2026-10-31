@@ -1,9 +1,11 @@
 import path from "node:path";
 import { parseObject } from "@paperclipai/adapter-utils/server-utils";
 import { prepareManagedClaudePluginRuntime } from "./claude-config.js";
+import { resolveClaudeRuntimeSettings } from "../runtime-settings.js";
 
 /** Applies imported profile assets to a managed, local ACP invocation. */
 export async function prepareManagedClaudeAcpConfig(input: {
+  config?: Record<string, unknown>;
   configEnv: unknown;
   managedAiHomeOverrides: unknown;
   processEnv: NodeJS.ProcessEnv;
@@ -16,13 +18,7 @@ export async function prepareManagedClaudeAcpConfig(input: {
   const configDir = typeof env.CLAUDE_CONFIG_DIR === "string" ? env.CLAUDE_CONFIG_DIR : "";
   const managedHomeOverrides = parseObject(input.managedAiHomeOverrides);
   const hasExplicitConfigDir = managedHomeOverrides.claudeConfigDir === true;
-  const rawImportMode = typeof env.PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE === "string"
-    ? env.PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE.trim().toLowerCase()
-    : "off";
-  if (!["off", "copy", "cache"].includes(rawImportMode)) {
-    throw new Error("PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE must be off, copy, or cache");
-  }
-  const importMode = rawImportMode as "off" | "copy" | "cache";
+  const { profileImportMode: importMode, profileSourceDir } = resolveClaudeRuntimeSettings(input.config ?? {}, env);
   if (importMode !== "off" && hasExplicitConfigDir) {
     throw new Error(
       "Claude profile import cannot write into an explicitly configured CLAUDE_CONFIG_DIR. Disable profile import or remove the config directory override.",
@@ -39,9 +35,7 @@ export async function prepareManagedClaudeAcpConfig(input: {
         agentId: input.agentId,
         runId: input.runId,
         configDir,
-        sourceDir: typeof env.PAPERCLIP_CLAUDE_PLUGIN_SOURCE_DIR === "string"
-          ? env.PAPERCLIP_CLAUDE_PLUGIN_SOURCE_DIR
-          : undefined,
+        sourceDir: profileSourceDir || undefined,
         autoDiscoverSource: true,
         importMode,
         excludedSkillNames: input.excludedSkillNames,
