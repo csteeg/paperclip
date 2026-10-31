@@ -273,6 +273,46 @@ describe("prepareManagedClaudePluginRuntime", () => {
       .rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("imports enabled plugins when their recorded install path uses an alias of the profile path", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-managed-claude-plugin-path-alias-"));
+    cleanupDirs.push(root);
+    const sourceDir = path.join(root, "personal-claude");
+    const aliasedSourceDir = path.join(root, "personal-claude-alias");
+    const sourcePlugin = path.join(sourceDir, "plugins", "cache", "careconnections", "careconnections", "0.6.95");
+    const configDir = path.join(root, "managed-run", "provider");
+    await fs.mkdir(sourcePlugin, { recursive: true });
+    await fs.writeFile(path.join(sourcePlugin, "plugin.js"), "trusted plugin payload\n");
+    await fs.writeFile(path.join(sourceDir, "settings.json"), JSON.stringify({
+      enabledPlugins: { "careconnections@careconnections": true },
+    }));
+    await fs.symlink(sourceDir, aliasedSourceDir, process.platform === "win32" ? "junction" : "dir");
+    await fs.writeFile(path.join(sourceDir, "plugins", "installed_plugins.json"), JSON.stringify({
+      version: 2,
+      plugins: {
+        "careconnections@careconnections": [{
+          scope: "user",
+          installPath: path.join(aliasedSourceDir, "plugins", "cache", "careconnections", "careconnections", "0.6.95"),
+          version: "0.6.95",
+        }],
+      },
+    }));
+
+    const result = await prepareManagedClaudePluginRuntime({
+      env: { PAPERCLIP_HOME: path.join(root, "paperclip-data") },
+      companyId: "company-1",
+      agentId: "agent-1",
+      configDir,
+      sourceDir,
+      importMode: "cache",
+    });
+
+    expect(result.pluginRoot).not.toBeNull();
+    await expect(fs.readFile(path.join(result.pluginRoot!, "cache", "careconnections", "careconnections", "0.6.95", "plugin.js"), "utf8"))
+      .resolves.toBe("trusted plugin payload\n");
+    const settings = JSON.parse(await fs.readFile(path.join(configDir, "settings.json"), "utf8"));
+    expect(settings.enabledPlugins["careconnections@careconnections"]).toBe(true);
+  });
+
   it("prefers a personal skill when an account-synced skill maps to the same name", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-managed-claude-duplicate-skills-"));
     cleanupDirs.push(root);

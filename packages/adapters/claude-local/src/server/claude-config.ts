@@ -313,12 +313,17 @@ interface ManagedClaudePluginInstall {
   metadata: Record<string, unknown>;
 }
 
-function resolveManagedClaudePluginInstalls(
+async function resolveManagedClaudePluginInstalls(
   installed: Record<string, unknown> | null,
   cacheRoot: string,
-): ManagedClaudePluginInstall[] {
+): Promise<ManagedClaudePluginInstall[]> {
   const plugins = installed?.plugins;
   if (!plugins || typeof plugins !== "object" || Array.isArray(plugins)) return [];
+  // Windows paths can refer to the same directory through an 8.3 short name,
+  // a junction, or its long name. Compare canonical existing paths so a valid
+  // install record is not discarded before we copy it into the managed cache.
+  const canonicalCacheRoot = await fs.realpath(cacheRoot).catch(() => null);
+  if (!canonicalCacheRoot) return [];
   const result: ManagedClaudePluginInstall[] = [];
   for (const [id, records] of Object.entries(plugins as Record<string, unknown>)) {
     if (!Array.isArray(records)) continue;
@@ -326,7 +331,9 @@ function resolveManagedClaudePluginInstalls(
       if (!value || typeof value !== "object" || Array.isArray(value)) continue;
       const record = value as Record<string, unknown>;
       if (typeof record.installPath !== "string" || typeof record.version !== "string") continue;
-      const relative = path.relative(cacheRoot, path.resolve(record.installPath));
+      const canonicalInstallPath = await fs.realpath(path.resolve(record.installPath)).catch(() => null);
+      if (!canonicalInstallPath) continue;
+      const relative = path.relative(canonicalCacheRoot, canonicalInstallPath);
       if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) continue;
       const metadata: Record<string, unknown> = {
         scope: typeof record.scope === "string" ? record.scope : "user",
@@ -410,7 +417,7 @@ export async function prepareManagedClaudePluginRuntime(input: {
       .filter(([id, enabled]) => id.trim().length > 0 && typeof enabled === "boolean")
       .sort(([left], [right]) => left.localeCompare(right))) as Record<string, boolean>
     : {};
-  const candidateInstalls = resolveManagedClaudePluginInstalls(installed, sourceCacheRoot)
+  const candidateInstalls = (await resolveManagedClaudePluginInstalls(installed, sourceCacheRoot))
     .filter((install) => enabledPlugins[install.id] === true);
   const installSnapshots: Array<{ install: ManagedClaudePluginInstall; files: Array<{ path: string; size: number; contentHash: string }> }> = [];
   for (const install of candidateInstalls) {
