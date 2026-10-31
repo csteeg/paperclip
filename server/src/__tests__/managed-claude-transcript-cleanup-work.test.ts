@@ -2,8 +2,9 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { installDatabaseWorkSignals } from "../../../packages/db/src/work-signals.js";
+import { installDatabaseWorkSignals, signalDatabaseWork } from "../../../packages/db/src/work-signals.js";
 import { createDeliveryWorkCoordinator } from "../services/delivery-work-coordinator.js";
+import { DELIVERY_QUEUES } from "../services/delivery-work-notifications.js";
 import {
   registerManagedClaudeTranscriptCleanupWork,
   retainManagedClaudeTranscripts,
@@ -149,5 +150,21 @@ describe("registerManagedClaudeTranscriptCleanupWork", () => {
       vi.unstubAllEnvs();
       await fs.rm(guestDir, { recursive: true, force: true });
     }
+  });
+
+  it("rescans when a database notification settles between cleanup batches", async () => {
+    vi.useFakeTimers();
+    const owner = fakeOwner();
+    const requestRescan = vi.fn();
+    const c = createDeliveryWorkCoordinator({ owner, canRun: () => true, canReconcile: () => true, onError: vi.fn() });
+    coordinators.push(c);
+    const tick = vi.fn(async () => result({ truncated: true }));
+    registerManagedClaudeTranscriptCleanupWork(c, { tick, requestRescan }, vi.fn());
+    await vi.advanceTimersByTimeAsync(1);
+    expect(tick).toHaveBeenCalledTimes(1);
+
+    await owner.transaction(async (tx: object) => signalDatabaseWork(tx, DELIVERY_QUEUES.managedClaudeTranscriptCleanup));
+
+    expect(requestRescan).toHaveBeenCalledTimes(1);
   });
 });

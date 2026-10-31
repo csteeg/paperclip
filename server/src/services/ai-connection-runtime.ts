@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { environmentTaskResultSchema } from "@paperclipai/plugin-sdk";
 import type { PluginTaskCredentialWritebackBinding } from "./plugin-task-credential-writeback.js";
 import { OPENROUTER_ATTRIBUTION_HEADERS, openRouterClaudeHeaders } from "@paperclipai/shared/openrouter-attribution";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { HttpError, unprocessable } from "../errors.js";
 import { mkdtemp, mkdir, writeFile, readFile, rm, rename, lstat, realpath } from "node:fs/promises";
 import os from "node:os";
@@ -211,6 +211,7 @@ function managedAiHomeEnvironment(home: string): Record<string, string> {
 }
 
 const MANAGED_AI_HOME_CLAIM_FILE = ".paperclip-home-claim.json";
+const MANAGED_AI_HOME_LOCK_OWNER_FILE = "owner.json";
 export const MANAGED_AI_STABLE_HOME_STALE_AFTER_MS = 2 * 60 * 60 * 1000;
 
 async function pidStartTimeMs(pid: number): Promise<number | undefined> {
@@ -271,15 +272,64 @@ async function reclaimStaleManagedAiHome(baseDir: string, now: () => number): Pr
   return true;
 }
 
-async function tryAcquireManagedAiHomeClaimLock(baseDir: string): Promise<(() => Promise<void>) | null> {
+async function tryAcquireManagedAiHomeClaimLock(baseDir: string, now: () => number): Promise<(() => Promise<void>) | null> {
   const lockDir = `${baseDir}.claim-lock`;
+  const lockId = randomUUID();
+  const createLock = async (): Promise<(() => Promise<void>) | null> => {
+    try {
+      await mkdir(lockDir, { mode: 0o700 });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") return null;
+      throw error;
+    }
+    try {
+      const startedAtMs = await pidStartTimeMs(process.pid);
+      await writeFile(path.join(lockDir, MANAGED_AI_HOME_LOCK_OWNER_FILE), JSON.stringify({
+        lockId,
+        pid: process.pid,
+        createdAt: now(),
+        ...(startedAtMs !== undefined ? { startedAtMs } : {}),
+      }), { mode: 0o600 });
+    } catch {
+      await rm(lockDir, { recursive: true, force: true }).catch(() => {});
+      return null;
+    }
+    return async () => {
+      let owner: { lockId?: unknown } | undefined;
+      try { owner = JSON.parse(await readFile(path.join(lockDir, MANAGED_AI_HOME_LOCK_OWNER_FILE), "utf8")); } catch {}
+      if (owner?.lockId === lockId) await rm(lockDir, { recursive: true, force: true });
+    };
+  };
+
+  const acquired = await createLock();
+  if (acquired) return acquired;
+
+  let lockStat;
   try {
-    await mkdir(lockDir, { mode: 0o700 });
-    return async () => { await rm(lockDir, { recursive: true, force: true }); };
+    lockStat = await lstat(lockDir);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") return null;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
   }
+  if (!lockStat.isDirectory() || lockStat.isSymbolicLink()) return null;
+
+  let owner: { lockId?: unknown; pid?: unknown; startedAtMs?: unknown; createdAt?: unknown } | undefined;
+  try { owner = JSON.parse(await readFile(path.join(lockDir, MANAGED_AI_HOME_LOCK_OWNER_FILE), "utf8")); } catch {}
+  const hasValidOwner = typeof owner?.pid === "number" && Number.isInteger(owner.pid) && owner.pid > 0;
+  const abandoned = hasValidOwner
+    ? await claimOwnerGone(owner!)
+    : now() - lockStat.mtimeMs >= MANAGED_AI_STABLE_HOME_STALE_AFTER_MS;
+  if (!abandoned) return null;
+
+  const staleLockDir = `${lockDir}.stale-${process.pid}-${randomUUID()}`;
+  try {
+    await rename(lockDir, staleLockDir);
+  } catch (error) {
+    if (["ENOENT", "EEXIST"].includes((error as NodeJS.ErrnoException).code ?? "")) return null;
+    throw error;
+  }
+  await rm(staleLockDir, { recursive: true, force: true });
+  return createLock();
 }
 
 export async function claimManagedAiHome(
@@ -292,7 +342,7 @@ export async function claimManagedAiHome(
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       if (attempt === 0) {
-        const releaseLock = await tryAcquireManagedAiHomeClaimLock(baseDir);
+        const releaseLock = await tryAcquireManagedAiHomeClaimLock(baseDir, now);
         if (releaseLock) {
           try {
             if (await reclaimStaleManagedAiHome(baseDir, now)) continue;
