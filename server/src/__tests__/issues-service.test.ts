@@ -4169,7 +4169,7 @@ const dependencyTestDatabaseUrl = resolveExternalTestDatabaseUrl("PAPERCLIP_ISSU
 
   beforeAll(async () => {
     if (!dependencyTestDatabaseUrl) tempDb = await startEmbeddedPostgresTestDatabase("paperclip-issues-blockers-");
-    db = createDb(dependencyTestDatabaseUrl ?? tempDb!.connectionString);
+    db = createDb(dependencyTestDatabaseUrl ?? tempDb!.connectionString, { maxConnections: 6 });
     svc = issueService(db);
     await ensureIssueRelationsTable(db);
   }, 20_000);
