@@ -373,7 +373,11 @@ runs with the agent's permissions.
 
 Profile import applies to local managed CLI runs, including a local-process
 sandbox, and local managed ACP runs. Workspace-scoped CLI sandbox runs mount the
-imported cache read-only. Remote CLI and ACP runs do not stage this personal
+imported cache read-only. Opted-in ACP runs include the managed user settings
+source through a per-session ACPX environment flag; agents with import off retain
+the existing ACPX setting sources. This does not enable another agent's personal
+profile or change the Paperclip server's process environment. Remote CLI and ACP
+runs do not stage this personal
 profile. Profile caching persists plugin and skill files, not Claude transcripts;
 session resume depends on the selected `HOME`/`CLAUDE_CONFIG_DIR` and adapter
 session support.

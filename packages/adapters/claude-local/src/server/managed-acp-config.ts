@@ -51,6 +51,7 @@ export async function prepareManagedClaudeAcpConfig(input: {
     env: {
       ...env,
       ...(importMode !== "off" ? {
+        ACPX_CLAUDE_INCLUDE_USER_SETTINGS: "1",
         CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL: "1",
         CLAUDE_CODE_PLUGIN_CACHE_DIR: managedPlugins.pluginRoot ?? path.join(configDir, "plugins"),
       } : {}),
