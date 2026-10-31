@@ -369,7 +369,10 @@ place, including a same-name Paperclip-selected skill.
 
 Paperclip reads the profile's enabled-plugin list, installed-plugin metadata,
 cached payloads for enabled plugins, and `skills/`. It never modifies or deletes
-the source profile. Credentials, user MCP servers, hook settings outside enabled
+the source profile. Imported enabled plugins are registered as user installs in
+the private destination; an install scope from another profile does not grant
+managed-policy authority in the destination. A registry layout version prevents
+reuse of snapshots with older scope metadata. Credentials, user MCP servers, hook settings outside enabled
 plugins, and marketplace credentials or source URLs are not imported. For enabled
 plugins from GitHub marketplaces, the import creates a minimal local catalog and
 retains only the public `owner/repo` identity. Claude requires this catalog even
