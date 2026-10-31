@@ -1373,7 +1373,8 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     const sessionErrorKind =
       sessionId &&
       !initial.proc.timedOut &&
-      ((initial.proc.exitCode ?? 0) !== 0 || stoppedAfterTerminalResult) &&
+      ((initial.proc.exitCode ?? 0) !== 0 ||
+        (stoppedAfterTerminalResult && initial.parsed?.is_error === true)) &&
       initial.parsed
         ? isClaudeUnknownSessionError(initial.parsed)
           ? "unknown"
