@@ -8,6 +8,7 @@ import { resolveManagedClaudeTranscriptsDir, resolvePaperclipInstanceRoot } from
 import { logger } from "../middleware/logger.js";
 import type { createDeliveryWorkCoordinator } from "./delivery-work-coordinator.js";
 import { DELIVERY_QUEUES } from "./delivery-work-notifications.js";
+import { resolveClaudeRuntimeSettings } from "@paperclipai/adapter-claude-local";
 
 export const MANAGED_CLAUDE_TRANSCRIPT_CLEANUP_RETRY_MS = 60 * 60 * 1000;
 export const MANAGED_CLAUDE_TRANSCRIPT_RETENTION_DEFAULT_DAYS = 7;
@@ -30,7 +31,7 @@ export function managedClaudeTranscriptRetentionEnabled(): boolean {
 let onScopeRetained: (() => void) | null = null;
 
 export async function retainManagedClaudeTranscripts(input: {
-  runtime: { home?: string; sessionIdentity: string } | undefined;
+  runtime: { home?: string; sessionIdentity: string; config?: Record<string, unknown> } | undefined;
   adapterType: string;
   companyId: string;
   agentId: string;
@@ -38,14 +39,23 @@ export async function retainManagedClaudeTranscripts(input: {
   target: AdapterExecutionTarget | null | undefined;
 }): Promise<{ home: string; transcriptDir: string } | undefined> {
   const { runtime, taskKey } = input;
-  if (!managedClaudeTranscriptRetentionEnabled()) return undefined;
   if (!runtime?.home || !taskKey || input.adapterType !== "claude_local" || (input.target && input.target.kind !== "local")) return undefined;
+  const config = runtime.config ?? {};
+  const env = config.env && typeof config.env === "object" ? config.env as Record<string, unknown> : {};
+  const instanceDays = Number(process.env.PAPERCLIP_MANAGED_CLAUDE_TRANSCRIPT_RETENTION_DAYS);
+  const settings = resolveClaudeRuntimeSettings(config, env, {
+    retentionEnabled: managedClaudeTranscriptRetentionEnabled(),
+    retentionDays: Number.isFinite(instanceDays) && instanceDays >= 1 ? Math.floor(instanceDays) : 7,
+  });
+  if (!settings.transcriptRetentionEnabled) return undefined;
+  const overrides = config.managedAiHomeOverrides as Record<string, unknown> | undefined;
+  if (overrides?.claudeConfigDir === true) return undefined;
   try {
     const scopeDir = resolveManagedClaudeTranscriptsDir(input.companyId, input.agentId, runtime.sessionIdentity, taskKey);
     const projectsDir = path.join(scopeDir, PROJECTS_DIR);
     await fs.mkdir(projectsDir, { recursive: true, mode: 0o700 });
     const realProjectsDir = await fs.realpath(projectsDir);
-    await fs.writeFile(path.join(scopeDir, TASK_FILE), JSON.stringify({ taskKey }), { mode: 0o600 });
+    await fs.writeFile(path.join(scopeDir, TASK_FILE), JSON.stringify({ taskKey, retentionDays: settings.transcriptRetentionDays }), { mode: 0o600 });
     await fs.symlink(realProjectsDir, path.join(runtime.home, "provider", PROJECTS_DIR), process.platform === "win32" ? "junction" : "dir");
     onScopeRetained?.();
     return { home: runtime.home, transcriptDir: realProjectsDir };
@@ -74,7 +84,8 @@ export type ManagedClaudeTranscriptExpirationResult = {
 };
 
 type Owner = { companyId: string; agentId: string };
-type Scope = Owner & { dir: string; task: { taskKey: string; lastUsed: Date } | null };
+type ScopeTask = { taskKey: string; lastUsed: Date; retentionDays?: number };
+type Scope = Owner & { dir: string; task: ScopeTask | null };
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
 async function isRealDirectory(target: string): Promise<boolean> {
@@ -85,7 +96,7 @@ async function isRealDirectory(target: string): Promise<boolean> {
   return Boolean(stat?.isDirectory() && !stat.isSymbolicLink());
 }
 
-async function readTaskKey(scopeDir: string): Promise<{ taskKey: string; lastUsed: Date } | null> {
+async function readTaskKey(scopeDir: string): Promise<ScopeTask | null> {
   const file = path.join(scopeDir, TASK_FILE);
   const stat = await fs.lstat(file).catch((error: unknown) => {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
@@ -98,8 +109,11 @@ async function readTaskKey(scopeDir: string): Promise<{ taskKey: string; lastUse
   });
   if (contents === null) return null;
   try {
-    const { taskKey } = JSON.parse(contents) as { taskKey?: unknown };
-    return typeof taskKey === "string" && taskKey ? { taskKey, lastUsed: stat.mtime } : null;
+    const { taskKey, retentionDays } = JSON.parse(contents) as { taskKey?: unknown; retentionDays?: unknown };
+    return typeof taskKey === "string" && taskKey ? {
+      taskKey, lastUsed: stat.mtime,
+      ...(typeof retentionDays === "number" && Number.isInteger(retentionDays) && retentionDays >= 1 ? { retentionDays } : {}),
+    } : null;
   } catch {
     return null;
   }
@@ -193,8 +207,8 @@ export function managedClaudeTranscriptExpirationService(db: Db, defaults: Manag
 
   async function expireScope(
     scope: Scope,
-    cutoff: Date,
-    retentionDays: number,
+    now: number,
+    defaultRetentionDays: number,
     sessionInUse: boolean,
     result: ManagedClaudeTranscriptExpirationResult,
   ) {
@@ -203,6 +217,8 @@ export function managedClaudeTranscriptExpirationService(db: Db, defaults: Manag
       if (blocker.dueAt != null && (result.nextDueAt === null || blocker.dueAt < result.nextDueAt)) result.nextDueAt = blocker.dueAt;
     };
     const currentTask = await readTaskKey(scope.dir);
+    const retentionDays = currentTask?.retentionDays ?? defaultRetentionDays;
+    const cutoff = new Date(now - retentionDays * DAY_MS);
     scope = { ...scope, task: currentTask };
     if (!currentTask) return skip({ reason: "task_unknown" });
     if (currentTask.lastUsed >= cutoff) return skip({ reason: "recently_used" });
@@ -253,7 +269,6 @@ export function managedClaudeTranscriptExpirationService(db: Db, defaults: Manag
     const shouldContinue = options.shouldContinue ?? defaults.shouldContinue ?? (() => true);
     const root = path.resolve(options.instanceRoot ?? defaults.instanceRoot ?? resolvePaperclipInstanceRoot());
     const now = (options.now ?? defaults.now ?? new Date()).getTime();
-    const cutoff = new Date(now - retentionDays * DAY_MS);
     const result: ManagedClaudeTranscriptExpirationResult = {
       checked: 0, expired: 0, clearedTaskSessions: 0, failed: 0, truncated: false, skipped: {}, nextDueAt: null,
     };
@@ -275,10 +290,10 @@ export function managedClaudeTranscriptExpirationService(db: Db, defaults: Manag
       scannedRescanVersion = scanVersion;
     }
     const scopes = sweepScopes;
-    const notYetDue = scopes.filter((scope) => scope.task && scope.task.lastUsed >= cutoff);
+    const notYetDue = scopes.filter((scope) => scope.task && scope.task.lastUsed.getTime() >= now - (scope.task.retentionDays ?? retentionDays) * DAY_MS);
     const inUse = new Set(notYetDue.map((scope) => `${path.dirname(scope.dir)}\0${scope.task!.taskKey}`));
     for (const scope of notYetDue) {
-      const due = scope.task!.lastUsed.getTime() + retentionDays * DAY_MS;
+      const due = scope.task!.lastUsed.getTime() + (scope.task!.retentionDays ?? retentionDays) * DAY_MS;
       if (result.nextDueAt === null || due < result.nextDueAt) result.nextDueAt = due;
     }
     const pending = scopes.filter((scope) => !completedScopes.has(scope.dir));
@@ -291,7 +306,7 @@ export function managedClaudeTranscriptExpirationService(db: Db, defaults: Manag
       completedScopes.add(scope.dir);
       try {
         const sessionInUse = Boolean(scope.task) && inUse.has(`${path.dirname(scope.dir)}\0${scope.task!.taskKey}`);
-        await expireScope(scope, cutoff, retentionDays, sessionInUse, result);
+        await expireScope(scope, now, retentionDays, sessionInUse, result);
       } catch (err) {
         result.failed++;
         logger.warn({ err, agentId: scope.agentId }, "managed Claude transcript expiration skipped a task");

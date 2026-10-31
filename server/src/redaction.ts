@@ -1002,11 +1002,25 @@ export function redactAgentAdapterConfig(
   // `env`; keeping it out of `sanitizeRecord` means a future change there
   // cannot alter entries this function has already redacted.
   const { env, ...rest } = adapterConfig;
+  // Present only bounded, non-secret legacy choices as typed settings. Keep
+  // every original env binding redacted; never expose source paths or refs.
+  const plain = (key: string) => {
+    const value = env[key];
+    return typeof value === "string" ? value : isPlainObject(value) && value.type === "plain" && typeof value.value === "string" ? value.value : undefined;
+  };
+  const legacyMode = plain("PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE")?.trim().toLowerCase();
+  const legacyRetention = plain("PAPERCLIP_MANAGED_CLAUDE_TRANSCRIPT_RETENTION_ENABLED");
+  const legacyDays = plain("PAPERCLIP_MANAGED_CLAUDE_TRANSCRIPT_RETENTION_DAYS");
+  const choices = {
+    ...(rest.profileImportMode === undefined && ["off", "copy", "cache"].includes(legacyMode ?? "") ? { profileImportMode: legacyMode } : {}),
+    ...(rest.transcriptRetentionEnabled === undefined && ["true", "false"].includes(legacyRetention ?? "") ? { transcriptRetentionEnabled: legacyRetention === "true" } : {}),
+    ...(rest.transcriptRetentionDays === undefined && legacyDays !== undefined && Number.isInteger(Number(legacyDays)) && Number(legacyDays) >= 1 ? { transcriptRetentionDays: Number(legacyDays) } : {}),
+  };
   const redactedEnv = Object.fromEntries(
     Object.entries(env).map(([key, value]) => [key, redactAgentEnvBinding(value)]),
   );
 
-  return { ...(redactEventPayload(rest) ?? {}), env: redactedEnv };
+  return { ...(redactEventPayload(rest) ?? {}), ...choices, env: redactedEnv };
 }
 
 export function redactSensitiveText(input: string): string {

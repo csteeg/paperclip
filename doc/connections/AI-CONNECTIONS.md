@@ -334,12 +334,15 @@ path. Use a distinct writable path per agent: sharing one path can share
 credentials, plugin settings, and session files, and concurrent runs may write
 to it at the same time.
 
-Profile import is controlled independently with `PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE`
-through **Local Claude skills and plugins** in the agent configuration UI:
-**Off (default)**, **Copy for each run**, or **Cache per agent**. The selector
-saves the same environment binding, preserves other variables and secret
-references, and reflects an existing plain environment value. Alternatively,
-set `PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE` directly
+Under **Advanced → Run policies**, local Claude agents have typed settings:
+`profileImportMode` (`off`, `copy`, `cache`), `profileSourceDir`,
+`transcriptRetentionEnabled`, and `transcriptRetentionDays` (a positive integer).
+Typed values take precedence over legacy environment bindings, including explicit
+`off`, `false`, and an empty source path. Leaving a field unset keeps its legacy
+environment/instance fallback. Existing non-secret mode and retention choices are
+shown in the UI without revealing raw environment values or secret references.
+
+Profile import can alternatively use `PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE`
 (`off`, `copy`, or `cache`) and `PAPERCLIP_CLAUDE_PLUGIN_SOURCE_DIR`. Import is
 off by default, even if the server-level source variable is configured. When
 mode is `off`, Paperclip preserves Claude's normal CLI/ACP plugin and
@@ -632,8 +635,10 @@ fingerprint. These checks do not relax current connection authorization.
 
 Managed Claude (`claude_local`) on a local target can keep its conversation
 transcripts so that a later run of the same task resumes the session. This is off by
-default. Set `PAPERCLIP_MANAGED_CLAUDE_TRANSCRIPT_RETENTION_ENABLED=true` to turn it
-on. When it is off, managed Claude behaves like managed Grok: the transcripts are
+default. Set the agent's `transcriptRetentionEnabled` to `true` to turn it on, or
+`false` to disable it independently of the instance default. Without a typed choice,
+the agent's `PAPERCLIP_MANAGED_CLAUDE_TRANSCRIPT_RETENTION_ENABLED` binding wins over
+the same server environment variable. When it is off, the transcripts are
 deleted with the temporary home and each run starts a fresh provider session.
 
 When it is on, transcripts are stored in
@@ -657,7 +662,11 @@ server-owned file. Turn retention on only when every local agent on the instance
 see the conversations of the others, for example on a single-owner instance.
 
 A scheduled cleanup pass deletes the transcripts of a task after its issue has been
-closed for `PAPERCLIP_MANAGED_CLAUDE_TRANSCRIPT_RETENTION_DAYS` days (see
+closed and unused for the recorded `transcriptRetentionDays`. The fallback is the
+agent's `PAPERCLIP_MANAGED_CLAUDE_TRANSCRIPT_RETENTION_DAYS`, then the server value,
+then 7 days. The effective window is recorded when the task runs; changing it takes
+effect on that task's next retained run. Disabling retention does not immediately
+delete earlier transcripts; their existing cleanup policy still applies (see
 `doc/recoverable-disk-cleanup.md`).
 
 Quota polling has a 20-second response deadline. Once a managed OAuth refresh

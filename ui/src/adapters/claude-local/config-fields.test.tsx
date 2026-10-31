@@ -6,7 +6,7 @@ import { buildClaudeLocalConfig } from "@paperclipai/adapter-claude-local/ui";
 import type { CreateConfigValues } from "@paperclipai/adapter-utils";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { defaultCreateValues } from "@/components/agent-config-defaults";
-import { ClaudeLocalConfigFields } from "./config-fields";
+import { ClaudeLocalAdvancedFields } from "./config-fields";
 
 vi.mock("../local-workspace-runtime-fields", () => ({ LocalWorkspaceRuntimeFields: () => null }));
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -24,8 +24,8 @@ it.each(["create", "edit"] as const)("saves each profile import choice in %s mod
       envVars: "KEEP_LEGACY=preserved\nPAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE=cache",
     });
     saved = mode === "create" ? buildClaudeLocalConfig(values) : config;
-    return <TooltipProvider><ClaudeLocalConfigFields
-      section="configuration" mode={mode} isCreate={mode === "create"} adapterType="claude_local"
+    return <TooltipProvider><ClaudeLocalAdvancedFields
+      section="runPolicy" mode={mode} isCreate={mode === "create"} adapterType="claude_local"
       values={values} set={(patch) => setValues((previous) => ({ ...previous, ...patch }))}
       config={config} eff={(_group, key, fallback) => (config[key] ?? fallback) as typeof fallback}
       mark={(_group, key, value) => setConfig((previous) => ({ ...previous, [key]: value }))}
@@ -41,13 +41,28 @@ it.each(["create", "edit"] as const)("saves each profile import choice in %s mod
     expect(select.value).toBe("cache");
     for (const value of ["off", "copy", "cache"]) {
       await act(async () => { select.value = value; select.dispatchEvent(new Event("change", { bubbles: true })); });
+      expect(saved.profileImportMode).toBe(value);
       expect(saved.env).toMatchObject({
         KEEP_SECRET: secret,
-        PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE: { type: "plain", value },
         ...(mode === "create" ? { KEEP_LEGACY: { type: "plain", value: "preserved" } } : {}),
       });
     }
     expect(original.env.PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE).toBe("cache");
+    const retention = container.querySelector<HTMLSelectElement>("select[aria-label='Keep Claude session transcripts']")!;
+    for (const value of ["on", "off"]) {
+      await act(async () => { retention.value = value; retention.dispatchEvent(new Event("change", { bubbles: true })); });
+      expect(saved.transcriptRetentionEnabled).toBe(value === "on");
+    }
+    const source = container.querySelector<HTMLInputElement>("input[placeholder='Automatic / existing environment setting']")!;
+    const days = container.querySelector<HTMLInputElement>("input[aria-label='Claude transcript retention days']")!;
+    for (const [input, value] of [[source, "C:/trusted-profile"], [days, "14"]] as const) {
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    }
+    expect(saved.profileSourceDir).toBe("C:/trusted-profile");
+    expect(saved.transcriptRetentionDays).toBe(14);
   } finally {
     await act(async () => root.unmount());
   }

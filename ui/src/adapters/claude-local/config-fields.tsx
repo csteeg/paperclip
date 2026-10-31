@@ -9,7 +9,7 @@ import {
 } from "../../components/agent-config-primitives";
 import { ChoosePathButton } from "../../components/PathInstructionsModal";
 import { LocalWorkspaceRuntimeFields } from "../local-workspace-runtime-fields";
-import { buildAdapterEnvConfig } from "@paperclipai/adapter-utils";
+import { ClaudeRuntimePolicyFields } from "./runtime-policy-fields";
 
 const inputClass =
   "w-full rounded-md border border-border px-2.5 py-1.5 bg-transparent outline-none text-sm font-mono placeholder:text-muted-foreground/40";
@@ -29,47 +29,9 @@ export function ClaudeLocalConfigFields({
   mark,
   models,
   hideInstructionsFile,
-  managedSandboxOnly,
 }: AdapterConfigFieldsProps) {
-  const environment = isCreate
-    ? buildAdapterEnvConfig(values!.envBindings, values!.envVars)
-    : eff("adapterConfig", "env", (config.env ?? {}) as Record<string, unknown>);
-  const importBinding = environment.PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE;
-  const rawImportMode = typeof importBinding === "string"
-    ? importBinding
-    : importBinding && typeof importBinding === "object" && "type" in importBinding &&
-      importBinding.type === "plain" && "value" in importBinding && typeof importBinding.value === "string"
-      ? importBinding.value
-      : importBinding === undefined ? "off" : "custom";
-  const normalizedImportMode = rawImportMode.trim().toLowerCase();
-  const importMode = ["off", "copy", "cache"].includes(normalizedImportMode) ? normalizedImportMode : "custom";
-
   return configFieldsForSection(section, (
     <>
-      {!managedSandboxOnly && (
-        <Field
-          label="Local Claude skills and plugins"
-          hint="For local managed Claude runs. Import enabled plugins and skills from the server user's Claude profile. Only import a trusted profile: plugin hooks run with the agent's permissions. Cache reuses a private copy per agent; session and authentication settings remain separate."
-        >
-          <select
-            aria-label="Local Claude skills and plugins"
-            className={inputClass}
-            value={importMode}
-            onChange={(event) => {
-              const env = {
-                ...environment,
-                PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE: { type: "plain", value: event.target.value },
-              };
-              isCreate ? set!({ envBindings: env, envVars: "" }) : mark("adapterConfig", "env", env);
-            }}
-          >
-            <option value="off">Off (default)</option>
-            <option value="copy">Copy for each run</option>
-            <option value="cache">Cache per agent</option>
-            {importMode === "custom" && <option value="custom" disabled>Configured through environment</option>}
-          </select>
-        </Field>
-      )}
       {!hideInstructionsFile && (
         <Field label="Agent instructions file" hint={instructionsFileHint}>
           <div className="flex items-center gap-2">
@@ -111,16 +73,8 @@ export function ClaudeLocalConfigFields({
   ));
 }
 
-export function ClaudeLocalAdvancedFields({
-  section,
-  isCreate,
-  values,
-  set,
-  config,
-  eff,
-  mark,
-  managedSandboxOnly,
-}: AdapterConfigFieldsProps) {
+export function ClaudeLocalAdvancedFields(props: AdapterConfigFieldsProps) {
+  const { section, isCreate, values, set, config, eff, mark, managedSandboxOnly } = props;
   const rawEngine = isCreate
     ? values!.claudeEngine ?? "auto"
     : eff("adapterConfig", "engine", String(config.engine ?? "auto"));
@@ -129,6 +83,7 @@ export function ClaudeLocalAdvancedFields({
 
   return configFieldsForSection(section, (
     <>
+      {!managedSandboxOnly && <ClaudeRuntimePolicyFields {...props} configSection="runPolicy" />}
       {/*
         The execution engine picks which binary runs on the execution host, and
         the ACP sub-fields below name host paths. The platform-managed
