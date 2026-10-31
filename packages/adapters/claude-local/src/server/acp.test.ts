@@ -342,6 +342,37 @@ describe("claude_local ACP lane", () => {
       .resolves.toBe("trusted plugin");
   });
 
+  it("keeps copy-mode conversation identity across managed homes and invalidates changed skills", async () => {
+    const root = await makeTempRoot("paperclip-acp-copy-identity-");
+    const source = path.join(root, "profile");
+    const skillFile = path.join(source, "skills", "fixture", "SKILL.md");
+    await fs.mkdir(path.dirname(skillFile), { recursive: true });
+    await fs.writeFile(skillFile, "Fixture skill v1");
+    const execute = createClaudeAcpExecutor({ createRuntime: (options: FakeRuntimeOptions) => new FakeRuntime(options) as never });
+    const paths: string[] = [];
+    async function run(runId: string) {
+      const home = path.join(root, runId);
+      const ctx = buildContext(root);
+      return execute({ ...ctx, runId,
+        context: { ...ctx.context, managedAiRetainedHome: home },
+        config: { ...ctx.config, profileImportMode: "copy", profileSourceDir: source,
+          managedAiConnection: { provider: "anthropic", method: "api_key" },
+          env: { HOME: home, CLAUDE_CONFIG_DIR: path.join(home, "provider") } },
+        onMeta: async (meta) => { paths.push(String(meta.env?.CLAUDE_CODE_PLUGIN_CACHE_DIR)); },
+      });
+    }
+    const first = await run("first");
+    const second = await run("second");
+    expect(first.exitCode).toBe(0);
+    expect(second.exitCode).toBe(0);
+    expect(second.sessionParams?.configFingerprint).toBe(first.sessionParams?.configFingerprint);
+    expect(paths[0]).not.toBe(paths[1]);
+    await fs.writeFile(skillFile, "Fixture skill v2");
+    const changed = await run("third");
+    expect(changed.exitCode).toBe(0);
+    expect(changed.sessionParams?.configFingerprint).not.toBe(first.sessionParams?.configFingerprint);
+  });
+
   it("uses the same default model in ACP startup and session identity", async () => {
     const root = await makeTempRoot("paperclip-claude-acp-default-");
     const meta: AdapterInvocationMeta[] = [];

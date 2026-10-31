@@ -356,7 +356,9 @@ enabled, Paperclip reads the Claude profile selected by the server process's
 `CLAUDE_CONFIG_DIR`, or defaults to that process user's `~/.claude` directory.
 If that auto-detected directory is absent, import is skipped. `copy` stages
 files into the invocation's disposable managed home and imports them again on
-the next run;
+the next run. For ACP conversation identity, the copied profile uses a content
+signature instead of the generated per-run plugin path. A plugin or skill content
+change still invalidates the conversation;
 `cache` reuses content-addressed plugin snapshots in Paperclip's per-company,
 per-agent runtime state. Copy mode requires the default temporary home. Cache mode
 may be used with an explicitly persistent `HOME`. Profile import cannot be

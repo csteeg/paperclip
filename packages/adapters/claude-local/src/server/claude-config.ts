@@ -366,7 +366,7 @@ export async function prepareManagedClaudePluginRuntime(input: {
   autoDiscoverSource?: boolean;
   importMode?: "copy" | "cache";
   excludedSkillNames?: readonly string[];
-}): Promise<{ pluginRoot: string | null; skillCount: number }> {
+}): Promise<{ pluginRoot: string | null; skillCount: number; profileIdentity?: string }> {
   const importMode = input.importMode ?? "cache";
   const stateDir = resolveManagedClaudeRuntimeStateDir(input.env, input.companyId, input.agentId);
   if (!input.configDir.trim()) throw new Error("Managed Claude config directory is missing");
@@ -485,20 +485,21 @@ export async function prepareManagedClaudePluginRuntime(input: {
   if (importMode === "copy" && !input.runId) {
     throw new Error("Claude profile copy mode requires a run ID");
   }
+  const profileIdentity = createHash("sha256").update(JSON.stringify({
+    pluginRegistryLayoutVersion: 2,
+    skillLayoutVersion: 2,
+    marketplaceLayoutVersion: 1,
+    marketplaces,
+    enabledPlugins,
+    installs: installSnapshots
+      .filter(({ files }) => files.length > 0)
+      .map(({ install, files }) => ({ id: install.id, cacheRelativePath: install.cacheRelativePath, metadata: install.metadata, files })),
+    excludedSkillNames: [...excludedSkillNames].sort(),
+    skills,
+  })).digest("hex").slice(0, 24);
   const snapshotKey = importMode === "copy"
     ? input.runId!.replace(/[^a-zA-Z0-9_-]/g, "_")
-    : createHash("sha256").update(JSON.stringify({
-      pluginRegistryLayoutVersion: 2,
-      skillLayoutVersion: 2,
-      marketplaceLayoutVersion: 1,
-      marketplaces,
-      enabledPlugins,
-      installs: installSnapshots
-        .filter(({ files }) => files.length > 0)
-        .map(({ install, files }) => ({ id: install.id, cacheRelativePath: install.cacheRelativePath, metadata: install.metadata, files })),
-      excludedSkillNames: [...excludedSkillNames].sort(),
-      skills,
-    })).digest("hex").slice(0, 24);
+    : profileIdentity;
   // Copy mode stages this run under its already-private config directory. Cache
   // mode stores immutable content-addressed snapshots in per-agent state.
   const snapshotRoot = importMode === "copy"
@@ -579,7 +580,7 @@ export async function prepareManagedClaudePluginRuntime(input: {
   if (installs.length > 0 || selectedSkillDirectories.size > 0) {
     await ensureManagedProfileSkillInstructions(input.configDir);
   }
-  return { pluginRoot: installs.length > 0 ? path.join(snapshotDir, "plugins") : null, skillCount: selectedSkillDirectories.size };
+  return { pluginRoot: installs.length > 0 ? path.join(snapshotDir, "plugins") : null, skillCount: selectedSkillDirectories.size, profileIdentity };
 }
 
 function isAlreadyExistsError(error: unknown): boolean {

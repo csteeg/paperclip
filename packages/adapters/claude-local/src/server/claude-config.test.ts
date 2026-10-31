@@ -420,6 +420,21 @@ describe("prepareManagedClaudePluginRuntime", () => {
       configDir: secondConfig, sourceDir: agentSource, importMode: "copy",
     });
 
+    expect(first.profileIdentity).toBeTruthy();
+    expect(second.profileIdentity).toBe(first.profileIdentity);
+    await fs.writeFile(path.join(pluginDir, "plugin.js"), "updated plugin payload");
+    const changedPlugin = await prepareManagedClaudePluginRuntime({
+      env, companyId: "company-1", agentId: "agent-1", runId: "third-run",
+      configDir: path.join(root, "runs", "third", "provider"), sourceDir: agentSource, importMode: "copy",
+    });
+    expect(changedPlugin.profileIdentity).not.toBe(first.profileIdentity);
+    await fs.writeFile(path.join(agentSource, "skills", "careconnections", "SKILL.md"), "updated skill payload");
+    const changedSkill = await prepareManagedClaudePluginRuntime({
+      env, companyId: "company-1", agentId: "agent-1", runId: "fourth-run",
+      configDir: path.join(root, "runs", "fourth", "provider"), sourceDir: agentSource, importMode: "copy",
+    });
+    expect(changedSkill.profileIdentity).not.toBe(changedPlugin.profileIdentity);
+    await fs.writeFile(path.join(agentSource, "skills", "careconnections", "SKILL.md"), "selected profile skill");
     expect(first.pluginRoot).not.toBe(second.pluginRoot);
     expect(first.pluginRoot).toContain(path.join(firstConfig, ".paperclip-profile-import"));
     await expect(fs.readFile(path.join(first.pluginRoot!, "cache", "trusted", "superpowers", "1.0.0", "plugin.js"), "utf8"))

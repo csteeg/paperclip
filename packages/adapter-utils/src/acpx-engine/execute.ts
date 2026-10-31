@@ -389,6 +389,11 @@ export type AcpxTerminalFailureClassification = Pick<
 export interface AcpxEngineExecutorOptions {
   createRuntime?: AcpxRuntimeFactory;
   now?: () => number;
+  /** Project generated launch values onto stable session identity; never changes the launch environment. */
+  sessionEnvironmentIdentity?: (
+    env: Readonly<Record<string, string>>,
+    config: Record<string, unknown>,
+  ) => Record<string, string>;
   /** Inspect terminal provider text in memory; return only recovery labels and a timestamp. */
   classifyTerminalSessionFailure?: (
     failure: AcpxTerminalSessionFailure,
@@ -2336,7 +2341,7 @@ async function buildRuntime(input: {
     // that sources the latest env. secretManifestHash alone misses plain-value
     // edits and same-version secret rotations. Per-wake runtime vars never enter
     // resolvedAdapterEnv, so they don't churn the fingerprint every heartbeat.
-    adapterEnvHash: shortHash(resolvedAdapterEnv),
+    adapterEnvHash: shortHash(input.deps.sessionEnvironmentIdentity?.(resolvedAdapterEnv, config) ?? resolvedAdapterEnv),
   };
   const fingerprint = buildSessionFingerprint(fingerprintIdentity);
   const taskKey = asString(input.ctx.runtime.taskKey, "") || wakeTaskId || workspaceId || "default";
