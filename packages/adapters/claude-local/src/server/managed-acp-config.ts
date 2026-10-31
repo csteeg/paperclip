@@ -35,7 +35,7 @@ export async function prepareManagedClaudeAcpConfig(input: {
         agentId: input.agentId,
         runId: input.runId,
         configDir,
-        sourceDir: profileSourceDir || undefined,
+        sourceDir: input.config?.profileSourceDir !== undefined ? profileSourceDir : profileSourceDir || undefined,
         autoDiscoverSource: true,
         importMode,
         excludedSkillNames: input.excludedSkillNames,

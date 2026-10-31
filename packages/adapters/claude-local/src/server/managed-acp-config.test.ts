@@ -19,6 +19,16 @@ describe("prepareManagedClaudeAcpConfig", () => {
     expect(prepareManagedClaudePluginRuntime).toHaveBeenCalledWith(expect.objectContaining({ importMode: "copy", sourceDir: "C:/trusted-profile" }));
     prepareManagedClaudePluginRuntime.mockClear();
   });
+  it.each([undefined, ""])("preserves the source override distinction for ACP: %s", async (sourceDir) => {
+    prepareManagedClaudePluginRuntime.mockClear();
+    await prepareManagedClaudeAcpConfig({
+      config: { profileImportMode: "cache", ...(sourceDir !== undefined ? { profileSourceDir: sourceDir } : {}) },
+      configEnv: { CLAUDE_CONFIG_DIR: "C:/managed/provider" },
+      managedAiHomeOverrides: {}, processEnv: {}, companyId: "company", agentId: "agent", runId: "run",
+    });
+    expect(prepareManagedClaudePluginRuntime).toHaveBeenCalledWith(expect.objectContaining({ sourceDir }));
+    prepareManagedClaudePluginRuntime.mockClear();
+  });
   it("preserves Paperclip's default ACP environment when profile import is off", async () => {
     const env = {
       CLAUDE_CONFIG_DIR: "C:/managed/provider",

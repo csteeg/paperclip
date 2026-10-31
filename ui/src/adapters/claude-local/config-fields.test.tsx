@@ -38,7 +38,8 @@ it.each(["create", "edit"] as const)("saves each profile import choice in %s mod
   try {
     await act(async () => root.render(<Harness />));
     const select = container.querySelector<HTMLSelectElement>("select[aria-label='Local Claude skills and plugins']")!;
-    expect(select.value).toBe("cache");
+    expect(select.value).toBe("inherit");
+    expect(select.textContent).toContain("currently cache");
     for (const value of ["off", "copy", "cache"]) {
       await act(async () => { select.value = value; select.dispatchEvent(new Event("change", { bubbles: true })); });
       expect(saved.profileImportMode).toBe(value);
@@ -63,6 +64,38 @@ it.each(["create", "edit"] as const)("saves each profile import choice in %s mod
     }
     expect(saved.profileSourceDir).toBe("C:/trusted-profile");
     expect(saved.transcriptRetentionDays).toBe(14);
+  } finally {
+    await act(async () => root.unmount());
+  }
+});
+
+it("previews redacted environment defaults without pinning them when the environment changes", async () => {
+  const original = { env: { PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE: "***REDACTED***" } };
+  let saved: Record<string, unknown> = original;
+  function Harness() {
+    const [env, setEnv] = useState<Record<string, unknown>>(original.env);
+    saved = { ...original, env };
+    return <TooltipProvider>
+      <button onClick={() => setEnv({ PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE: "off" })}>Change environment</button>
+      <ClaudeLocalAdvancedFields section="runPolicy" mode="edit" isCreate={false} adapterType="claude_local"
+        config={original} displayDefaults={{ profileImportMode: "cache" }}
+        eff={(_group, key, fallback) => (key === "env" ? env : fallback) as typeof fallback}
+        mark={vi.fn()} models={[]} hideInstructionsFile />
+    </TooltipProvider>;
+  }
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  try {
+    await act(async () => root.render(<Harness />));
+    const select = container.querySelector<HTMLSelectElement>("select[aria-label='Local Claude skills and plugins']")!;
+    expect(select.value).toBe("inherit");
+    expect(select.textContent).toContain("currently cache");
+    expect(saved).not.toHaveProperty("profileImportMode");
+    await act(async () => container.querySelector("button")!.click());
+    expect(select.value).toBe("inherit");
+    expect(select.textContent).toContain("currently off");
+    expect(saved).not.toHaveProperty("profileImportMode");
   } finally {
     await act(async () => root.unmount());
   }

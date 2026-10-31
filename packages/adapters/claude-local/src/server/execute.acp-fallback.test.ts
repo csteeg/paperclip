@@ -211,7 +211,7 @@ describe("claude_local ACP startup fallback", () => {
     }
   });
 
-  it("keeps a selected Paperclip skill ahead of a same-named imported profile skill", async () => {
+  it.each([undefined, ""])("keeps selected skills ahead of imported skills with source override %s", async (profileSourceDir) => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-claude-skill-collision-"));
     try {
       const sourceDir = path.join(root, "profile");
@@ -225,9 +225,11 @@ describe("claude_local ACP startup fallback", () => {
       await fs.writeFile(path.join(selectedSkillDir, "SKILL.md"), "Paperclip selected CareConnections skill\n");
 
       vi.stubEnv("PAPERCLIP_HOME", path.join(root, "paperclip-home"));
-      vi.stubEnv("PAPERCLIP_CLAUDE_PLUGIN_SOURCE_DIR", sourceDir);
+      vi.stubEnv("PAPERCLIP_CLAUDE_PLUGIN_SOURCE_DIR", profileSourceDir === "" ? path.join(root, "absent-server-override") : sourceDir);
+      vi.stubEnv("CLAUDE_CONFIG_DIR", sourceDir);
       const ctx = buildContext({
         engine: "cli",
+        profileSourceDir,
         managedAiConnection: true,
         env: { CLAUDE_CONFIG_DIR: configDir, PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE: "cache" },
         paperclipRuntimeSkills: [{

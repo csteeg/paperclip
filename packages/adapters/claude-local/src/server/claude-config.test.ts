@@ -29,6 +29,43 @@ import {
   resolveManagedClaudeRuntimeStateDir,
 } from "./claude-config.js";
 
+describe("managed profile skill discovery", () => {
+  it.each(["copy", "cache"] as const)("adds native loading guidance in %s mode without changing the source", async (importMode) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-native-profile-skills-"));
+    try {
+      const source = path.join(root, "source");
+      await fs.mkdir(path.join(source, "skills", "fixture"), { recursive: true });
+      await fs.writeFile(path.join(source, "skills", "fixture", "SKILL.md"), "---\nname: fixture\ndescription: Review code comments\n---\nFixture policy\n");
+      await fs.writeFile(path.join(source, "CLAUDE.md"), "Original personal instructions");
+      const configDir = path.join(root, "managed", "provider");
+      await prepareManagedClaudePluginRuntime({ env: { PAPERCLIP_HOME: path.join(root, "state") }, companyId: "company", agentId: "agent", runId: "run", sourceDir: source, configDir, importMode });
+      const rule = await fs.readFile(path.join(configDir, "rules", "paperclip-managed-profile.md"), "utf8");
+      expect(rule).toContain("native Skill tool");
+      expect(rule).toContain("metadata");
+      expect(rule).not.toContain("fixture");
+      await expect(fs.readFile(path.join(source, "CLAUDE.md"), "utf8")).resolves.toBe("Original personal instructions");
+      await expect(fs.access(path.join(source, "rules"))).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("uses automatic discovery when the source is explicitly cleared despite a server override", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-cleared-profile-source-"));
+    try {
+      const source = path.join(root, "source");
+      await fs.mkdir(path.join(source, "skills", "fixture"), { recursive: true });
+      await fs.writeFile(path.join(source, "skills", "fixture", "SKILL.md"), "Fixture policy");
+      const env = { PAPERCLIP_HOME: path.join(root, "state"), CLAUDE_CONFIG_DIR: source, PAPERCLIP_CLAUDE_PLUGIN_SOURCE_DIR: path.join(root, "absent-server-override") };
+      const input = { env, companyId: "company", agentId: "agent", autoDiscoverSource: true, configDir: path.join(root, "managed", "provider") };
+      await expect(prepareManagedClaudePluginRuntime({ ...input, sourceDir: "" })).resolves.toMatchObject({ skillCount: 1 });
+      await expect(prepareManagedClaudePluginRuntime(input)).rejects.toThrow();
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("prepareClaudeConfigSeed", () => {
   const cleanupDirs: string[] = [];
 

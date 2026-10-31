@@ -340,7 +340,10 @@ Under **Advanced → Run policies**, local Claude agents have typed settings:
 Typed values take precedence over legacy environment bindings, including explicit
 `off`, `false`, and an empty source path. Leaving a field unset keeps its legacy
 environment/instance fallback. Existing non-secret mode and retention choices are
-shown in the UI without revealing raw environment values or secret references.
+shown as read-only display defaults without revealing raw environment values or
+secret references. Saving another setting does not convert inherited values into
+typed choices. Clearing a typed source path selects automatic discovery even if
+the server has a source override.
 
 Profile import can alternatively use `PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE`
 (`off`, `copy`, or `cache`) and `PAPERCLIP_CLAUDE_PLUGIN_SOURCE_DIR`. Import is
@@ -374,7 +377,12 @@ when the plugin payload is already cached. Other marketplace source types are
 not currently imported. Paperclip's own
 MCP config remains attached to the run. A profile skill whose runtime name
 matches a Paperclip-selected skill is omitted for that run, so the selected skill
-wins. Official marketplace auto-install is disabled for managed runs; cached
+wins. When an import contains skills or plugins, Paperclip adds a destination-only
+user rule that asks Claude to select applicable skills by their descriptions and
+load them with the native Skill tool. Direct file reads can skip skill metadata.
+This rule does not change the source profile or name a specific plugin. It is
+model guidance, not a guarantee that every response invokes a skill.
+Official marketplace auto-install is disabled for managed runs; cached
 plugins are reused without downloading them again. Only import profiles whose
 plugins and skills are trusted: plugin code, including hooks and MCP servers,
 runs with the agent's permissions.
