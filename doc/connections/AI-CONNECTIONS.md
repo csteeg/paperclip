@@ -335,6 +335,11 @@ credentials, plugin settings, and session files, and concurrent runs may write
 to it at the same time.
 
 Profile import is controlled independently with `PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE`
+through **Local Claude skills and plugins** in the agent configuration UI:
+**Off (default)**, **Copy for each run**, or **Cache per agent**. The selector
+saves the same environment binding, preserves other variables and secret
+references, and reflects an existing plain environment value. Alternatively,
+set `PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE` directly
 (`off`, `copy`, or `cache`) and `PAPERCLIP_CLAUDE_PLUGIN_SOURCE_DIR`. Import is
 off by default, even if the server-level source variable is configured. When
 mode is `off`, Paperclip preserves Claude's normal CLI/ACP plugin and
