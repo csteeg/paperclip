@@ -69,7 +69,7 @@ function persistTemporaryCleanupState() {
 async function retryPendingTemporaryDirectoryRemovals() {
   await loadTemporaryCleanupState();
   const failures: unknown[] = [];
-  for (const directory of pendingTemporaryDirectoryRemovals) {
+  for (const directory of [...pendingTemporaryDirectoryRemovals]) {
     let removed = false;
     try {
       await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
@@ -101,8 +101,17 @@ export async function retryTemporaryDirectoryCleanupNow() {
 }
 
 export async function queueTemporaryDirectoryCleanup(directory: string) {
-  await loadTemporaryCleanupState();
   if (!validTemporaryCleanupPath(directory)) throw new Error("Refusing cleanup for an unowned temporary directory");
+  // Own the request before trying to read prior durable work. If that read is
+  // temporarily unavailable, the worker retains this path in memory and can
+  // persist it together with the old queue after a successful retry.
+  pendingTemporaryDirectoryRemovals.add(directory);
+  try {
+    await loadTemporaryCleanupState();
+  } catch (error) {
+    wakeTemporaryDirectoryCleanupWork?.();
+    throw error;
+  }
   try {
     await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     pendingTemporaryDirectoryRemovals.delete(directory);

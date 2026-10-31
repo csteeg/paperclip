@@ -5,6 +5,7 @@ import path from "node:path";
 
 let instanceHome: string | undefined;
 let temporaryDirectory: string | undefined;
+let savedTemporaryDirectory: string | undefined;
 
 type CleanupTask = {
   retryMs: number;
@@ -37,8 +38,10 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   if (instanceHome) await rm(instanceHome, { recursive: true, force: true });
   if (temporaryDirectory) await rm(temporaryDirectory, { recursive: true, force: true });
+  if (savedTemporaryDirectory) await rm(savedTemporaryDirectory, { recursive: true, force: true });
   instanceHome = undefined;
   temporaryDirectory = undefined;
+  savedTemporaryDirectory = undefined;
 });
 
 it("reconstructs persisted temporary-directory cleanup after a server restart", async () => {
@@ -62,7 +65,7 @@ it("reconstructs persisted temporary-directory cleanup after a server restart", 
   await expect(stat(temporaryDirectory)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
-async function prepareCleanupModules(failFirstRemoval: () => boolean) {
+async function prepareCleanupModules(failFirstRemoval: () => boolean, failLedgerWrite: () => boolean = () => false) {
   const instanceRoot = path.join(instanceHome!, "instances", "default");
   await mkdir(instanceRoot, { recursive: true });
   const ledger = path.join(instanceRoot, "pending-temporary-directory-cleanup.json");
@@ -72,6 +75,11 @@ async function prepareCleanupModules(failFirstRemoval: () => boolean) {
     const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
     return {
       ...actual,
+      writeFile: async (...args: Parameters<typeof actual.writeFile>) => {
+        if (typeof args[0] === "string" && args[0].startsWith(`${ledger}.`) && failLedgerWrite())
+          throw Object.assign(new Error("fixture ledger write lock"), { code: "EBUSY" });
+        return actual.writeFile(...args);
+      },
       rm: async (...args: Parameters<typeof actual.rm>) => {
         if (args[0] === temporaryDirectory && failFirstRemoval())
           throw Object.assign(new Error("fixture lock"), { code: "EBUSY" });
@@ -139,18 +147,20 @@ it("persists a failed removal and lets a fresh worker retry it", async () => {
 it("retries ledger read failures without losing cleanup work and keeps the sleep probe blocked", async () => {
   instanceHome = await mkdtemp(path.join(os.tmpdir(), "paperclip-cleanup-home-"));
   temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), "paperclip-ai-cleanup-"));
+  savedTemporaryDirectory = await mkdtemp(path.join(os.tmpdir(), "paperclip-ai-cleanup-saved-"));
   let failRead = true;
   let failRemoval = true;
   const fixture = await prepareCleanupModulesWithLedgerReadFailure(
     () => { if (!failRead) return false; failRead = false; return true; },
     () => { if (!failRemoval) return false; failRemoval = false; return true; },
   );
-  await writeFile(fixture.ledger, JSON.stringify([temporaryDirectory]), { mode: 0o600 });
+  await writeFile(fixture.ledger, JSON.stringify([savedTemporaryDirectory]), { mode: 0o600 });
   const idle = await import("./idle-local-work.js");
   idle.markIdleIngressTracked();
   idle.markIdleStartupComplete({ scheduledBackups: false });
 
-  await expect(fixture.cleanup.retryTemporaryDirectoryCleanupNow()).rejects.toMatchObject({ code: "EBUSY" });
+  await expect(fixture.cleanup.queueTemporaryDirectoryCleanup(temporaryDirectory)).rejects.toMatchObject({ code: "EBUSY" });
+  expect(JSON.parse(await readFile(fixture.ledger, "utf8"))).toEqual([savedTemporaryDirectory]);
   expect(await idle.readIdleLocalWork()).toBe("unknown");
   await expect(fixture.cleanup.retryTemporaryDirectoryCleanupNow()).rejects.toThrow("Temporary directory cleanup failed");
   expect(await idle.readIdleLocalWork()).toBe("present");
@@ -197,5 +207,26 @@ it("handles concurrent requests for the same temporary directory", async () => {
   ]);
 
   await expect(stat(temporaryDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(JSON.parse(await readFile(fixture.ledger, "utf8"))).toEqual([]);
+});
+
+it("retries a failed ledger save once per sweep without spinning on the same path", async () => {
+  instanceHome = await mkdtemp(path.join(os.tmpdir(), "paperclip-cleanup-home-"));
+  temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), "paperclip-ai-cleanup-"));
+  let failRemoval = true;
+  let failWrite = false;
+  const fixture = await prepareCleanupModules(
+    () => { if (!failRemoval) return false; failRemoval = false; return true; },
+    () => failWrite,
+  );
+  await fixture.cleanup.queueTemporaryDirectoryCleanup(temporaryDirectory);
+  failWrite = true;
+
+  await expect(fixture.cleanup.retryTemporaryDirectoryCleanupNow()).rejects.toThrow("Temporary directory cleanup failed");
+  await expect(stat(temporaryDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(JSON.parse(await readFile(fixture.ledger, "utf8"))).toEqual([temporaryDirectory]);
+
+  failWrite = false;
+  await fixture.cleanup.retryTemporaryDirectoryCleanupNow();
   expect(JSON.parse(await readFile(fixture.ledger, "utf8"))).toEqual([]);
 });
