@@ -524,6 +524,25 @@ function singleAnchorIndex(lines: string[], anchor: string, cursorForwardMarker:
   return found;
 }
 
+function trimCursorForwardPadding(line: string, cursorForwardMarker: string): string {
+  let start = 0;
+  let end = line.length;
+  while (line.startsWith(cursorForwardMarker, start)) {
+    const countStart = start + cursorForwardMarker.length;
+    const countEnd = line.indexOf("\u0001", countStart);
+    if (countEnd < 0 || !/^\d+$/.test(line.slice(countStart, countEnd))) break;
+    start = countEnd + 1;
+  }
+  while (end > start && line[end - 1] === "\u0001") {
+    const countStart = line.lastIndexOf(cursorForwardMarker, end - 1);
+    if (countStart < start) break;
+    const countEnd = end - 1;
+    if (!/^\d+$/.test(line.slice(countStart + cursorForwardMarker.length, countEnd))) break;
+    end = countStart;
+  }
+  return line.slice(start, end);
+}
+
 /**
  * Parses the Claude `setup-token` success screen and returns the minted OAuth
  * token, or null. The parser removes the terminal control sequences first, then
@@ -575,7 +594,7 @@ export function parseSetupTokenCredential(text: string): string | null {
   // line, fails the fragment test and the parser returns null.
   const fragments: string[] = [];
   for (let i = beforeIndex + 1; i < afterIndex; i += 1) {
-    const trimmed = lines[i].trim();
+    const trimmed = trimCursorForwardPadding(lines[i].trim(), cursorForwardMarker);
     if (trimmed.length === 0) continue;
     if (!TOKEN_FRAGMENT_RE.test(trimmed)) return null;
     fragments.push(trimmed);
