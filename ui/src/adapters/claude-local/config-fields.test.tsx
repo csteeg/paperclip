@@ -1,0 +1,54 @@
+// @vitest-environment jsdom
+import { act, useState } from "react";
+import { createRoot } from "react-dom/client";
+import { afterEach, expect, it, vi } from "vitest";
+import { buildClaudeLocalConfig } from "@paperclipai/adapter-claude-local/ui";
+import type { CreateConfigValues } from "@paperclipai/adapter-utils";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { defaultCreateValues } from "@/components/agent-config-defaults";
+import { ClaudeLocalConfigFields } from "./config-fields";
+
+vi.mock("../local-workspace-runtime-fields", () => ({ LocalWorkspaceRuntimeFields: () => null }));
+Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+afterEach(() => { document.body.replaceChildren(); });
+
+it.each(["create", "edit"] as const)("saves each profile import choice in %s mode without losing environment bindings", async (mode) => {
+  const secret = { type: "secret_ref", secretId: "agent-secret", version: "latest" };
+  const original = { env: { KEEP_SECRET: secret, PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE: "cache" } };
+  let saved: Record<string, unknown> = {};
+  function Harness() {
+    const [config, setConfig] = useState<Record<string, unknown>>(original);
+    const [values, setValues] = useState<CreateConfigValues>({
+      ...defaultCreateValues,
+      envBindings: { KEEP_SECRET: secret },
+      envVars: "KEEP_LEGACY=preserved\nPAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE=cache",
+    });
+    saved = mode === "create" ? buildClaudeLocalConfig(values) : config;
+    return <TooltipProvider><ClaudeLocalConfigFields
+      section="configuration" mode={mode} isCreate={mode === "create"} adapterType="claude_local"
+      values={values} set={(patch) => setValues((previous) => ({ ...previous, ...patch }))}
+      config={config} eff={(_group, key, fallback) => (config[key] ?? fallback) as typeof fallback}
+      mark={(_group, key, value) => setConfig((previous) => ({ ...previous, [key]: value }))}
+      models={[]} hideInstructionsFile
+    /></TooltipProvider>;
+  }
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  try {
+    await act(async () => root.render(<Harness />));
+    const select = container.querySelector<HTMLSelectElement>("select[aria-label='Local Claude skills and plugins']")!;
+    expect(select.value).toBe("cache");
+    for (const value of ["off", "copy", "cache"]) {
+      await act(async () => { select.value = value; select.dispatchEvent(new Event("change", { bubbles: true })); });
+      expect(saved.env).toMatchObject({
+        KEEP_SECRET: secret,
+        PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE: { type: "plain", value },
+        ...(mode === "create" ? { KEEP_LEGACY: { type: "plain", value: "preserved" } } : {}),
+      });
+    }
+    expect(original.env.PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE).toBe("cache");
+  } finally {
+    await act(async () => root.unmount());
+  }
+});
