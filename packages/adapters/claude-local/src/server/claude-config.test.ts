@@ -182,7 +182,7 @@ describe("prepareManagedClaudePluginRuntime", () => {
     }
   });
 
-  it("imports enabled plugins and skills into per-agent cache without copying credentials or marketplace config", async () => {
+  it.each(["user", "managed"])("imports %s-scoped plugins as private user installs without copying credentials", async (scope) => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-managed-claude-plugins-"));
     cleanupDirs.push(root);
     const sourceDir = path.join(root, "personal-claude");
@@ -218,7 +218,7 @@ describe("prepareManagedClaudePluginRuntime", () => {
     }));
     await fs.writeFile(path.join(sourceDir, "plugins", "installed_plugins.json"), JSON.stringify({
       version: 2,
-      plugins: { "superpowers@superpowers": [{ scope: "user", installPath: sourcePlugin, version: "1.0.0" }] },
+      plugins: { "superpowers@superpowers": [{ scope, installPath: sourcePlugin, version: "1.0.0" }] },
     }));
     await fs.writeFile(path.join(sourceDir, "plugins", "known_marketplaces.json"), JSON.stringify({
       superpowers: {
@@ -256,6 +256,9 @@ describe("prepareManagedClaudePluginRuntime", () => {
       hooks: { PreToolUse: [{ command: "agent-owned-hook" }] },
     });
     const installed = JSON.parse(await fs.readFile(path.join(result.pluginRoot!, "installed_plugins.json"), "utf8"));
+    expect(installed.plugins["superpowers@superpowers"][0].scope).toBe("user");
+    const sourceInstalled = JSON.parse(await fs.readFile(path.join(sourceDir, "plugins", "installed_plugins.json"), "utf8"));
+    expect(sourceInstalled.plugins["superpowers@superpowers"][0].scope).toBe(scope);
     expect(installed.plugins["superpowers@superpowers"][0].installPath)
       .toBe(path.join(result.pluginRoot!, "cache", "superpowers", "superpowers", "1.0.0"));
     expect(JSON.stringify(installed)).not.toContain(sourceDir);

@@ -338,7 +338,7 @@ async function resolveManagedClaudePluginInstalls(
       const relative = path.relative(canonicalCacheRoot, canonicalInstallPath);
       if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) continue;
       const metadata: Record<string, unknown> = {
-        scope: typeof record.scope === "string" ? record.scope : "user",
+        scope: "user",
         installPath: relative,
         version: record.version,
       };
@@ -488,6 +488,7 @@ export async function prepareManagedClaudePluginRuntime(input: {
   const snapshotKey = importMode === "copy"
     ? input.runId!.replace(/[^a-zA-Z0-9_-]/g, "_")
     : createHash("sha256").update(JSON.stringify({
+      pluginRegistryLayoutVersion: 2,
       skillLayoutVersion: 2,
       marketplaceLayoutVersion: 1,
       marketplaces,
