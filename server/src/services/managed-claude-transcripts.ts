@@ -260,6 +260,7 @@ export function managedClaudeTranscriptExpirationService(db: Db, defaults: Manag
 
     if (!sweepScopes || scannedRescanVersion < rescanVersion) {
       const scanVersion = rescanVersion;
+      if (sweepScopes && scannedRescanVersion < scanVersion) completedScopes.clear();
       const scopes = new Map((sweepScopes ?? []).map((scope) => [scope.dir, scope]));
       for (const owner of await listTranscriptDirs(root)) {
         const transcriptsDir = transcriptsDirOf(root, owner);

@@ -143,7 +143,7 @@ describe("retainManagedClaudeTranscripts", () => {
 });
 
 describe("managed Claude transcript expiration sweep", () => {
-  it("preserves rescan work after a failed discovery without rechecking completed scopes", async () => {
+  it("rechecks completed scopes after a rescan, including after a failed discovery", async () => {
     const root = path.join(guestDir, "instance");
     const transcriptsDir = path.join(root, "companies", "company-1", "agents", "agent-1", "claude-transcripts");
     await fs.mkdir(transcriptsDir, { recursive: true });
@@ -175,6 +175,9 @@ describe("managed Claude transcript expiration sweep", () => {
     await fs.mkdir(brokenCompanyAgents);
 
     const second = await service.tick();
-    expect(second).toMatchObject({ checked: 2, truncated: false });
+    expect(second).toMatchObject({ checked: 200, truncated: true });
+
+    const third = await service.tick();
+    expect(third).toMatchObject({ checked: 2, truncated: false });
   });
 });

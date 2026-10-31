@@ -244,6 +244,14 @@ async function isOwnedPrivateDirectory(target: string): Promise<boolean> {
   }
 }
 
+async function managedAiHomeClaimMayBeStale(baseDir: string, now: () => number): Promise<boolean> {
+  if (!(await isOwnedPrivateDirectory(baseDir))) return false;
+  let claim: { pid?: unknown; claimedAt?: unknown; startedAtMs?: unknown; retryPending?: unknown } | undefined;
+  try { claim = JSON.parse(await readFile(path.join(baseDir, MANAGED_AI_HOME_CLAIM_FILE), "utf8")); } catch {}
+  if (claim?.retryPending || typeof claim?.claimedAt !== "number") return false;
+  return now() - claim.claimedAt >= MANAGED_AI_STABLE_HOME_STALE_AFTER_MS && await claimOwnerGone(claim);
+}
+
 async function writeManagedAiHomeClaim(
   baseDir: string,
   claim: { pid: number; claimedAt: number; startedAtMs?: number; retryPending?: true },
@@ -273,7 +281,9 @@ async function reclaimStaleManagedAiHome(baseDir: string, now: () => number): Pr
 }
 
 async function reclaimManagedAiHomeWithLock(baseDir: string, now: () => number): Promise<boolean> {
-  const lockHome = path.join(os.tmpdir(), "paperclip-ai-home-claims");
+  const identity = process.platform === "win32" ? path.resolve(baseDir).toLowerCase() : path.resolve(baseDir);
+  const lockKey = createHash("sha256").update(identity).digest("hex");
+  const lockHome = path.join(os.tmpdir(), "paperclip-ai-home-claims", lockKey);
   return withWorktreePortRegistryLock(lockHome, () => reclaimStaleManagedAiHome(baseDir, now));
 }
 
@@ -286,7 +296,7 @@ export async function claimManagedAiHome(
       await mkdir(baseDir, { mode: 0o700 });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      if (attempt === 0) {
+      if (attempt === 0 && await managedAiHomeClaimMayBeStale(baseDir, now)) {
         if (await reclaimManagedAiHomeWithLock(baseDir, now)) continue;
       }
       break;
