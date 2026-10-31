@@ -192,6 +192,7 @@ async function runExecutor(
     prepareRemoteManagedHome?: AcpxEngineExecutorOptions["prepareRemoteManagedHome"];
     startupTraceContext?: AdapterExecutionContext["startupTraceContext"];
     onEnsureSession?: (input: Record<string, unknown>) => void;
+    sessionEnvironmentIdentity?: (env: Readonly<Record<string, string>>, config: Record<string, unknown>) => Record<string, string>;
   } = {},
 ) {
   // Skill reconciliation must never inspect or modify the developer's real
@@ -211,6 +212,7 @@ async function runExecutor(
   const events: Array<{ eventType: string; payload?: Record<string, unknown> }> = [];
   const receipts: unknown[] = [];
   const execute = createAcpxEngineExecutor({
+    sessionEnvironmentIdentity: options.sessionEnvironmentIdentity,
     ...(options.prepareRemoteManagedHome
       ? { prepareRemoteManagedHome: options.prepareRemoteManagedHome }
       : {}),
@@ -2206,6 +2208,23 @@ describe("shared ACPX engine runtime behavior", () => {
     const changed = await withScratch(path.join(root, "run-3"), "/custom/tmp-2");
     expect(second.result.sessionParams?.configFingerprint).toBe(first.result.sessionParams?.configFingerprint);
     expect(changed.result.sessionParams?.configFingerprint).not.toBe(first.result.sessionParams?.configFingerprint);
+  });
+
+  it("normalizes generated adapter paths for identity without changing the launch environment", async () => {
+    const root = await makeTempRoot();
+    const config = { agentCommand: "node ./fake-acp.js", stateDir: path.join(root, "state") };
+    const identity = (env: Readonly<Record<string, string>>) => ({ ...env, GENERATED_ASSET_DIR: "<generated-asset>" });
+    async function run(dir: string, revision: string, normalize = true) {
+      return runExecutor({ ...config, env: { GENERATED_ASSET_DIR: dir, ASSET_REVISION: revision } }, {
+        sessionEnvironmentIdentity: normalize ? identity : undefined,
+      });
+    }
+    const first = await run(path.join(root, "run-1"), "v1");
+    const second = await run(path.join(root, "run-2"), "v1");
+    expect(second.result.sessionParams?.configFingerprint).toBe(first.result.sessionParams?.configFingerprint);
+    expect((second.sessionInputs[0]?.sessionOptions as { env: Record<string, string> }).env.GENERATED_ASSET_DIR).toBe(path.join(root, "run-2"));
+    expect((await run(path.join(root, "run-2"), "v2")).result.sessionParams?.configFingerprint).not.toBe(first.result.sessionParams?.configFingerprint);
+    expect((await run(path.join(root, "run-2"), "v1", false)).result.sessionParams?.configFingerprint).not.toBe((await run(path.join(root, "run-1"), "v1", false)).result.sessionParams?.configFingerprint);
   });
 
   it("keeps the rotated managed-AI credential home out of session identity while retaining real adapter env changes", async () => {

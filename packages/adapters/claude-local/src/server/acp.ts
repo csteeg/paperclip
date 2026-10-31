@@ -47,7 +47,7 @@ import {
   prepareClaudeConfigSeed,
   prepareSandboxClaudeProbeRuntime,
 } from "./claude-config.js";
-import { prepareManagedClaudeAcpConfig } from "./managed-acp-config.js";
+import { managedClaudeProfileEnvironmentIdentity, prepareManagedClaudeAcpConfig } from "./managed-acp-config.js";
 import {
   buildAdapterTestTargetCheck,
   buildClaudeLoginRequiredHint,
@@ -354,6 +354,9 @@ function withClaudeAcpDefaults(options: ClaudeAcpExecutorOptions): AcpxEngineExe
     prepareRemoteManagedHome: prepareClaudeRemoteManagedHome,
     classifyTerminalSessionFailure: classifyClaudeTerminalSessionFailure,
     ...options,
+    sessionEnvironmentIdentity: (env, config) => managedClaudeProfileEnvironmentIdentity(
+      options.sessionEnvironmentIdentity?.(env, config) ?? env, config,
+    ),
     adapterType: "claude_local",
     moduleDir,
     packageRootDir,
