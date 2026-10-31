@@ -1,3 +1,4 @@
+import { notifyRunDispatch } from "../run-dispatch-notifications.js";
 import { preserveAcceptedRunUsageProjectionSql } from "../usage-receipts.js";
 import { notifyNativeEnvironmentSettlement } from "../native-environment-settlement-notifications.js";
 import { notifyExternalAgentSettlement } from "../../modules/external-agents/index.js";
@@ -1046,7 +1047,8 @@ export function createHeartbeatLifecycle(db: Db, dependencies: HeartbeatLifecycl
       if (previous && isHeartbeatRunTerminalStatus(status))
         await notifyDeliveryWork(tx, DELIVERY_QUEUES.managedClaudeTranscriptCleanup, previous.id);
       if (isHeartbeatRunTerminalStatus(status)) await notifyDeliveryWork(tx, DELIVERY_QUEUES.accounting, companyId);
-      await notifyExecutionRunWork(tx);
+      await notifyExecutionRunWork(tx, previous ? { companyId: previous.companyId, runId: previous.id,
+        issueId: previous.nativeIssueId ?? previous.issueId ?? readNonEmptyString(parseObject(previous.contextSnapshot).issueId) ?? undefined } : undefined);
       if (previous) await notifyChatRunMilestones(tx, { companyId: previous.companyId, runId: previous.id,
         issueId: previous.nativeIssueId ?? previous.issueId ?? readNonEmptyString(parseObject(previous.contextSnapshot).issueId) ?? undefined });
       return write(tx);
@@ -2449,6 +2451,7 @@ export function createHeartbeatLifecycle(db: Db, dependencies: HeartbeatLifecycl
         .returning()
         .then((rows) => rows[0]);
 
+      await notifyRunDispatch(tx, { companyId: run.companyId });
       const queuedRun = await tx
         .insert(heartbeatRuns)
         .values({
