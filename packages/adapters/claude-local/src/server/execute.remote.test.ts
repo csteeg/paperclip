@@ -597,7 +597,13 @@ describe("claude remote execution", () => {
         timedOut: false,
         stdout: [
           JSON.stringify({ type: "system", subtype: "init", session_id: "session-fresh", model: "claude-sonnet" }),
-          JSON.stringify({ type: "result", session_id: "session-fresh", subtype: "success", is_error: false, result: "Recovered" }),
+          JSON.stringify({
+            type: "result",
+            session_id: "session-fresh",
+            subtype: "success",
+            is_error: false,
+            result: "Recovered",
+          }),
         ].join("\n"),
         stderr: "",
         pid: 124,
@@ -704,7 +710,12 @@ describe("claude remote execution", () => {
         sessionDisplayId: missingSessionId,
         taskKey: null,
       },
-      config: { model: "claude-opus-5", engine: "cli", command: "claude", env: { ANTHROPIC_API_KEY: "fixture-anthropic-key" } },
+      config: {
+        model: "claude-opus-5",
+        engine: "cli",
+        command: "claude",
+        env: { ANTHROPIC_API_KEY: "fixture-anthropic-key" },
+      },
       context: {
         ...createPromptContextFixture(),
         paperclipWorkspace: { cwd: workspaceDir, source: "project_primary" },
@@ -720,4 +731,68 @@ describe("claude remote execution", () => {
     expect(providerCalls[1]?.[2]).not.toContain("--resume");
   });
 
+  it("does not retry a successful result that mentions an unknown session after cleanup", async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-claude-cli-cleaned-success-"));
+    cleanupDirs.push(rootDir);
+    const workspaceDir = path.join(rootDir, "workspace");
+    await mkdir(workspaceDir, { recursive: true });
+    const sessionId = "12345678-1234-4abc-9def-123456789012";
+
+    runChildProcess.mockResolvedValueOnce({
+      exitCode: null,
+      signal: "SIGTERM",
+      timedOut: false,
+      stdout: JSON.stringify({
+        type: "result",
+        session_id: sessionId,
+        is_error: false,
+        subtype: "success",
+        result: "I fixed the unknown session issue and completed the assignment.",
+      }),
+      stderr: "",
+      pid: 123,
+      startedAt: new Date().toISOString(),
+      terminalResultCleanup: {
+        kind: "terminal_result_cleanup",
+        stopped: true,
+        stopReason: "unmanaged_background_task_stopped",
+        reason: "unmanaged background task stopped; no durable live path",
+        terminalResultSeen: true,
+        signal: "SIGTERM",
+        forceKilled: false,
+      },
+    });
+
+    await execute({
+      runId: "run-claude-cleaned-success",
+      agent: {
+        id: "agent-1",
+        companyId: "company-1",
+        name: "Claude Coder",
+        adapterType: "claude_local",
+        adapterConfig: {},
+      },
+      runtime: {
+        sessionId,
+        sessionParams: { sessionId, cwd: workspaceDir },
+        sessionDisplayId: sessionId,
+        taskKey: null,
+      },
+      config: {
+        model: "claude-opus-5",
+        engine: "cli",
+        command: "claude",
+        env: { ANTHROPIC_API_KEY: "fixture-anthropic-key" },
+      },
+      context: {
+        ...createPromptContextFixture(),
+        paperclipWorkspace: { cwd: workspaceDir, source: "project_primary" },
+      },
+      onLog: async () => {},
+    });
+
+    const providerCalls = runChildProcess.mock.calls.filter((call) => !(call[2] as string[]).includes("--version"));
+    expect(providerCalls).toHaveLength(1);
+    expect(providerCalls[0]?.[2]).toContain("--resume");
+  });
 });
