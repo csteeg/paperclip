@@ -1427,11 +1427,10 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     }
 
     const initial = await runAttempt(sessionId ?? null);
-    const stoppedAfterTerminalResult = initial.proc.terminalResultCleanup?.terminalResultSeen === true;
     const sessionErrorKind =
       sessionId &&
       !initial.proc.timedOut &&
-      ((initial.proc.exitCode ?? 0) !== 0 || stoppedAfterTerminalResult) &&
+      (initial.proc.exitCode ?? 0) !== 0 &&
       initial.parsed
         ? isClaudeUnknownSessionError(initial.parsed)
           ? "unknown"
