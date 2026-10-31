@@ -427,7 +427,11 @@ export async function prepareManagedClaudePluginRuntime(input: {
     path.basename(entry.path).toLowerCase() === "skill.md" &&
     !excludedSkillNames.has(path.basename(path.dirname(entry.path)).toLowerCase()),
   );
-  const skillDirectoryTargets = new Map<string, string>();
+  const skillDirectoryTargets = new Map<string, {
+    targetDirectory: string;
+    sourceDirectory: string;
+    isSynced: boolean;
+  }>();
   for (const entry of skillFiles) {
     const sourceDirectory = path.dirname(entry.path);
     const segments = sourceDirectory.split(path.sep);
@@ -435,18 +439,28 @@ export async function prepareManagedClaudePluginRuntime(input: {
     // `skills/synced`, but Claude Code's normal personal-skill discovery only
     // recognizes `skills/<skill-name>/SKILL.md`. Import the leaf skill folder
     // so managed runs can use the copied skill without requiring account sync.
-    const targetDirectory = segments[0]?.toLowerCase() === "synced" && segments.length >= 3
+    const isSynced = segments[0]?.toLowerCase() === "synced" && segments.length >= 3;
+    const targetDirectory = isSynced
       ? path.join(...segments.slice(2))
       : sourceDirectory;
-    const existingSource = skillDirectoryTargets.get(targetDirectory);
-    if (existingSource && existingSource !== sourceDirectory) {
-      throw new Error(`Claude profile contains multiple skills that map to the same name: ${targetDirectory}`);
+    const targetKey = targetDirectory.toLowerCase();
+    const existing = skillDirectoryTargets.get(targetKey);
+    if (existing && existing.sourceDirectory !== sourceDirectory) {
+      // Prefer the ordinary personal skill over a same-named account-synced
+      // copy. Other collisions keep the first path from the sorted profile
+      // snapshot, so duplicate profile entries cannot prevent a run starting.
+      if (existing.isSynced && !isSynced) {
+        skillDirectoryTargets.set(targetKey, { targetDirectory, sourceDirectory, isSynced });
+      }
+      continue;
     }
-    skillDirectoryTargets.set(targetDirectory, sourceDirectory);
+    skillDirectoryTargets.set(targetKey, { targetDirectory, sourceDirectory, isSynced });
   }
-  const selectedSkillDirectories = new Set(skillDirectoryTargets.keys());
+  const selectedSkillDirectories = new Set(
+    [...skillDirectoryTargets.values()].map(({ targetDirectory }) => targetDirectory),
+  );
   const managedSkillFiles = skills.flatMap((entry) => {
-    for (const [targetDirectory, sourceDirectory] of skillDirectoryTargets) {
+    for (const { targetDirectory, sourceDirectory } of skillDirectoryTargets.values()) {
       if (!entry.path.startsWith(`${sourceDirectory}${path.sep}`)) continue;
       return [{
         ...entry,
@@ -545,7 +559,7 @@ export async function prepareManagedClaudePluginRuntime(input: {
       managedSkillFiles.map((entry) => ({ path: entry.targetPath ?? entry.path })),
     );
   }
-  return { pluginRoot: installs.length > 0 ? path.join(snapshotDir, "plugins") : null, skillCount: skillFiles.length };
+  return { pluginRoot: installs.length > 0 ? path.join(snapshotDir, "plugins") : null, skillCount: selectedSkillDirectories.size };
 }
 
 function isAlreadyExistsError(error: unknown): boolean {
