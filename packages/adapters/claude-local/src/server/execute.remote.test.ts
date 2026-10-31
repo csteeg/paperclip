@@ -796,4 +796,92 @@ describe("claude remote execution", () => {
     expect(providerCalls[0]?.[2]).toContain("--resume");
   });
 
+  it("does not retry an unknown resumed session after SSH client cleanup", async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-claude-ssh-cleaned-resume-"));
+    cleanupDirs.push(rootDir);
+    const workspaceDir = path.join(rootDir, "workspace");
+    const managedRemoteWorkspace = "/remote/workspace/.paperclip-runtime/runs/run-claude-ssh-cleaned-resume/workspace";
+    await mkdir(workspaceDir, { recursive: true });
+    const missingSessionId = "12345678-1234-4abc-9def-123456789012";
+
+    runChildProcess.mockResolvedValueOnce({
+      exitCode: null,
+      signal: "SIGTERM",
+      timedOut: false,
+      stdout: JSON.stringify({
+        type: "result",
+        session_id: missingSessionId,
+        is_error: true,
+        subtype: "error_during_execution",
+        result: `No conversation found with session id ${missingSessionId}`,
+      }),
+      stderr: "",
+      pid: 123,
+      startedAt: new Date().toISOString(),
+      terminalResultCleanup: {
+        kind: "terminal_result_cleanup",
+        stopped: true,
+        stopReason: "unmanaged_background_task_stopped",
+        reason: "unmanaged background task stopped; no durable live path",
+        terminalResultSeen: true,
+        signal: "SIGTERM",
+        forceKilled: false,
+      },
+    });
+
+    await execute({
+      runId: "run-claude-ssh-cleaned-resume",
+      agent: {
+        id: "agent-1",
+        companyId: "company-1",
+        name: "Claude Coder",
+        adapterType: "claude_local",
+        adapterConfig: {},
+      },
+      runtime: {
+        sessionId: missingSessionId,
+        sessionParams: {
+          sessionId: missingSessionId,
+          cwd: managedRemoteWorkspace,
+          remoteExecution: {
+            transport: "ssh",
+            host: "127.0.0.1",
+            port: 2222,
+            username: "fixture",
+            remoteCwd: managedRemoteWorkspace,
+          },
+        },
+        sessionDisplayId: missingSessionId,
+        taskKey: null,
+      },
+      config: {
+        model: "claude-opus-5",
+        engine: "cli",
+        command: "claude",
+        env: { ANTHROPIC_API_KEY: "fixture-anthropic-key" },
+      },
+      context: {
+        ...createPromptContextFixture(),
+        paperclipWorkspace: { cwd: workspaceDir, source: "project_primary" },
+      },
+      executionTransport: {
+        remoteExecution: {
+          host: "127.0.0.1",
+          port: 2222,
+          username: "fixture",
+          remoteWorkspacePath: "/remote/workspace",
+          remoteCwd: "/remote/workspace",
+          privateKey: "PRIVATE KEY",
+          knownHosts: "[127.0.0.1]:2222 ssh-ed25519 AAAA",
+          strictHostKeyChecking: true,
+        },
+      },
+      onLog: async () => {},
+    });
+
+    const providerCalls = runChildProcess.mock.calls.filter((call) => !(call[2] as string[]).includes("--version"));
+    expect(providerCalls).toHaveLength(1);
+    expect(providerCalls[0]?.[2]).toContain("--resume");
+  });
+
 });
