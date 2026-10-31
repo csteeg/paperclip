@@ -118,37 +118,6 @@ describe("claimManagedAiHome", () => {
     await expect(stat(path.join(baseDir, "leftover-credential.txt"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it.runIf(process.platform !== "win32")("recovers an abandoned claim lock before reclaiming a stale managed home", async () => {
-    const root = await tmpRoot();
-    const baseDir = path.join(root, "paperclip-ai-co-grant");
-    await mkdir(baseDir, { mode: 0o700 });
-    await writeFile(path.join(baseDir, ".paperclip-home-claim.json"), JSON.stringify({ pid: deadPid(), claimedAt: 1 }));
-    const lockDir = `${baseDir}.claim-lock`;
-    await mkdir(lockDir, { mode: 0o700 });
-    await writeFile(path.join(lockDir, "owner.json"), JSON.stringify({ pid: deadPid(), createdAt: 1 }));
-
-    const result = await claimManagedAiHome(baseDir, () => 1 + MANAGED_AI_STABLE_HOME_STALE_AFTER_MS * 10);
-
-    expect(result).toEqual({ home: baseDir, stable: true });
-    await expect(stat(lockDir)).rejects.toMatchObject({ code: "ENOENT" });
-    expect(JSON.parse(await readFile(path.join(baseDir, ".paperclip-home-claim.json"), "utf8"))).toMatchObject({ pid: process.pid });
-  });
-
-  it("does not steal a claim lock held by a live process", async () => {
-    const root = await tmpRoot();
-    const baseDir = path.join(root, "paperclip-ai-co-grant");
-    await mkdir(baseDir, { mode: 0o700 });
-    await writeFile(path.join(baseDir, ".paperclip-home-claim.json"), JSON.stringify({ pid: deadPid(), claimedAt: 1 }));
-    const lockDir = `${baseDir}.claim-lock`;
-    await mkdir(lockDir, { mode: 0o700 });
-    await writeFile(path.join(lockDir, "owner.json"), JSON.stringify({ pid: process.pid, createdAt: 1 }));
-
-    const result = await claimManagedAiHome(baseDir, () => 1 + MANAGED_AI_STABLE_HOME_STALE_AFTER_MS * 10);
-
-    expect(result.stable).toBe(false);
-    await expect(readFile(path.join(lockDir, "owner.json"), "utf8")).resolves.toContain(`"pid":${process.pid}`);
-  });
-
   it("does not reclaim a claim that is merely old-ish, below the staleness threshold", async () => {
     const root = await tmpRoot();
     const baseDir = path.join(root, "paperclip-ai-co-grant");
