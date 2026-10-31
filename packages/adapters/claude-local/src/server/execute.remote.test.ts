@@ -81,6 +81,13 @@ import { createPromptContextFixture } from "@paperclipai/adapter-utils/test-fixt
 import { execute } from "./execute.js";
 import { resetClaudeCliCapabilitiesCacheForTests } from "./cli-capabilities.js";
 
+const writeLocalClaudeTranscript = async (configDir: string, cwd: string, sessionId: string) => {
+  const encodedCwd = cwd.replace(/[^a-zA-Z0-9-]/g, "-");
+  const transcriptPath = path.join(configDir, "projects", encodedCwd, `${sessionId}.jsonl`);
+  await mkdir(path.dirname(transcriptPath), { recursive: true });
+  await writeFile(transcriptPath, `${JSON.stringify({ type: "result", session_id: sessionId })}\n`);
+};
+
 describe("claude remote execution", () => {
   const cleanupDirs: string[] = [];
 
@@ -573,7 +580,10 @@ describe("claude remote execution", () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-claude-cli-fallback-context-"));
     cleanupDirs.push(rootDir);
     const workspaceDir = path.join(rootDir, "workspace");
+    const configDir = path.join(rootDir, "config");
     await mkdir(workspaceDir, { recursive: true });
+    await mkdir(configDir, { recursive: true });
+    await writeLocalClaudeTranscript(configDir, workspaceDir, "12345678-1234-4abc-9def-123456789012");
 
     runChildProcess
       .mockResolvedValueOnce({
@@ -628,7 +638,7 @@ describe("claude remote execution", () => {
       config: { model: "claude-opus-5",
         engine: "cli",
         command: "claude",
-        env: { ANTHROPIC_API_KEY: "fixture-anthropic-key" },
+        env: { ANTHROPIC_API_KEY: "fixture-anthropic-key", CLAUDE_CONFIG_DIR: configDir },
       },
       context: {
         ...createPromptContextFixture(),
@@ -654,8 +664,11 @@ describe("claude remote execution", () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-claude-cli-cleaned-resume-"));
     cleanupDirs.push(rootDir);
     const workspaceDir = path.join(rootDir, "workspace");
+    const configDir = path.join(rootDir, "config");
     await mkdir(workspaceDir, { recursive: true });
+    await mkdir(configDir, { recursive: true });
     const missingSessionId = "12345678-1234-4abc-9def-123456789012";
+    await writeLocalClaudeTranscript(configDir, workspaceDir, missingSessionId);
 
     runChildProcess
       .mockResolvedValueOnce({
@@ -714,7 +727,7 @@ describe("claude remote execution", () => {
         model: "claude-opus-5",
         engine: "cli",
         command: "claude",
-        env: { ANTHROPIC_API_KEY: "fixture-anthropic-key" },
+        env: { ANTHROPIC_API_KEY: "fixture-anthropic-key", CLAUDE_CONFIG_DIR: configDir },
       },
       context: {
         ...createPromptContextFixture(),
@@ -735,8 +748,11 @@ describe("claude remote execution", () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-claude-cli-cleaned-success-"));
     cleanupDirs.push(rootDir);
     const workspaceDir = path.join(rootDir, "workspace");
+    const configDir = path.join(rootDir, "config");
     await mkdir(workspaceDir, { recursive: true });
+    await mkdir(configDir, { recursive: true });
     const sessionId = "12345678-1234-4abc-9def-123456789012";
+    await writeLocalClaudeTranscript(configDir, workspaceDir, sessionId);
 
     runChildProcess.mockResolvedValueOnce({
       exitCode: null,
@@ -782,7 +798,7 @@ describe("claude remote execution", () => {
         model: "claude-opus-5",
         engine: "cli",
         command: "claude",
-        env: { ANTHROPIC_API_KEY: "fixture-anthropic-key" },
+        env: { ANTHROPIC_API_KEY: "fixture-anthropic-key", CLAUDE_CONFIG_DIR: configDir },
       },
       context: {
         ...createPromptContextFixture(),
