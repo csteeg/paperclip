@@ -44,10 +44,11 @@ export async function retainManagedClaudeTranscripts(input: {
     const scopeDir = resolveManagedClaudeTranscriptsDir(input.companyId, input.agentId, runtime.sessionIdentity, taskKey);
     const projectsDir = path.join(scopeDir, PROJECTS_DIR);
     await fs.mkdir(projectsDir, { recursive: true, mode: 0o700 });
+    const realProjectsDir = await fs.realpath(projectsDir);
     await fs.writeFile(path.join(scopeDir, TASK_FILE), JSON.stringify({ taskKey }), { mode: 0o600 });
-    await fs.symlink(await fs.realpath(projectsDir), path.join(runtime.home, "provider", PROJECTS_DIR));
+    await fs.symlink(realProjectsDir, path.join(runtime.home, "provider", PROJECTS_DIR), process.platform === "win32" ? "junction" : "dir");
     onScopeRetained?.();
-    return { home: runtime.home, transcriptDir: projectsDir };
+    return { home: runtime.home, transcriptDir: realProjectsDir };
   } catch (err) {
     logger.warn({ err, agentId: input.agentId }, "Could not retain Claude transcripts; this run will not be resumable");
     return undefined;
@@ -259,6 +260,7 @@ export function managedClaudeTranscriptExpirationService(db: Db, defaults: Manag
 
     if (!sweepScopes || scannedRescanVersion < rescanVersion) {
       const scanVersion = rescanVersion;
+      if (sweepScopes && scannedRescanVersion < scanVersion) completedScopes.clear();
       const scopes = new Map((sweepScopes ?? []).map((scope) => [scope.dir, scope]));
       for (const owner of await listTranscriptDirs(root)) {
         const transcriptsDir = transcriptsDirOf(root, owner);
@@ -346,6 +348,7 @@ export function registerManagedClaudeTranscriptCleanupWork(
       next = result.truncated ? Date.now() + 1000 : result.nextDueAt;
     },
     hasPending: async () => false,
+    onSettled: () => service.requestRescan?.(),
     nextRunAt: () => next,
   });
   onScopeRetained = () => {

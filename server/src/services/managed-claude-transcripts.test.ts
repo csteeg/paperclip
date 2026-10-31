@@ -111,14 +111,15 @@ describe("retainManagedClaudeTranscripts", () => {
   it("links the real path so filesystem confinement can mount it", async () => {
     const realHome = await fs.mkdtemp(path.join(guestDir, "real-"));
     const linkedHome = path.join(guestDir, "linked");
-    await fs.symlink(realHome, linkedHome);
+    await fs.symlink(realHome, linkedHome, process.platform === "win32" ? "junction" : "dir");
     vi.stubEnv("PAPERCLIP_HOME", linkedHome);
     const runtime = await makeRuntime();
 
-    await retain(runtime);
+    const retained = await retain(runtime);
 
     const target = await fs.readlink(path.join(runtime.home, "provider", "projects"));
     expect(target.startsWith(await fs.realpath(realHome))).toBe(true);
+    expect(retained?.transcriptDir).toBe(await fs.realpath(path.join(runtime.home, "provider", "projects")));
   });
 
   it("retains nothing for remote targets, other adapters, unscoped runs, or a failed link", async () => {
@@ -142,7 +143,7 @@ describe("retainManagedClaudeTranscripts", () => {
 });
 
 describe("managed Claude transcript expiration sweep", () => {
-  it("preserves rescan work after a failed discovery without rechecking completed scopes", async () => {
+  it("rechecks completed scopes after a rescan, including after a failed discovery", async () => {
     const root = path.join(guestDir, "instance");
     const transcriptsDir = path.join(root, "companies", "company-1", "agents", "agent-1", "claude-transcripts");
     await fs.mkdir(transcriptsDir, { recursive: true });
@@ -174,6 +175,9 @@ describe("managed Claude transcript expiration sweep", () => {
     await fs.mkdir(brokenCompanyAgents);
 
     const second = await service.tick();
-    expect(second).toMatchObject({ checked: 2, truncated: false });
+    expect(second).toMatchObject({ checked: 200, truncated: true });
+
+    const third = await service.tick();
+    expect(third).toMatchObject({ checked: 2, truncated: false });
   });
 });

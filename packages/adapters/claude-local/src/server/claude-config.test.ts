@@ -273,6 +273,32 @@ describe("prepareManagedClaudePluginRuntime", () => {
       .rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("prefers a personal skill when an account-synced skill maps to the same name", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-managed-claude-duplicate-skills-"));
+    cleanupDirs.push(root);
+    const sourceDir = path.join(root, "personal-claude");
+    const personalSkill = path.join(sourceDir, "skills", "example");
+    const syncedSkill = path.join(sourceDir, "skills", "synced", "account-bundle", "example");
+    const configDir = path.join(root, "managed-run", "provider");
+    await fs.mkdir(personalSkill, { recursive: true });
+    await fs.mkdir(syncedSkill, { recursive: true });
+    await fs.writeFile(path.join(personalSkill, "SKILL.md"), "personal version\n");
+    await fs.writeFile(path.join(syncedSkill, "SKILL.md"), "synced version\n");
+
+    const result = await prepareManagedClaudePluginRuntime({
+      env: { PAPERCLIP_HOME: path.join(root, "paperclip-data") },
+      companyId: "company-1",
+      agentId: "agent-1",
+      configDir,
+      sourceDir,
+      importMode: "cache",
+    });
+
+    expect(result.skillCount).toBe(1);
+    await expect(fs.readFile(path.join(configDir, "skills", "example", "SKILL.md"), "utf8"))
+      .resolves.toBe("personal version\n");
+  });
+
   it("copies the selected profile once per run without modifying the source profile", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-managed-claude-copy-"));
     cleanupDirs.push(root);

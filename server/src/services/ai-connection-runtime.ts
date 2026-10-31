@@ -4,7 +4,7 @@ import type { PluginTaskCredentialWritebackBinding } from "./plugin-task-credent
 import { OPENROUTER_ATTRIBUTION_HEADERS, openRouterClaudeHeaders } from "@paperclipai/shared/openrouter-attribution";
 import { createHash } from "node:crypto";
 import { HttpError, unprocessable } from "../errors.js";
-import { mkdtemp, mkdir, writeFile, readFile, rm, rename, lstat, realpath } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, rm, rename, lstat, realpath, chmod } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { and, eq } from "drizzle-orm";
@@ -31,6 +31,7 @@ import { quotaCredentialHash, quotaCredentialRecovery, RetiredCredentialRecovery
 import { assertAiCredentialCleanupSettled, bindRetainedAiCredentialHome, reconcileRetainedAiCleanup, retainAiCredentialCleanup, type RetainedAiCleanupScope } from "./retained-ai-credential-cleanup.js";
 import { queueTemporaryDirectoryCleanup } from "./temporary-directory-cleanup.js";
 import { managedClaudeTranscriptRetentionEnabled } from "./managed-claude-transcripts.js";
+import { withWorktreePortRegistryLock } from "@paperclipai/shared/worktree-port-registry";
 
 export function isAiConnectionBusy(error: unknown): error is HttpError {
   return error instanceof HttpError && error.status === 422 &&
@@ -244,6 +245,29 @@ async function isOwnedPrivateDirectory(target: string): Promise<boolean> {
   }
 }
 
+async function ensureOwnedPrivateDirectory(target: string): Promise<boolean> {
+  try {
+    await mkdir(target, { recursive: true, mode: 0o700 });
+    let stat = await lstat(target);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== process.getuid?.()) return false;
+    if ((stat.mode & 0o077) !== 0) {
+      await chmod(target, 0o700);
+      stat = await lstat(target);
+    }
+    return stat.isDirectory() && !stat.isSymbolicLink() && stat.uid === process.getuid?.() && (stat.mode & 0o077) === 0;
+  } catch {
+    return false;
+  }
+}
+
+async function managedAiHomeClaimMayBeStale(baseDir: string, now: () => number): Promise<boolean> {
+  if (!(await isOwnedPrivateDirectory(baseDir))) return false;
+  let claim: { pid?: unknown; claimedAt?: unknown; startedAtMs?: unknown; retryPending?: unknown } | undefined;
+  try { claim = JSON.parse(await readFile(path.join(baseDir, MANAGED_AI_HOME_CLAIM_FILE), "utf8")); } catch {}
+  if (claim?.retryPending || typeof claim?.claimedAt !== "number") return false;
+  return now() - claim.claimedAt >= MANAGED_AI_STABLE_HOME_STALE_AFTER_MS && await claimOwnerGone(claim);
+}
+
 async function writeManagedAiHomeClaim(
   baseDir: string,
   claim: { pid: number; claimedAt: number; startedAtMs?: number; retryPending?: true },
@@ -272,15 +296,13 @@ async function reclaimStaleManagedAiHome(baseDir: string, now: () => number): Pr
   return true;
 }
 
-async function tryAcquireManagedAiHomeClaimLock(baseDir: string): Promise<(() => Promise<void>) | null> {
-  const lockDir = `${baseDir}.claim-lock`;
-  try {
-    await mkdir(lockDir, { mode: 0o700 });
-    return async () => { await rm(lockDir, { recursive: true, force: true }); };
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") return null;
-    throw error;
-  }
+async function reclaimManagedAiHomeWithLock(baseDir: string, now: () => number): Promise<boolean> {
+  const identity = process.platform === "win32" ? path.resolve(baseDir).toLowerCase() : path.resolve(baseDir);
+  const lockKey = createHash("sha256").update(identity).digest("hex");
+  const lockRoot = path.join(os.tmpdir(), "paperclip-ai-home-claims");
+  const lockHome = path.join(lockRoot, lockKey);
+  if (!(await ensureOwnedPrivateDirectory(lockRoot)) || !(await ensureOwnedPrivateDirectory(lockHome))) return false;
+  return withWorktreePortRegistryLock(lockHome, () => reclaimStaleManagedAiHome(baseDir, now));
 }
 
 export async function claimManagedAiHome(
@@ -292,15 +314,8 @@ export async function claimManagedAiHome(
       await mkdir(baseDir, { mode: 0o700 });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      if (attempt === 0) {
-        const releaseLock = await tryAcquireManagedAiHomeClaimLock(baseDir);
-        if (releaseLock) {
-          try {
-            if (await reclaimStaleManagedAiHome(baseDir, now)) continue;
-          } finally {
-            await releaseLock();
-          }
-        }
+      if (attempt === 0 && await managedAiHomeClaimMayBeStale(baseDir, now)) {
+        if (await reclaimManagedAiHomeWithLock(baseDir, now)) continue;
       }
       break;
     }

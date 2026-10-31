@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { lstat, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -116,6 +117,11 @@ describe("claimManagedAiHome", () => {
 
     expect(result).toEqual({ home: baseDir, stable: true });
     await expect(stat(path.join(baseDir, "leftover-credential.txt"))).rejects.toMatchObject({ code: "ENOENT" });
+    const lockIdentity = createHash("sha256").update(path.resolve(baseDir)).digest("hex");
+    const lockRoot = path.join(os.tmpdir(), "paperclip-ai-home-claims");
+    const lockHome = path.join(lockRoot, lockIdentity);
+    expect((await stat(lockRoot)).mode & 0o077).toBe(0);
+    expect((await stat(lockHome)).mode & 0o077).toBe(0);
   });
 
   it("does not reclaim a claim that is merely old-ish, below the staleness threshold", async () => {
