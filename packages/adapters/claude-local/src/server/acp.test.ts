@@ -293,6 +293,7 @@ describe("claude_local ACP lane", () => {
     expect(result.exitCode).toBe(0);
     expect(meta[0]?.env?.CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL).toBeUndefined();
     expect(meta[0]?.env?.CLAUDE_CODE_PLUGIN_CACHE_DIR).toBe(existingPluginCache);
+    expect(meta[0]?.env?.ACPX_CLAUDE_INCLUDE_USER_SETTINGS).toBeUndefined();
   });
 
   it("imports opted-in plugins and skills into a managed local ACP run", async () => {
@@ -334,6 +335,7 @@ describe("claude_local ACP lane", () => {
     expect(meta[0]?.env?.CLAUDE_CONFIG_DIR).toBe(configDir);
     expect(meta[0]?.env?.CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL).toBe("1");
     expect(meta[0]?.env?.CLAUDE_CODE_PLUGIN_CACHE_DIR).toContain("managed-plugin-cache");
+    expect(meta[0]?.env?.ACPX_CLAUDE_INCLUDE_USER_SETTINGS).toBe("1");
     await expect(fs.readFile(path.join(configDir, "skills", "careconnections", "SKILL.md"), "utf8"))
       .resolves.toBe("CareConnections skill");
     await expect(fs.readFile(path.join(String(meta[0]?.env?.CLAUDE_CODE_PLUGIN_CACHE_DIR), "cache", "company", "careconnections", "1.2.0", "plugin.js"), "utf8"))
