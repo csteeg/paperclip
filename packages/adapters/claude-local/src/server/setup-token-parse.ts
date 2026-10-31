@@ -474,25 +474,43 @@ const FULL_TOKEN_RE = /^sk-ant-oat01-[A-Za-z0-9_-]{20,}$/;
  * duplicate success block fails closed.
  */
 function lineMatchesAnchor(line: string, anchor: string, cursorForwardMarker: string): boolean {
-  let lineOffset = 0;
-  let anchorOffset = 0;
-  while (true) {
-    const moveOffset = line.indexOf(cursorForwardMarker, lineOffset);
-    const segment = line.slice(lineOffset, moveOffset < 0 ? line.length : moveOffset);
-    if (!anchor.startsWith(segment, anchorOffset)) return false;
-    anchorOffset += segment.length;
-    if (moveOffset < 0) return anchorOffset === anchor.length;
+  const matchFrom = (initialLineOffset: number, initialAnchorOffset: number): boolean => {
+    let lineOffset = initialLineOffset;
+    let anchorOffset = initialAnchorOffset;
+    while (true) {
+      const moveOffset = line.indexOf(cursorForwardMarker, lineOffset);
+      const segment = line.slice(lineOffset, moveOffset < 0 ? line.length : moveOffset);
+      if (!anchor.startsWith(segment, anchorOffset)) return false;
+      anchorOffset += segment.length;
+      if (moveOffset < 0) return anchorOffset === anchor.length;
 
-    const countStart = moveOffset + cursorForwardMarker.length;
-    const countEnd = line.indexOf("\u0001", countStart);
-    if (countEnd < 0) return false;
-    const countText = line.slice(countStart, countEnd);
-    if (!/^\d+$/.test(countText)) return false;
-    const count = Number(countText);
-    if (!Number.isSafeInteger(count) || count < 1 || anchorOffset + count > anchor.length) return false;
-    anchorOffset += count;
-    lineOffset = countEnd + 1;
-  }
+      const countStart = moveOffset + cursorForwardMarker.length;
+      const countEnd = line.indexOf("\u0001", countStart);
+      if (countEnd < 0) return false;
+      const countText = line.slice(countStart, countEnd);
+      if (!/^\d+$/.test(countText)) return false;
+      const count = Number(countText);
+      if (!Number.isSafeInteger(count) || count < 1) return false;
+      const restOffset = countEnd + 1;
+
+      // The final cursor move can represent unchanged trailing screen padding.
+      if (anchorOffset === anchor.length && restOffset === line.length) return true;
+      if (anchorOffset + count > anchor.length) return false;
+      anchorOffset += count;
+      lineOffset = restOffset;
+    }
+  };
+
+  if (matchFrom(0, 0)) return true;
+  // At the start of a painted row, ConPTY may report a cursor-forward move
+  // across unchanged blank cells. Also try it as leading padding; this still
+  // requires the complete anchor to follow the move exactly.
+  if (!line.startsWith(cursorForwardMarker)) return false;
+  const countStart = cursorForwardMarker.length;
+  const countEnd = line.indexOf("\u0001", countStart);
+  if (countEnd < 0 || !/^\d+$/.test(line.slice(countStart, countEnd))) return false;
+  const count = Number(line.slice(countStart, countEnd));
+  return Number.isSafeInteger(count) && count > 0 && matchFrom(countEnd + 1, 0);
 }
 
 function singleAnchorIndex(lines: string[], anchor: string, cursorForwardMarker: string): number | null {

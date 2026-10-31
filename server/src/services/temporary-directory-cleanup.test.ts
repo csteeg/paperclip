@@ -65,6 +65,7 @@ it("reconstructs persisted temporary-directory cleanup after a server restart", 
 async function prepareCleanupModules(failFirstRemoval: () => boolean) {
   const instanceRoot = path.join(instanceHome!, "instances", "default");
   await mkdir(instanceRoot, { recursive: true });
+  const ledger = path.join(instanceRoot, "pending-temporary-directory-cleanup.json");
   vi.stubEnv("PAPERCLIP_HOME", instanceHome!);
   vi.doMock("../home-paths.js", () => ({ resolvePaperclipInstanceRoot: () => instanceRoot }));
   vi.doMock("node:fs/promises", async () => {
@@ -80,9 +81,35 @@ async function prepareCleanupModules(failFirstRemoval: () => boolean) {
   });
   vi.resetModules();
   return {
-    ledger: path.join(instanceRoot, "pending-temporary-directory-cleanup.json"),
+    ledger,
     cleanup: await import("./temporary-directory-cleanup.js"),
   };
+}
+
+async function prepareCleanupModulesWithLedgerReadFailure(failFirstRead: () => boolean, failFirstRemoval: () => boolean) {
+  const instanceRoot = path.join(instanceHome!, "instances", "default");
+  await mkdir(instanceRoot, { recursive: true });
+  const ledger = path.join(instanceRoot, "pending-temporary-directory-cleanup.json");
+  vi.stubEnv("PAPERCLIP_HOME", instanceHome!);
+  vi.doMock("../home-paths.js", () => ({ resolvePaperclipInstanceRoot: () => instanceRoot }));
+  vi.doMock("node:fs/promises", async () => {
+    const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    return {
+      ...actual,
+      readFile: async (...args: Parameters<typeof actual.readFile>) => {
+        if (args[0] === ledger && failFirstRead())
+          throw Object.assign(new Error("fixture ledger lock"), { code: "EBUSY" });
+        return actual.readFile(...args);
+      },
+      rm: async (...args: Parameters<typeof actual.rm>) => {
+        if (args[0] === temporaryDirectory && failFirstRemoval())
+          throw Object.assign(new Error("fixture directory lock"), { code: "EBUSY" });
+        return actual.rm(...args);
+      },
+    };
+  });
+  vi.resetModules();
+  return { ledger, cleanup: await import("./temporary-directory-cleanup.js") };
 }
 
 it("persists a failed removal and lets a fresh worker retry it", async () => {
@@ -107,6 +134,32 @@ it("persists a failed removal and lets a fresh worker retry it", async () => {
   await worker.run();
   await expect(stat(temporaryDirectory)).rejects.toMatchObject({ code: "ENOENT" });
   expect(JSON.parse(await readFile(fixture.ledger, "utf8"))).toEqual([]);
+});
+
+it("retries ledger read failures without losing cleanup work and keeps the sleep probe blocked", async () => {
+  instanceHome = await mkdtemp(path.join(os.tmpdir(), "paperclip-cleanup-home-"));
+  temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), "paperclip-ai-cleanup-"));
+  let failRead = true;
+  let failRemoval = true;
+  const fixture = await prepareCleanupModulesWithLedgerReadFailure(
+    () => { if (!failRead) return false; failRead = false; return true; },
+    () => { if (!failRemoval) return false; failRemoval = false; return true; },
+  );
+  await writeFile(fixture.ledger, JSON.stringify([temporaryDirectory]), { mode: 0o600 });
+  const idle = await import("./idle-local-work.js");
+  idle.markIdleIngressTracked();
+  idle.markIdleStartupComplete({ scheduledBackups: false });
+
+  await expect(fixture.cleanup.retryTemporaryDirectoryCleanupNow()).rejects.toMatchObject({ code: "EBUSY" });
+  expect(await idle.readIdleLocalWork()).toBe("unknown");
+  await expect(fixture.cleanup.retryTemporaryDirectoryCleanupNow()).rejects.toThrow("Temporary directory cleanup failed");
+  expect(await idle.readIdleLocalWork()).toBe("present");
+  expect(JSON.parse(await readFile(fixture.ledger, "utf8"))).toEqual([temporaryDirectory]);
+
+  await fixture.cleanup.retryTemporaryDirectoryCleanupNow();
+  expect(await idle.readIdleLocalWork()).toBe("none");
+  expect(JSON.parse(await readFile(fixture.ledger, "utf8"))).toEqual([]);
+  await expect(stat(temporaryDirectory)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
 it("keeps late cleanup work owned after worker shutdown until the final sweep", async () => {

@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { logger } from "../middleware/logger.js";
 import { resolvePaperclipInstanceRoot } from "../home-paths.js";
+import { registerIdleLocalWorkProbe } from "./idle-local-work.js";
 import type { createDeliveryWorkCoordinator } from "./delivery-work-coordinator.js";
 import { DELIVERY_QUEUES } from "./delivery-work-notifications.js";
 
@@ -11,7 +12,13 @@ const pendingTemporaryDirectoryRemovals = new Set<string>();
 const cleanupLedger = path.join(resolvePaperclipInstanceRoot(), "pending-temporary-directory-cleanup.json");
 let wakeTemporaryDirectoryCleanupWork: (() => void) | undefined;
 let cleanupStateLoaded: Promise<void> | undefined;
+let cleanupStateReady = false;
 let cleanupLedgerWrite = Promise.resolve();
+
+registerIdleLocalWorkProbe(() => {
+  if (!cleanupStateReady) return "unknown";
+  return pendingTemporaryDirectoryRemovals.size > 0 ? "present" : "none";
+});
 
 function validTemporaryCleanupPath(directory: string) {
   if (!path.isAbsolute(directory) || path.basename(directory) === "..") return false;
@@ -27,20 +34,28 @@ function validTemporaryCleanupPath(directory: string) {
 }
 
 async function loadTemporaryCleanupState() {
-  cleanupStateLoaded ??= (async () => {
+  if (!cleanupStateLoaded) cleanupStateLoaded = (async () => {
     try {
       const parsed: unknown = JSON.parse(await readFile(cleanupLedger, "utf8"));
       if (Array.isArray(parsed)) for (const entry of parsed)
         if (typeof entry === "string" && validTemporaryCleanupPath(entry)) pendingTemporaryDirectoryRemovals.add(entry);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT")
-        logger.warn({ err: error }, "Could not load persisted temporary-directory cleanup work");
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
   })();
-  await cleanupStateLoaded;
+  const loading = cleanupStateLoaded;
+  try {
+    await loading;
+    cleanupStateReady = true;
+  } catch (error) {
+    if (cleanupStateLoaded === loading) cleanupStateLoaded = undefined;
+    logger.warn({ err: error }, "Could not load persisted temporary-directory cleanup work; retrying");
+    throw error;
+  }
 }
 
 function persistTemporaryCleanupState() {
+  if (!cleanupStateReady) throw new Error("Cannot persist cleanup work before loading its ledger");
   cleanupLedgerWrite = cleanupLedgerWrite.catch(() => {}).then(async () => {
     const entries = [...pendingTemporaryDirectoryRemovals];
     await mkdir(path.dirname(cleanupLedger), { recursive: true, mode: 0o700 });
@@ -55,11 +70,13 @@ async function retryPendingTemporaryDirectoryRemovals() {
   await loadTemporaryCleanupState();
   const failures: unknown[] = [];
   for (const directory of pendingTemporaryDirectoryRemovals) {
+    let removed = false;
     try {
       await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-      pendingTemporaryDirectoryRemovals.delete(directory);
+      removed = pendingTemporaryDirectoryRemovals.delete(directory);
       await persistTemporaryCleanupState();
     } catch (error) {
+      if (removed) pendingTemporaryDirectoryRemovals.add(directory);
       failures.push(error);
     }
   }
