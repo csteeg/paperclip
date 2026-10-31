@@ -20,6 +20,7 @@ import { resolvePaperclipInstanceRootForAdapter } from "@paperclipai/adapter-uti
 import { shellQuote } from "@paperclipai/adapter-utils/ssh";
 import { classifyThrownErrorClass, logSandboxProbeDiagnostic } from "./probe-diagnostics.js";
 import { selectManagedPluginMarketplaces, writeManagedPluginMarketplaces } from "./managed-plugin-marketplaces.js";
+import { ensureManagedProfileSkillInstructions } from "./managed-profile-instructions.js";
 
 const SEEDED_SHARED_FILES = ["settings.json", "CLAUDE.md"] as const;
 
@@ -369,7 +370,9 @@ export async function prepareManagedClaudePluginRuntime(input: {
   const importMode = input.importMode ?? "cache";
   const stateDir = resolveManagedClaudeRuntimeStateDir(input.env, input.companyId, input.agentId);
   if (!input.configDir.trim()) throw new Error("Managed Claude config directory is missing");
-  const configuredSource = nonEmpty(input.sourceDir) ?? nonEmpty(input.env.PAPERCLIP_CLAUDE_PLUGIN_SOURCE_DIR);
+  const configuredSource = input.sourceDir !== undefined
+    ? nonEmpty(input.sourceDir)
+    : nonEmpty(input.env.PAPERCLIP_CLAUDE_PLUGIN_SOURCE_DIR);
   const source = configuredSource ?? (input.autoDiscoverSource ? resolveSharedClaudeConfigDir(input.env) : undefined);
   if (!source) {
     if (importMode === "cache" && input.autoDiscoverSource) {
@@ -571,6 +574,9 @@ export async function prepareManagedClaudePluginRuntime(input: {
       path.join(input.configDir, "skills"),
       managedSkillFiles.map((entry) => ({ path: entry.targetPath ?? entry.path })),
     );
+  }
+  if (installs.length > 0 || selectedSkillDirectories.size > 0) {
+    await ensureManagedProfileSkillInstructions(input.configDir);
   }
   return { pluginRoot: installs.length > 0 ? path.join(snapshotDir, "plugins") : null, skillCount: selectedSkillDirectories.size };
 }

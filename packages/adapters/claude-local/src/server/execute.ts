@@ -644,7 +644,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         agentId: agent.id,
         runId,
         configDir: sharedClaudeConfigDir,
-        sourceDir: claudeProfileSourceDir || undefined,
+        sourceDir: config.profileSourceDir !== undefined ? claudeProfileSourceDir : claudeProfileSourceDir || undefined,
         autoDiscoverSource: true,
         importMode: claudeProfileImportMode,
         excludedSkillNames: mountableSkillEntries.map((entry) => entry.runtimeName),
