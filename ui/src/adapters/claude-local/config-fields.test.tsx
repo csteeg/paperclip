@@ -78,7 +78,7 @@ it("previews redacted environment defaults without pinning them when the environ
     return <TooltipProvider>
       <button onClick={() => setEnv({ PAPERCLIP_CLAUDE_PLUGIN_IMPORT_MODE: "off" })}>Change environment</button>
       <ClaudeLocalAdvancedFields section="runPolicy" mode="edit" isCreate={false} adapterType="claude_local"
-        config={original} displayDefaults={{ profileImportMode: "cache" }}
+        config={original} values={null} set={null} displayDefaults={{ profileImportMode: "cache" }}
         eff={(_group, key, fallback) => (key === "env" ? env : fallback) as typeof fallback}
         mark={vi.fn()} models={[]} hideInstructionsFile />
     </TooltipProvider>;
