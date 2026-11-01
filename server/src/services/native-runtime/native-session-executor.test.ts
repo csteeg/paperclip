@@ -5304,7 +5304,10 @@ describe("retained native cleanup activation", () => {
       }
       const outcome = await pendingOutcome;
       if (mode === "legacy_busy_copy") {
-        expect(maintenanceReleased).toHaveBeenCalledExactlyOnceWith({ companyId: run.companyId, runId: run.id });
+        expect(maintenanceReleased).toHaveBeenCalledExactlyOnceWith(
+          { companyId: run.companyId, runId: run.id },
+          { companyId: run.companyId, runId: run.id },
+        );
         unsubscribeMaintenance?.();
       }
       if (canonicalSource) {
@@ -6600,6 +6603,30 @@ function cancellationDb(options?: {
 }
 
 describe("native startup cancellation fence", () => {
+  it.each(["current", "stale"] as const)("reattaches a %s remote recovery claim only to deliver an existing Stop", async mode => {
+    const { currentNativeControllerIdentity } = await import("./native-restart-recovery.js");
+    const controller = await currentNativeControllerIdentity();
+    const resultJson = { nativeCancellation: { schema: "paperclip.native-cancellation.v1", scope: "run",
+      companyId: execution.binding.companyId, runId: execution.binding.runId, issueId: execution.binding.issueId,
+      dispatchState: "pending", intentId: "native-cancellation:recovered-stop", effects: ["release_run_resources"] } };
+    const cancel = vi.fn(() => ({ cleanup: Promise.resolve() })), submit = vi.fn();
+    state.execute.mockReset().mockImplementationOnce(async options => {
+      try { await options.onSession({ cancel }); submit(); }
+      finally { await options.onSession(null); }
+      throw new Error("a stopped recovery must not submit a turn");
+    });
+    const db = leaseDb(execution, { leaseOwner: "stop-recovery", controllerBootId: controller.bootId,
+      controllerPid: controller.pid, controllerGeneration: 2, attempt: 1 }, resultJson);
+    await expect(executePaperclipNativeSession({ db, execution, runnerInstanceId: "recovered-stop",
+      leaseOwner: "stop-recovery", restartRecovery: { kind: "reattach_remote_runner", runId: execution.binding.runId,
+        leaseOwner: "stop-recovery", controllerGeneration: mode === "current" ? 2 : 1, providerAttempt: 1,
+        restartKind: "graceful", recoveryRequestId: null, remote: { providerLeaseId: "fixture", remoteCwd: "/workspace" } },
+    })).rejects.toThrow(mode === "current" ? "native_cancellation_pending_recovery" : "native_restart_recovery_claim_changed");
+    expect(submit).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalledTimes(mode === "current" ? 1 : 0);
+    expect(state.execute).toHaveBeenCalledTimes(mode === "current" ? 1 : 0);
+  });
+
   it.each(["startupCancellation", "nativeCancellation"])("does not submit a turn when %s arrives during session opening", async (marker) => {
     const resultJson: Record<string, unknown> = {};
     const cancel = vi.fn(() => ({ cleanup: Promise.resolve() }));
@@ -6626,7 +6653,10 @@ describe("native startup cancellation fence", () => {
       })).rejects.toThrow("native_cancellation_pending_recovery");
       expect(cancel).toHaveBeenCalledOnce();
       expect(submit).not.toHaveBeenCalled();
-      expect(released).toHaveBeenCalledWith({ companyId: execution.binding.companyId, agentId: execution.binding.agentId });
+      expect(released).toHaveBeenCalledWith(
+        { companyId: execution.binding.companyId, agentId: execution.binding.agentId },
+        { companyId: execution.binding.companyId, runId: execution.binding.runId, issueId: execution.binding.issueId },
+      );
     } finally { unsubscribe(); }
   });
 });
@@ -7839,6 +7869,24 @@ describe("native session cancellation", () => {
     await expect(
       cancelNativeSession(execution.binding.runId, "late cancel"),
     ).resolves.toBe(false);
+  });
+
+  it("keeps duplicate Stop callers waiting for the same provider cleanup", async () => {
+    let releaseCleanup!: () => void;
+    state.cancel.mockReturnValue({ cleanup: new Promise<void>(resolve => { releaseCleanup = resolve; }) });
+    const running = executePaperclipNativeSession({ db: leaseDb(), execution, runnerInstanceId: "runner" });
+    await vi.waitFor(() => expect(state.release).toBeTypeOf("function"));
+    const first = cancelNativeSession(execution.binding.runId, "operator Stop");
+    await vi.waitFor(() => expect(state.cancel).toHaveBeenCalledOnce());
+    let acknowledged = false;
+    const duplicate = cancelNativeSession(execution.binding.runId, "duplicate Stop").then(result => { acknowledged = true; return result; });
+    try {
+      await new Promise(resolve => setTimeout(resolve, 20));
+      expect(acknowledged).toBe(false);
+      releaseCleanup();
+      expect(await Promise.all([first, duplicate])).toEqual([true, true]);
+      expect(state.cancel).toHaveBeenCalledOnce();
+    } finally { releaseCleanup(); state.release?.(); await running; }
   });
 
   it("allows cancellation to be retried when the session dispatch fails", async () => {
@@ -10264,9 +10312,10 @@ describe("native warm session supervision", () => {
       );
       expect(released).not.toHaveBeenCalled();
       releaseClose();
-      await vi.waitFor(() => expect(released).toHaveBeenCalledExactlyOnceWith({
-        companyId: base.binding.companyId, agentId: base.binding.agentId,
-      }));
+      await vi.waitFor(() => expect(released).toHaveBeenCalledExactlyOnceWith(
+        { companyId: base.binding.companyId, agentId: base.binding.agentId },
+        { companyId: base.binding.companyId, runId: base.binding.runId, issueId: base.binding.issueId },
+      ));
     } finally { releaseClose(); unsubscribe(); }
   });
 
@@ -12915,7 +12964,10 @@ describe("runnerd provider runtime wiring", () => {
       releaseEnvironment();
       releaseAssigned();
       const result = await preparation;
-      expect(released).toHaveBeenCalledExactlyOnceWith({ companyId: execution.binding.companyId, agentId: execution.binding.agentId });
+      expect(released).toHaveBeenCalledExactlyOnceWith(
+        { companyId: execution.binding.companyId, agentId: execution.binding.agentId },
+        { companyId: execution.binding.companyId, runId: execution.binding.runId, issueId: execution.binding.issueId },
+      );
       if (failure !== "success") {
         expect(result).toMatchObject({ error: { message: failure === "assigned" ? "assigned failed" : "environment failed" } });
         expect(state.createBackend).not.toHaveBeenCalled();
@@ -16371,7 +16423,7 @@ describe("HTTP Stop during remote runner staging", () => {
     const externalUrl = resolveExternalTestDatabaseUrl("PAPERCLIP_TEST_DATABASE_URL");
     const temporary = externalUrl
       ? { connectionString: externalUrl, cleanup: () => dbModule.closeRegisteredClients(externalUrl) }
-      : await dbModule.startEmbeddedPostgresTestDatabase("remote-staging-http-");
+      : await (await import("../../__tests__/helpers/embedded-postgres.js")).startEmbeddedPostgresTestDatabase("remote-staging-http-");
     const httpDb = dbModule.createDb(temporary.connectionString);
     const localExecution = { ...execution, binding: { ...execution.binding,
       companyId: randomUUID(), agentId: randomUUID(), issueId: randomUUID(), runId: randomUUID(), executionWorkspaceId: randomUUID() },

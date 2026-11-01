@@ -631,6 +631,24 @@ describe("parseSetupTokenCredential", () => {
     expect(parseSetupTokenCredential(text)).toBe(FULL_TOKEN);
   });
 
+  it("reads the token when ConPTY uses cursor-forward moves for anchor padding", () => {
+    const beforeAnchor = `\x1b[2C${SETUP_TOKEN_BEFORE_ANCHOR}\x1b[2C`;
+    const afterAnchor = `\x1b[2C${SETUP_TOKEN_AFTER_ANCHOR}\x1b[2C`;
+    const text = [beforeAnchor, "", FULL_TOKEN, "", afterAnchor].join("\n");
+    expect(parseSetupTokenCredential(text)).toBe(FULL_TOKEN);
+  });
+
+  it("reads token fragments with cursor-forward moves only at their outer padding", () => {
+    const paddedFragment = `\x1b[2C${TOKEN_FRAGMENT_A}\x1b[3C`;
+    const text = successScreen([paddedFragment, TOKEN_FRAGMENT_B]);
+    expect(parseSetupTokenCredential(text)).toBe(FULL_TOKEN);
+  });
+
+  it("rejects cursor-forward skips inside a token fragment", () => {
+    const fragment = `${TOKEN_FRAGMENT_A.slice(0, 8)}\x1b[2C${TOKEN_FRAGMENT_A.slice(8)}`;
+    expect(parseSetupTokenCredential(successScreen([fragment, TOKEN_FRAGMENT_B]))).toBeNull();
+  });
+
   it("returns null for a token-shaped value before submit", () => {
     // The prompt screen holds a token-shaped value but no success anchors. The
     // parser fails closed, so an early value never delivers.
