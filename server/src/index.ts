@@ -85,6 +85,7 @@ import { deliverExecutionStatuses } from "./services/execution-status-delivery.j
 import { deliverReconciledExecutions, settleUnrecoverableExecutions } from "./services/execution-recovery-resolution.js";
 import { reconcileSafeNativeReplacements } from "./services/native-runtime/native-safe-replacement.js";
 import { reconcileAbandonedExecutionControl } from "./services/execution-control-reconciliation.js";
+import { acknowledgeNativeStartupCleanup } from "./services/native-runtime/native-startup-cleanup.js";
 import { executionControlSchedule, registerExecutionControlWork } from "./services/execution-control-work.js";
 import { connectionIntentDeliveryService } from "./services/connection-intent-delivery.js";
 import { registerTemporaryDirectoryCleanupWork, retryTemporaryDirectoryCleanupNow } from "./services/temporary-directory-cleanup.js";
@@ -182,7 +183,7 @@ import {
   reconcileAdapterAvailability,
 } from "./services/adapter-registry-bootstrap.js";
 import { createFeedbackTraceShareClientFromConfig } from "./services/feedback-share-client.js";
-import { buildRuntimeApiCandidateUrls, choosePrimaryRuntimeApiUrl } from "./runtime-api.js";
+import { buildRuntimeApiCandidateUrls, choosePrimaryRuntimeApiUrl, resolveLocalRuntimeApiUrl } from "./runtime-api.js";
 import { isLoopbackHost, rewriteLoopbackUrlPort } from "./url-utils.js";
 import { createPluginWorkerManager } from "./services/plugin-worker-manager.js";
 import { createStorageServiceFromConfig } from "./storage/index.js";
@@ -1136,6 +1137,9 @@ async function startServerWithDatabaseTeardown(
     });
   });
   startupListenerBound = true;
+  // The factory publishes the verified numeric endpoint on listening. Native
+  // recovery must never fall back to a configured/public URL if it is absent.
+  resolveLocalRuntimeApiUrl();
 
   try {
     const result = await workspaceOperationService(db as any)
@@ -1382,7 +1386,12 @@ async function startServerWithDatabaseTeardown(
   const unsubscribeLocalLoginCleanup = localLoginCleanup.subscribeCleanupReady(localLoginCleanupWork.wake);
   server.on("close", unsubscribeLocalLoginCleanup);
   registerExecutionControlWork(deliveryWork, [
-    { queue: DELIVERY_QUEUES.executionFinalization, run: () => reconcileAbandonedExecutionControl(db), next: executionSchedule.finalization },
+    { queue: DELIVERY_QUEUES.executionFinalization, run: () => reconcileAbandonedExecutionControl(db, new Date(), {
+      startupCleanup: async scope => {
+        await accountingHeartbeat.cancelRun(scope.runId, "Native startup timed out; cancelling and verifying cleanup");
+        await acknowledgeNativeStartupCleanup(db, scope);
+      },
+    }), next: executionSchedule.finalization },
     { queue: DELIVERY_QUEUES.executionStatus, run: () => deliverExecutionStatuses(db), next: executionSchedule.status },
     { queue: DELIVERY_QUEUES.executionDisposition, run: () => settleUnrecoverableExecutions(db), next: executionSchedule.disposition },
     ...(heartbeat ? [

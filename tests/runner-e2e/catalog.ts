@@ -9,6 +9,7 @@ import { TASK_WORKSPACES_SUITE, taskWorkspaceTask, taskWorkspaceProfile, taskWor
 import { repositoryProofTasks, repositoryProofProfile, repositoryProofDigest } from "./repository-verification.js";
 import { automaticRepositoryTask, automaticRepositoryDigest } from "./automatic-repository.js";
 import { nativeActiveStopTasks } from "./native-active-stop-tasks.js";
+import { CURSOR_CLOUD_SUITE, cursorCloudArtifactTask, cursorCloudStopTask, CURSOR_CLOUD_QUIET_WINDOW_MS, cursorCloudDefinitionDigest } from "./cursor-cloud-cases.js";
 import { kimiLifecycleTasks } from "./kimi-lifecycle-tasks.js";
 import { piControlTasks } from "./pi-controls-cases.js";
 import { cursorNativeTasks } from "./cursor-native-cases.js";
@@ -27,6 +28,7 @@ import { hiringTemplateTasks, hiringTemplateProfile, hiringTemplateDefinitionDig
 import { copilotProviderDeathTasks } from "./copilot-active-stop-tasks.js";
 import { instructionPersistenceTask } from "./instruction-persistence.js";
 import { apiResponseReadingTask } from "./api-response-reading.js";
+import { apiArtifactTransferTask } from "./api-artifact-transfer.js";
 import { taskTitleTasks, taskTitleDefinitionDigest, TASK_TITLE_BUDGET_CENTS } from "./task-titles.js";
 import { CHAT_FEATURE_SUITE, CHAT_FEATURE_BUDGET_CENTS, CHAT_FEATURE_OPENCODE_MODEL, chatFeatureTasks, chatFeatureProfile, chatFeatureScenarios, chatFeatureDefinitionDigest } from "./chat-feature-cases.js";
 import { blockerTasks, blockerProfile } from "./blocker-cases.js";
@@ -989,7 +991,7 @@ function managedWarmTurnInstructions(turn: 1 | 2 | 3, nonce: string) {
   return [warmTurnInstructions(turn, nonce),
     "Also update your personal AGENT_HOME with ordinary filesystem tools. Do not edit the loaded AGENTS.md instructions and do not use an API to save these files.",
     turn === 1
-      ? `Create notes/warm-memory.txt containing exactly T1-${nonce} followed by a newline. Create notes/unchanged.bin with exactly 8388608 bytes, each byte equal to 93. Create notes/delete-me.txt containing temporary.`
+      ? `Create notes/warm-memory.txt containing exactly T1-${nonce} followed by a newline. Create notes/unchanged.bin with exactly 8388608 bytes, each byte equal to 93. Create notes/delete-me.txt with exactly the nine ASCII bytes temporary and no trailing newline.`
       : `Read notes/warm-memory.txt under AGENT_HOME and verify it contains exactly the prior turn lines ${Array.from({ length: turn - 1 }, (_, i) => `T${i + 1}-${nonce}`).join(" | ")}, each followed by a newline. Append exactly T${turn}-${nonce} and a newline. Verify notes/unchanged.bin still has 8388608 bytes, each equal to 93, and leave it unchanged. ${turn === 2 ? "Delete notes/delete-me.txt." : "Verify notes/delete-me.txt is absent."}`,
     "Perform these personal-file edits and verification before calling paperclip_finish. Paperclip saves them at the turn boundary.",
   ].join("\n");
@@ -1160,6 +1162,39 @@ const repositoryModelProfiles = [
   },
 ];
 
+export const cursorCloudProfile: RunnerProfileFixture = {
+  id: "runner-cursor-cloud", label: "Native Cursor Cloud (experimental)", generation: "native", groups: [],
+  adapterType: "paperclip_runner", provider: "cursor_cloud", model: process.env.PAPERCLIP_CURSOR_CLOUD_ACCEPTANCE_MODEL?.trim() ?? "",
+  modelQualification: { source: "candidate_runner_profile", qualificationId: "cursor-cloud-explicit-acceptance-env" },
+  credential: "CURSOR_API_KEY", supportedEnvironments: ["local"], expectedRuntimeMode: "native",
+  expectedRuntimeMetadata: { adapterType: "paperclip_runner", provider: "cursor_cloud" },
+  buildAgent(input) {
+    const agent = commonAgent(input, this.id, "paperclip_runner", {
+      provider: "cursor_cloud", model: this.model, lifecycleMode: "per_turn", cloudEnvType: "cloud",
+      repoUrl: process.env.PAPERCLIP_CURSOR_CLOUD_ACCEPTANCE_REPO?.trim() ?? "",
+      ...(process.env.PAPERCLIP_CURSOR_CLOUD_ACCEPTANCE_REF?.trim() ? { repoRef: process.env.PAPERCLIP_CURSOR_CLOUD_ACCEPTANCE_REF.trim() } : {}),
+      autoCreatePR: false, workOnCurrentBranch: false, skipReviewerRequest: true, cursorCloudTimeoutMs: 360_000,
+      env: { CURSOR_API_KEY: requiredSecret(input, "CURSOR_API_KEY") },
+    });
+    return { ...agent, budgetMonthlyCents: 1_000 };
+  },
+};
+
+export const cursorCloudFollowupTask: RunnerTaskFixture = {
+  ...openRouterBreadthTasks.find(task => task.id === "question-resume-complete")!,
+  id: "cloud-followup", label: "Answer a question and continue the same Cloud agent", automaticRetryPolicy: "single_attempt",
+  buildTitle: nonce => `Cursor Cloud follow-up ${nonce}`,
+};
+
+const cursorCloudPlanningBase = runnerTasks.find(task => task.id === "plan-revise-accept")!;
+export const cursorCloudPlanningTask: RunnerTaskFixture = {
+  ...cursorCloudPlanningBase, automaticRetryPolicy: "single_attempt",
+  buildPrompt: nonce => cursorCloudPlanningBase.buildPrompt(nonce).replace(
+    "For a native runner, remain in the requested planning collaboration mode.",
+    "For a native runner, follow the requested Paperclip planning authority. Cursor Cloud uses its default harness for this semantic Plan workflow; do not request Cursor native Plan mode.",
+  ),
+};
+
 const daytonaControllerOutageEnvironment: EnvironmentFixture = {
   ...daytonaWarmEnvironment,
   configurationKey: "warm-controller-outage-v1",
@@ -1206,6 +1241,16 @@ export const runnerSuites: readonly RunnerSuiteFixture[] = [
       replacement: "ready-before-traffic-switch-sigterm-delete-entire-home",
       upgradeReadiness: "active-remote-workspace-recoverable-before-handoff",
       grading: "same-active-execution-ordinary-reads-saves-and-second-empty-home-continuation" },
+  },
+  {
+    id: CURSOR_CLOUD_SUITE, label: "Native Cursor Cloud", manualOnly: true, groups: [],
+    description: "Local Paperclip controller with hosted Cursor work: verified artifact, same-agent follow-up, real active-run Stop and semantic plan revision/approval.",
+    profiles: [cursorCloudProfile], environments: runnerEnvironments.filter(environment => environment.id === "local"),
+    tasks: [cursorCloudArtifactTask, cursorCloudFollowupTask, cursorCloudStopTask, cursorCloudPlanningTask], expectedMatrixSize: 4,
+    definitionMetadata: { version: 3, definitionDigest: cursorCloudDefinitionDigest(), scheduling: "explicit-only", maximumAttemptsPerCell: 1,
+      effectiveModelAcknowledged: false, commandPermissions: "provider-managed", costCoverage: "provider-cost-unavailable",
+      quietWindowMs: CURSOR_CLOUD_QUIET_WINDOW_MS, repository: process.env.PAPERCLIP_CURSOR_CLOUD_ACCEPTANCE_REPO ?? "",
+      repositoryRef: process.env.PAPERCLIP_CURSOR_CLOUD_ACCEPTANCE_REF ?? "", callbackExposure: "callback-path-only-loopback-proxy" },
   },
   {
     id: "daytona-restart-continuity", label: "Daytona warm controller outage continuity", manualOnly: true,
@@ -1529,6 +1574,14 @@ export const runnerSuites: readonly RunnerSuiteFixture[] = [
     definitionMetadata: { version: 1, grading: "hidden-evidence-exact-copy-and-api-tool-events", scheduling: "explicit-only" },
   },
   {
+    id: "api-artifact-transfer", label: "Verified API artifact transfer", manualOnly: true,
+    description: "Install an authorized complete API artifact in Daytona and independently verify the delivered bytes.",
+    groups: [], environments: runnerEnvironments.filter(environment => environment.id === "daytona"),
+    profiles: runnerProfiles.filter(profile => profile.id === "runner-codex"),
+    tasks: [apiArtifactTransferTask], expectedMatrixSize: 1,
+    definitionMetadata: { version: 3, grading: "server-capture-provenance-redacted-receipt-source-and-delivery-digest", scheduling: "explicit-only", maximumAttemptsPerCell: 1 },
+  },
+  {
     id: "task-titles", label: "Automatic task titles", manualOnly: true,
     description: "A real agent names a prompt-only task early using production guidance and preserves a supplied title.",
     groups: ["native", "local"], environments: [localEnvironment],
@@ -1843,7 +1896,8 @@ export const runnerSuites: readonly RunnerSuiteFixture[] = [
     environments: [daytonaWarmEnvironment],
     tasks: [daytonaWarmContinuityTask],
     expectedMatrixSize: 2,
-    definitionMetadata: { version: 4, nativeInstructions: "managed-incremental", managedFileBytes: 8 * 1024 * 1024 },
+    definitionMetadata: { version: 5, nativeInstructions: "managed-incremental", managedFileBytes: 8 * 1024 * 1024,
+      managedSaveReceipt: "latest-paginated-run-log-instruction-save" },
   },
   {
     id: "daytona-journal-continuity",
@@ -2050,8 +2104,9 @@ function assertNoRawSecretValues(value: unknown, label: string) {
 
 export function validateRunnerCatalog(): MatrixExecution[] {
   const connectionSuite = runnerSuites.find(suite => suite.id === "provider-connections")!;
-  const allProfiles = [...connectionSuite.profiles, ...extendedHarnessProfiles, ...runnerProfiles, ...legacyAcpxProfiles, ...pendingContextIntegrityProfiles, ...openRouterBreadthProfiles, ...everydayProfiles.filter(p => !runnerProfiles.some(existing => existing.id === p.id))];
+  const allProfiles = [cursorCloudProfile, ...connectionSuite.profiles, ...extendedHarnessProfiles, ...runnerProfiles, ...legacyAcpxProfiles, ...pendingContextIntegrityProfiles, ...openRouterBreadthProfiles, ...everydayProfiles.filter(p => !runnerProfiles.some(existing => existing.id === p.id))];
   const allTasks = [
+    cursorCloudArtifactTask, cursorCloudFollowupTask, cursorCloudStopTask,
     repositorySkillsTask,
     ...piNativeTasks,
     ...copilotProtectionTasks,
