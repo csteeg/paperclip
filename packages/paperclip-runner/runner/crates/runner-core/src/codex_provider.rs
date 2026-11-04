@@ -61,8 +61,13 @@ pub(crate) fn runtime_notification_codex_args(
         let Some(filesystem) = config["filesystem"].as_inline_table_mut() else {
             continue;
         };
-        for (path, mode) in paths.iter().zip(["read", "read", "read", "write"]) {
-            filesystem.insert(path.to_string_lossy().as_ref(), mode.into());
+        let Some(channel_directory) = paths[3].parent().filter(|path| path.parent().is_some())
+        else {
+            continue;
+        };
+        filesystem.insert(channel_directory.to_string_lossy().as_ref(), "write".into());
+        for path in &paths[..3] {
+            filesystem.insert(path.to_string_lossy().as_ref(), "read".into());
         }
         extra.extend(["-c".into(), format!("{prefix}{filesystem}")]);
     }
@@ -1254,7 +1259,13 @@ impl CodexProvider {
             } else {
                 "baseInstructions"
             };
-            params_object.insert(instruction_field.to_owned(), json!(config.instructions));
+            params_object.insert(
+                instruction_field.to_owned(),
+                json!(crate::task_memory::instructions_with_memory_note(
+                    &config.instructions,
+                    MAX_INSTRUCTIONS_BYTES,
+                )),
+            );
             if provider.permission_profile == "paperclip-runner-external-sandbox" {
                 // The execution target (for example Daytona) is the OS sandbox.
                 // Codex must not try to create nested user/network namespaces,
@@ -4516,8 +4527,8 @@ mod tests {
         let paths = [
             PathBuf::from("/runtime/runnerd"),
             PathBuf::from("/state/private/runtime-notifications.json"),
-            PathBuf::from("/state/private/runtime-activity.lock"),
-            PathBuf::from("/tmp/prn-channel"),
+            PathBuf::from("/tmp/prn-channel/activity.lock"),
+            PathBuf::from("/tmp/prn-channel/activity.fifo"),
         ];
         let extra =
             runtime_notification_codex_args(&args, "paperclip-runner-workspace-only", &paths);
@@ -4556,7 +4567,7 @@ mod tests {
                 ("/state/private", "none"),
                 ("/runtime/runnerd", "read"),
                 ("/state/private/runtime-notifications.json", "read"),
-                ("/state/private/runtime-activity.lock", "read"),
+                ("/tmp/prn-channel/activity.lock", "read"),
                 ("/tmp/prn-channel", "write"),
             ] {
                 assert_eq!(
@@ -4564,6 +4575,7 @@ mod tests {
                     Some(mode)
                 );
             }
+            assert!(filesystem.get("/tmp/prn-channel/activity.fifo").is_none());
         }
         assert!(!serialized.contains("network."));
         assert!(!serialized.contains("PAPERCLIP_RUN_ID"));
