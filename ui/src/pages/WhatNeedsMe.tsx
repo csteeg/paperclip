@@ -2,7 +2,8 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type React
 import { useQuery } from "@tanstack/react-query";
 import { useCoordinatorWorkspaceEnabled } from "../hooks/useCoordinatorWorkspaceEnabled";
 import { CoordinatorNeedsYou } from "../components/coordinator/CoordinatorNeedsYou";
-import { CheckCircle2, Inbox } from "lucide-react";
+import { CheckCircle2, Inbox, Columns2 } from "lucide-react";
+import { Button } from "../components/ui/button";
 import type { Agent, AttentionItem, AttentionSubject } from "@paperclipai/shared";
 import { useNavigate, useSearchParams } from "@/lib/router";
 import { attentionApi } from "../api/attention";
@@ -88,11 +89,27 @@ function findScrollContainer(element: HTMLElement | null): HTMLElement | null {
 }
 
 export function WhatNeedsMe() {
-  const { enabled } = useCoordinatorWorkspaceEnabled();
-  return enabled ? <CoordinatorNeedsYou /> : <ClassicWhatNeedsMe />;
+  const { enabled, userId } = useCoordinatorWorkspaceEnabled();
+  return enabled ? <CoordinatorNeedsYou /> : <ClassicWhatNeedsMe userId={userId} />;
 }
 
-function ClassicWhatNeedsMe() {
+function ClassicWhatNeedsMe({ userId }: { userId: string | null }) {
+  const preferenceKey = userId ? `paperclip:decisions-layout:${userId}` : null;
+  const [layout, setLayout] = useState({ sideBySide: false, width: 768 });
+  useEffect(() => {
+    let next = { sideBySide: false, width: 768 };
+    try {
+      const saved = preferenceKey ? JSON.parse(localStorage.getItem(preferenceKey) ?? "null") : null;
+      if (saved && typeof saved.sideBySide === "boolean" && typeof saved.width === "number" && Number.isFinite(saved.width)) {
+        next = { sideBySide: saved.sideBySide, width: Math.max(600, Math.min(1800, saved.width)) };
+      }
+    } catch { /* Ignore unavailable or invalid local preferences. */ }
+    setLayout(next);
+  }, [preferenceKey]);
+  const updateLayout = (next: typeof layout) => {
+    setLayout(next);
+    try { if (preferenceKey) localStorage.setItem(preferenceKey, JSON.stringify(next)); } catch { /* Storage can be unavailable. */ }
+  };
   const { selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -538,9 +555,20 @@ function ClassicWhatNeedsMe() {
   const hasAnything = activeItems.length > 0 || snoozedItems.length > 0 || dismissedItems.length > 0;
 
   return (
-    <div ref={rootRef} className="max-w-3xl space-y-4">
+    <div ref={rootRef} className="decisions-layout space-y-4" data-question-layout={layout.sideBySide ? "side" : "stacked"} style={{ maxWidth: layout.width }}>
       <div className="space-y-4">
-        <h1 className="text-xl font-bold">Decisions</h1>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h1 className="text-xl font-bold">Decisions</h1>
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              Width
+              <input type="range" min={600} max={1800} step={20} value={layout.width} aria-label="Decisions column width" onChange={(event) => updateLayout({ ...layout, width: Number(event.target.value) })} />
+            </label>
+            <Button type="button" variant="outline" size="sm" aria-pressed={layout.sideBySide} onClick={() => updateLayout({ ...layout, sideBySide: !layout.sideBySide, width: !layout.sideBySide ? Math.max(layout.width, 1200) : layout.width })}>
+              <Columns2 aria-hidden /> Questions on right
+            </Button>
+          </div>
+        </div>
         <DecisionsToolbar
           query={searchQuery}
           onQueryChange={setSearchQuery}

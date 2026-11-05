@@ -548,11 +548,12 @@ function QuestionFormForRequest({
           role="region"
           aria-label="Question context"
           tabIndex={0}
-          className="mb-3 max-h-96 overflow-auto text-sm text-muted-foreground"
+          className="tc-question-context mb-3 max-h-96 overflow-auto text-sm text-muted-foreground"
         >
           <MarkdownBody mediaMode="reference" linkIssueReferences={false}>{questionSet.description}</MarkdownBody>
         </div>
       ) : null}
+      <div className="tc-question-answers">
       {question.answerMode === "text" && presentation !== "decision" ? (
         <div className="mb-2 flex items-center gap-3 text-xs text-muted-foreground">
           {question.answerMode === "text" ? <span>Write an answer</span> : null}
@@ -736,6 +737,7 @@ function QuestionFormForRequest({
           </Button>
         </div>
       </DecisionCardFooter>
+      </div>
     </div>
   );
 }

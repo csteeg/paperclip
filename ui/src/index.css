@@ -5292,3 +5292,25 @@ html:not(.dark) .coordinator-sidebar {
 @media (prefers-reduced-motion: reduce) {
   .agent-selection-bar { transition: none; transform: translate(-50%, 0); }
 }
+
+/* The Decisions desk can give context and its answer form separate columns. */
+.decisions-layout { width: 100%; container-type: inline-size; }
+.decisions-layout[data-question-layout="side"] .attention-queue-row { overflow: clip; }
+@container (min-width: 60rem) {
+  .decisions-layout[data-question-layout="side"] .tc-question-page:has(.tc-question-context) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: calc(var(--spacing) * 6);
+    align-items: start;
+  }
+  .decisions-layout[data-question-layout="side"] .tc-question-context {
+    max-height: none;
+    overflow: visible;
+  }
+  .decisions-layout[data-question-layout="side"] .tc-question-answers {
+    position: sticky;
+    top: calc(var(--spacing) * 4);
+    max-height: calc(100vh - calc(var(--spacing) * 8));
+    overflow-y: auto;
+  }
+}

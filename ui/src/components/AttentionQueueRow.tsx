@@ -235,7 +235,7 @@ export const AttentionQueueRow = memo(function AttentionQueueRow({
   return (
     <div
       className={cn(
-        "@container relative flex flex-col gap-4 overflow-hidden rounded-xl border border-border bg-card px-4 pt-3 pb-4",
+        "attention-queue-row @container relative flex flex-col gap-4 overflow-hidden rounded-xl border border-border bg-card px-4 pt-3 pb-4",
         // The feed is uncapped, so off-screen rows must not cost layout/paint
         // while scrolling. The intrinsic-size estimate only matters before a
         // row's first paint; `auto` keeps the real measured height afterwards.
