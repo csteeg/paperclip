@@ -5045,3 +5045,4 @@ export async function runChildProcess(
       .catch(reject);
   });
 }
+export { managedClaudeRoutingEnvironment } from "./managed-claude-routing.js";

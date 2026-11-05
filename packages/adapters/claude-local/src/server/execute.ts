@@ -37,6 +37,7 @@ import {
   parseJson,
   applyPaperclipWorkspaceEnv,
   buildPaperclipEnv,
+  managedClaudeRoutingEnvironment,
   materializePaperclipSkillCopy,
   isPaperclipSkillSourceMissing,
   readPaperclipRuntimeSkillEntries,
@@ -885,8 +886,10 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const runtimeRemoteExecution = parseObject(runtimeSessionParams.remoteExecution);
   const runtimePromptBundleKey = asString(runtimeSessionParams.promptBundleKey, "");
   const runtimeMcpServerIdentity = asString(runtimeSessionParams.mcpServerIdentity, "");
-  const claudeProjectSettingsAllowed = Boolean(config.managedAiConnection) &&
+  const claudeProjectSettingsAllowed = Boolean(config.managedAiConnection) && !executionTargetIsRemote &&
     parseObject(context.paperclipWorkspace).claudeProjectSettingsAllowed === true;
+  let managedRoutingDir: string | null = null;
+  let managedRoutingSettingsPath: string | null = null;
   const matchingProjectTrust = (runtimeSessionParams.claudeProjectSettingsAllowed === true) === claudeProjectSettingsAllowed;
   const hasMatchingPromptBundle =
     runtimePromptBundleKey.length === 0 || runtimePromptBundleKey === promptBundle.bundleKey;
@@ -1015,6 +1018,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   ) => {
     const args = ["--print", "--output-format", "stream-json", "--verbose"];
     if (config.managedAiConnection) args.push("--setting-sources", claudeProjectSettingsAllowed ? "user,project" : "user");
+    if (managedRoutingSettingsPath) args.push("--settings", managedRoutingSettingsPath);
     if (resumeSessionId) args.push("--resume", resumeSessionId);
     args.push(...buildClaudeExecutionPermissionArgs({
       dangerouslySkipPermissions,
@@ -1492,6 +1496,18 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   };
 
   try {
+    if (claudeProjectSettingsAllowed) {
+      managedRoutingDir = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-claude-routing-"));
+      managedRoutingSettingsPath = path.join(managedRoutingDir, "settings.json");
+      await fs.writeFile(managedRoutingSettingsPath, JSON.stringify({
+        apiKeyHelper: "",
+        env: managedClaudeRoutingEnvironment(effectiveEnv),
+      }), { mode: 0o600, flag: "wx" });
+      if (localProcessSandbox) {
+        localProcessSandbox.managedPaths ??= [];
+        localProcessSandbox.managedPaths.push({ path: managedRoutingDir, access: "ro" });
+      }
+    }
     const minimumCliVersion = passesConfiguredModel && claudeCommandLooksLike(command, "claude")
       ? minimumClaudeCliVersionForModel(model)
       : null;
@@ -1659,18 +1675,22 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     return toAdapterResult(initial, { fallbackSessionId: runtimeSessionId || runtime.sessionId });
   } finally {
     try {
-      await providerStop.collectBeforeRestore();
+      try {
+        await providerStop.collectBeforeRestore();
+      } finally {
+        if (paperclipBridge) {
+          await paperclipBridge.stop();
+        }
+        if (restoreRemoteWorkspace) {
+          await onLog(
+            "stdout",
+            `[paperclip] Restoring workspace changes from ${describeAdapterExecutionTarget(executionTarget)}.\n`,
+          );
+          await restoreRemoteWorkspace();
+        }
+      }
     } finally {
-      if (paperclipBridge) {
-        await paperclipBridge.stop();
-      }
-      if (restoreRemoteWorkspace) {
-        await onLog(
-          "stdout",
-          `[paperclip] Restoring workspace changes from ${describeAdapterExecutionTarget(executionTarget)}.\n`,
-        );
-        await restoreRemoteWorkspace();
-      }
+      if (managedRoutingDir) await fs.rm(managedRoutingDir, { recursive: true, force: true });
     }
   }
 }
