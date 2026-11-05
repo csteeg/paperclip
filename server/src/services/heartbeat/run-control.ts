@@ -1462,15 +1462,27 @@ export function createHeartbeatRunControl(db: Db, dependencies: HeartbeatRunCont
               if (!dependencies.verifyStartupCleanup) throw conflict("Native startup cleanup worker unavailable");
               await dependencies.verifyStartupCleanup(startupCleanupRun);
             } else {
-              await cancelHeartbeatNativeRun({
-                db,
-                runId: run.id,
-                reason,
-                runtimeMode: run.runtimeMode,
-                ...(options.cancellationRequestId ? { cancellationRequestId: options.cancellationRequestId } : {}),
-              });
+              try {
+                await cancelHeartbeatNativeRun({
+                  db,
+                  runId: run.id,
+                  reason,
+                  runtimeMode: run.runtimeMode,
+                  ...(options.cancellationRequestId ? { cancellationRequestId: options.cancellationRequestId } : {}),
+                });
+              } catch (error) {
+                // The durable Stop intent is recorded, but its owner (a native
+                // session still opening, or a remote controller) has not yet
+                // acknowledged it. The owner honors it later; answer honestly
+                // instead of reporting an internal failure.
+                if (error instanceof Error && error.message === "native_cancellation_pending_recovery") {
+                  throw conflict("Stop is recorded; the native session is still starting and will stop when it opens.",
+                    { code: "native_stop_pending", runId: run.id });
+                }
+                throw error;
+              }
             }
-            if (running) {
+            if (running && !(control && running.cancellationSignal === control.controller.signal)) {
               await terminateHeartbeatRunProcess({
                 pid: running.child.pid,
                 processGroupId: running.processGroupId,
@@ -1486,6 +1498,7 @@ export function createHeartbeatRunControl(db: Db, dependencies: HeartbeatRunCont
             terminationSettled = true;
           } finally {
             if (
+              !(control && running?.cancellationSignal === control.controller.signal) &&
               (!processCancellationSettlement || terminationSettled) &&
               runningProcesses.get(run.id) === running
             ) {

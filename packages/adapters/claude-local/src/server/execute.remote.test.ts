@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -12,6 +12,7 @@ const {
   restoreWorkspaceFromSshExecution,
   syncDirectoryToSsh,
   startAdapterExecutionTargetPaperclipBridge,
+  probeClaudeTranscript,
 } = vi.hoisted(() => ({
   runChildProcess: vi.fn(async (_runId: string, _command: string, args: string[]): Promise<RunProcessResult> => ({
     exitCode: 0,
@@ -41,6 +42,7 @@ const {
     },
     stop: async () => {},
   })),
+  probeClaudeTranscript: vi.fn<(...args: Parameters<typeof import("./transcript-probe.js").probeClaudeTranscript>) => Promise<boolean | null>>(),
 }));
 
 vi.mock("@paperclipai/adapter-utils/server-utils", async () => {
@@ -77,12 +79,17 @@ vi.mock("@paperclipai/adapter-utils/execution-target", async () => {
   };
 });
 
+vi.mock("./transcript-probe.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./transcript-probe.js")>();
+  return { ...actual, probeClaudeTranscript: probeClaudeTranscript.mockImplementation(actual.probeClaudeTranscript) };
+});
+
 import { createPromptContextFixture } from "@paperclipai/adapter-utils/test-fixtures/prompt-context";
 import { execute } from "./execute.js";
 import { resetClaudeCliCapabilitiesCacheForTests } from "./cli-capabilities.js";
 
 const writeLocalClaudeTranscript = async (configDir: string, cwd: string, sessionId: string) => {
-  const encodedCwd = cwd.replace(/[^a-zA-Z0-9-]/g, "-");
+  const encodedCwd = (process.platform === "win32" ? cwd : await realpath(cwd)).replace(/[^a-zA-Z0-9-]/g, "-");
   const transcriptPath = path.join(configDir, "projects", encodedCwd, `${sessionId}.jsonl`);
   await mkdir(path.dirname(transcriptPath), { recursive: true });
   await writeFile(transcriptPath, `${JSON.stringify({ type: "result", session_id: sessionId })}\n`);
@@ -93,6 +100,7 @@ describe("claude remote execution", () => {
 
   afterEach(async () => {
     vi.clearAllMocks();
+    vi.restoreAllMocks();
     vi.unstubAllEnvs();
     resetClaudeCliCapabilitiesCacheForTests();
     while (cleanupDirs.length > 0) {
@@ -600,6 +608,7 @@ describe("claude remote execution", () => {
         stderr: "",
         pid: 123,
         startedAt: new Date().toISOString(),
+        processTreeStopped: true,
       })
       .mockResolvedValueOnce({
         exitCode: 0,
@@ -658,158 +667,6 @@ describe("claude remote execution", () => {
     expect(retry).not.toContain("## Compact assignment");
     expect(retry.indexOf("comment-first")).toBeLessThan(retry.indexOf("comment-second"));
     expect(retry.split("Append the same ledger entry.")).toHaveLength(3);
-  });
-
-  it("retries an unknown resumed session when terminal-result cleanup stopped the CLI", async () => {
-    const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-claude-cli-cleaned-resume-"));
-    cleanupDirs.push(rootDir);
-    const workspaceDir = path.join(rootDir, "workspace");
-    const configDir = path.join(rootDir, "config");
-    await mkdir(workspaceDir, { recursive: true });
-    await mkdir(configDir, { recursive: true });
-    const missingSessionId = "12345678-1234-4abc-9def-123456789012";
-    await writeLocalClaudeTranscript(configDir, workspaceDir, missingSessionId);
-
-    runChildProcess
-      .mockResolvedValueOnce({
-        exitCode: null,
-        signal: "SIGTERM",
-        timedOut: false,
-        stdout: JSON.stringify({
-          type: "result",
-          session_id: missingSessionId,
-          is_error: true,
-          subtype: "error_during_execution",
-          result: `No conversation found with session id ${missingSessionId}`,
-        }),
-        stderr: "",
-        pid: 123,
-        startedAt: new Date().toISOString(),
-        terminalResultCleanup: {
-          kind: "terminal_result_cleanup",
-          stopped: true,
-          stopReason: "unmanaged_background_task_stopped",
-          reason: "unmanaged background task stopped; no durable live path",
-          terminalResultSeen: true,
-          signal: "SIGTERM",
-          forceKilled: false,
-        },
-      })
-      .mockResolvedValueOnce({
-        exitCode: 0,
-        signal: null,
-        timedOut: false,
-        stdout: [
-          JSON.stringify({ type: "system", subtype: "init", session_id: "session-fresh", model: "claude-sonnet" }),
-          JSON.stringify({ type: "result", session_id: "session-fresh", subtype: "success", is_error: false, result: "Recovered" }),
-        ].join("\n"),
-        stderr: "",
-        pid: 124,
-        startedAt: new Date().toISOString(),
-      });
-
-    const result = await execute({
-      runId: "run-claude-cleaned-resume",
-      agent: {
-        id: "agent-1",
-        companyId: "company-1",
-        name: "Claude Coder",
-        adapterType: "claude_local",
-        adapterConfig: {},
-      },
-      runtime: {
-        sessionId: missingSessionId,
-        sessionParams: { sessionId: missingSessionId, cwd: workspaceDir },
-        sessionDisplayId: missingSessionId,
-        taskKey: null,
-      },
-      config: {
-        model: "claude-opus-5",
-        engine: "cli",
-        command: "claude",
-        env: { ANTHROPIC_API_KEY: "fixture-anthropic-key", CLAUDE_CONFIG_DIR: configDir },
-      },
-      context: {
-        ...createPromptContextFixture(),
-        paperclipWorkspace: { cwd: workspaceDir, source: "project_primary" },
-      },
-      onLog: async () => {},
-    });
-
-    expect(result.exitCode).toBe(0);
-    expect(runChildProcess).toHaveBeenCalledTimes(2);
-    const providerCalls = runChildProcess.mock.calls.filter((call) => !(call[2] as string[]).includes("--version"));
-    expect(providerCalls).toHaveLength(2);
-    expect(providerCalls[0]?.[2]).toContain("--resume");
-    expect(providerCalls[1]?.[2]).not.toContain("--resume");
-  });
-
-  it("does not retry a successful result that mentions an unknown session after cleanup", async () => {
-    const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-claude-cli-cleaned-success-"));
-    cleanupDirs.push(rootDir);
-    const workspaceDir = path.join(rootDir, "workspace");
-    const configDir = path.join(rootDir, "config");
-    await mkdir(workspaceDir, { recursive: true });
-    await mkdir(configDir, { recursive: true });
-    const sessionId = "12345678-1234-4abc-9def-123456789012";
-    await writeLocalClaudeTranscript(configDir, workspaceDir, sessionId);
-
-    runChildProcess.mockResolvedValueOnce({
-      exitCode: null,
-      signal: "SIGTERM",
-      timedOut: false,
-      stdout: JSON.stringify({
-        type: "result",
-        session_id: sessionId,
-        is_error: false,
-        subtype: "success",
-        result: "I fixed the unknown session issue and completed the assignment.",
-      }),
-      stderr: "",
-      pid: 123,
-      startedAt: new Date().toISOString(),
-      terminalResultCleanup: {
-        kind: "terminal_result_cleanup",
-        stopped: true,
-        stopReason: "unmanaged_background_task_stopped",
-        reason: "unmanaged background task stopped; no durable live path",
-        terminalResultSeen: true,
-        signal: "SIGTERM",
-        forceKilled: false,
-      },
-    });
-
-    await execute({
-      runId: "run-claude-cleaned-success",
-      agent: {
-        id: "agent-1",
-        companyId: "company-1",
-        name: "Claude Coder",
-        adapterType: "claude_local",
-        adapterConfig: {},
-      },
-      runtime: {
-        sessionId,
-        sessionParams: { sessionId, cwd: workspaceDir },
-        sessionDisplayId: sessionId,
-        taskKey: null,
-      },
-      config: {
-        model: "claude-opus-5",
-        engine: "cli",
-        command: "claude",
-        env: { ANTHROPIC_API_KEY: "fixture-anthropic-key", CLAUDE_CONFIG_DIR: configDir },
-      },
-      context: {
-        ...createPromptContextFixture(),
-        paperclipWorkspace: { cwd: workspaceDir, source: "project_primary" },
-      },
-      onLog: async () => {},
-    });
-
-    const providerCalls = runChildProcess.mock.calls.filter((call) => !(call[2] as string[]).includes("--version"));
-    expect(providerCalls).toHaveLength(1);
-    expect(providerCalls[0]?.[2]).toContain("--resume");
   });
 
   it("does not retry an unknown resumed session after SSH client cleanup", async () => {

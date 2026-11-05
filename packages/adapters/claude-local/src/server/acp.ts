@@ -46,6 +46,7 @@ import {
   materializeRemoteClaudeConfig,
   prepareClaudeConfigSeed,
   prepareSandboxClaudeProbeRuntime,
+  resolveRemoteClaudeToolShellPrefixPath,
 } from "./claude-config.js";
 import { managedClaudeProfileEnvironmentIdentity, prepareManagedClaudeAcpConfig } from "./managed-acp-config.js";
 import {
@@ -300,13 +301,15 @@ async function prepareClaudeRemoteManagedHome(
   const remoteClaudeConfigSeedDir =
     stagedRuntime.assetDirs["config-seed"] ?? path.posix.join(remoteClaudeRuntimeRoot, "config-seed");
   const remoteClaudeConfigDir = path.posix.join(remoteClaudeRuntimeRoot, "config");
+  const remoteToolShellPrefixPath = resolveRemoteClaudeToolShellPrefixPath(env, remoteClaudeRuntimeRoot);
 
   await onLog("stdout", `[paperclip] Materializing Claude auth/config into ${remoteClaudeConfigDir}.\n`);
-  await materializeRemoteClaudeConfig({
+  const { toolShellPrefixInstalled } = await materializeRemoteClaudeConfig({
     runId,
     target: executionTarget,
     remoteClaudeConfigDir,
     remoteClaudeConfigSeedDir,
+    remoteToolShellPrefixPath,
     options: {
       cwd: stagedRuntime.workspaceRemoteDir ?? input.workspaceLocalDir,
       env,
@@ -320,6 +323,9 @@ async function prepareClaudeRemoteManagedHome(
   if (input.config.managedAiConnection) {
     env.CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL = "1";
     env.CLAUDE_CODE_PLUGIN_CACHE_DIR = path.posix.join(remoteClaudeConfigDir, "plugins");
+  }
+  if (toolShellPrefixInstalled && remoteToolShellPrefixPath) {
+    env.CLAUDE_CODE_SHELL_PREFIX = remoteToolShellPrefixPath;
   }
   return { stagedRuntime, teardown: registerWorkspaceSyncBack(stagedRuntime) };
 }

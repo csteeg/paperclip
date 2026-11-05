@@ -85,6 +85,7 @@ import {
   prepareManagedClaudePluginRuntime,
   prepareClaudeConfigSeed,
   resolveManagedClaudeRuntimeStateDir,
+  resolveRemoteClaudeToolShellPrefixPath,
   resolveSharedClaudeConfigDir,
   writePaperclipClaudeMcpConfig,
 } from "./claude-config.js";
@@ -98,6 +99,7 @@ import { prepareCompatibleClaudeCommand } from "./sandbox-cli-version.js";
 import { resolveClaudeDesiredSkillNames } from "./skills.js";
 import { isBedrockModelId } from "./models.js";
 import { prepareClaudePromptBundle } from "./prompt-cache.js";
+import { probeClaudeTranscript, resolveTranscriptConfigDir } from "./transcript-probe.js";
 import { buildClaudeExecutionPermissionArgs, claudeSandboxPermissionEnv } from "./permissions.js";
 import { resolveClaudeModel, resolveClaudeRuntimeSettings, SANDBOX_INSTALL_COMMAND } from "../index.js";
 import {
@@ -116,37 +118,7 @@ async function hasLocalClaudeSessionTranscript(input: {
   // Claude Code stores CLI transcripts under the effective config directory,
   // keyed by its encoded project cwd and session id. Only call this for local
   // execution; a host-side miss says nothing about a remote execution host.
-  const encodedCwd = input.cwd.replace(/[^a-zA-Z0-9-]/g, "-");
-  const transcriptPath = path.join(
-    input.configDir,
-    "projects",
-    encodedCwd,
-    `${input.sessionId}.jsonl`,
-  );
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    const inspection = fs.stat(transcriptPath).then(
-      (stat) => stat.isFile(),
-      (error: NodeJS.ErrnoException) => {
-        if (error.code === "ENOENT" || error.code === "ENOTDIR") return false;
-        return null;
-      },
-    );
-    return await Promise.race([
-      inspection,
-      new Promise<null>((resolve) => {
-        timer = setTimeout(() => resolve(null), 500);
-      }),
-    ]);
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT" || code === "ENOTDIR") return false;
-    // If the configured storage cannot be inspected, preserve Claude's normal
-    // resume attempt instead of turning an I/O problem into a false miss.
-    return null;
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
+  return probeClaudeTranscript(input);
 }
 
 interface ClaudeExecutionInput {
@@ -805,18 +777,20 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       "plugins",
     );
   }
-  if (remoteClaudeConfigDir && remoteClaudeConfigSeedDir) {
+  if (remoteClaudeConfigDir && remoteClaudeConfigSeedDir && remoteClaudeRuntimeRoot) {
     env.CLAUDE_CONFIG_DIR = remoteClaudeConfigDir;
     loggedEnv.CLAUDE_CONFIG_DIR = remoteClaudeConfigDir;
+    const remoteToolShellPrefixPath = resolveRemoteClaudeToolShellPrefixPath(env, remoteClaudeRuntimeRoot);
     await onLog(
       "stdout",
       `[paperclip] Materializing Claude auth/config into ${remoteClaudeConfigDir}.\n`,
     );
-    await materializeRemoteClaudeConfig({
+    const { toolShellPrefixInstalled } = await materializeRemoteClaudeConfig({
       runId,
       target: executionTarget,
       remoteClaudeConfigDir,
       remoteClaudeConfigSeedDir,
+      remoteToolShellPrefixPath,
       options: {
         cwd,
         env,
@@ -825,6 +799,10 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         onLog,
       },
     });
+    if (toolShellPrefixInstalled && remoteToolShellPrefixPath) {
+      env.CLAUDE_CODE_SHELL_PREFIX = remoteToolShellPrefixPath;
+      loggedEnv.CLAUDE_CODE_SHELL_PREFIX = remoteToolShellPrefixPath;
+    }
   }
   let paperclipBridge: Awaited<ReturnType<typeof startAdapterExecutionTargetPaperclipBridge>> = null;
   if (executionTargetIsRemote && adapterExecutionTargetUsesPaperclipBridge(runtimeExecutionTarget)) {
@@ -881,10 +859,14 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     // Refreshing tools does not invalidate the saved conversation.
     hasMatchingSessionCwd &&
     hasMatchingExecutionTarget;
+  const localResumeCandidate = canResumeSession && !executionTargetIsRemote;
+  if (localResumeCandidate) await ctx.onCancellationReady?.();
   let sessionId = canResumeSession ? runtimeSessionId : null;
+  const localClaudeEnv = { ...process.env, ...env };
+  const localClaudeConfigDir = resolveTranscriptConfigDir(localClaudeEnv, effectiveExecutionCwd);
   if (sessionId && !executionTargetIsRemote) {
     const transcriptAvailable = await hasLocalClaudeSessionTranscript({
-      configDir: resolveSharedClaudeConfigDir(effectiveEnv),
+      configDir: localClaudeConfigDir,
       cwd: effectiveExecutionCwd,
       sessionId,
     });
@@ -952,6 +934,29 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const passesConfiguredModel = Boolean(
     model && (!isBedrockAuth(modelEnv) || isBedrockModelId(model)),
   );
+  const windowsLocalResume = process.platform === "win32" && localResumeCandidate;
+  const cancelledBeforeProviderStart = (): AdapterExecutionResult => ({
+    exitCode: null,
+    signal: null,
+    timedOut: false,
+    errorCode: "cancelled",
+    errorMessage: "Claude execution was cancelled before provider startup",
+    executionRecovery: { kind: "bootstrap", providerWorkStarted: false },
+    resultJson: {
+      executionCancellation: { state: "acknowledged", acknowledgedAt: new Date().toISOString() },
+    },
+  });
+  const cancelledAfterProviderStop = (): AdapterExecutionResult => ({
+    exitCode: null,
+    signal: null,
+    timedOut: false,
+    errorCode: "cancelled",
+    errorMessage: "Claude execution was cancelled",
+    resultJson: {
+      executionCancellation: { state: "acknowledged", acknowledgedAt: new Date().toISOString() },
+    },
+  });
+  let attemptSpawned = false;
 
   const buildClaudeArgs = (
     resumeSessionId: string | null,
@@ -1005,6 +1010,8 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   };
 
   const runAttempt = async (resumeSessionId: string | null) => {
+    attemptSpawned = false;
+    if (localResumeCandidate && ctx.signal?.aborted) throw ctx.signal.reason ?? new Error("Claude execution cancelled");
     await hydrateFreshSessionHandoff(ctx, { resumedSession: Boolean(resumeSessionId) });
     const renderedBootstrapPrompt =
       !resumeSessionId && bootstrapPromptTemplate.trim().length > 0
@@ -1086,16 +1093,22 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       stdin: prompt,
       timeoutSec,
       graceSec,
-      onSpawn,
+      onSpawn: localResumeCandidate
+        ? async (meta) => { attemptSpawned = true; await onSpawn?.(meta); }
+        : onSpawn,
       onRuntimeProgress: ctx.onRuntimeProgress,
       onLog: accountingLog,
       runLogTail: paperclipBridge?.runLogTail,
       settleRunDisposition: paperclipBridge?.settleRunDisposition,
       terminalResultCleanup: {
         graceMs: terminalResultCleanupGraceMs,
+        windowsProcessTreeGuard: Boolean(resumeSessionId) || windowsLocalResume,
         hasTerminalResult: ({ stdout }) => parseClaudeStreamJson(stdout).resultJson !== null,
       },
       localProcessSandbox,
+      ...(localResumeCandidate
+        ? { signal: ctx.signal }
+        : {}),
     });
     await accountingLog.flush();
 
@@ -1407,6 +1420,25 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     };
   };
 
+  const holdUnverifiedStop = (
+    attempt: Parameters<typeof toAdapterResult>[0],
+    fallbackSessionId: string | null,
+  ): AdapterExecutionResult => {
+    const result = toAdapterResult(attempt, { fallbackSessionId });
+    return {
+      ...result,
+      errorCode: "provider_stop_unconfirmed",
+      errorFamily: null,
+      retryNotBefore: null,
+      errorMessage: "Claude finished, but its process tree could not be verified as stopped; its instruction changes remain pending collection.",
+      resultJson: { ...result.resultJson, providerStopUnconfirmed: true },
+      sessionId: undefined,
+      sessionParams: undefined,
+      sessionDisplayId: undefined,
+      clearSession: false,
+    };
+  };
+
   try {
     const minimumCliVersion = passesConfiguredModel && claudeCommandLooksLike(command, "claude")
       ? minimumClaudeCliVersionForModel(model)
@@ -1482,15 +1514,30 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       }
     }
 
-    const initial = await runAttempt(sessionId ?? null);
+    if (localResumeCandidate && ctx.signal?.aborted) return cancelledBeforeProviderStart();
+    let initial: Awaited<ReturnType<typeof runAttempt>>;
+    try {
+      initial = await runAttempt(sessionId ?? null);
+    } catch (error) {
+      if (localResumeCandidate && ctx.signal?.aborted && !attemptSpawned) return cancelledBeforeProviderStart();
+      throw error;
+    }
+    if (localResumeCandidate && initial.proc.processTreeStopped === false) {
+      return holdUnverifiedStop(initial, runtimeSessionId || runtime.sessionId);
+    }
+    if (localResumeCandidate && ctx.signal?.aborted && initial.proc.processTreeStopped === true) {
+      return cancelledAfterProviderStop();
+    }
     const stoppedAfterTerminalResult = initial.proc.terminalResultCleanup?.terminalResultSeen === true;
     const sessionErrorKind =
       sessionId &&
       !initial.proc.timedOut &&
+      !(!executionTargetIsRemote && (process.platform === "win32" || stoppedAfterTerminalResult) && initial.proc.processTreeStopped !== true) &&
       ((initial.proc.exitCode ?? 0) !== 0 ||
         (stoppedAfterTerminalResult &&
           !executionTargetIsRemote &&
           initial.parsed?.is_error === true)) &&
+      (!stoppedAfterTerminalResult || initial.parsed?.is_error === true) &&
       initial.parsed
         ? isClaudeUnknownSessionError(initial.parsed)
           ? "unknown"
@@ -1513,7 +1560,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         `[paperclip] Claude resume session "${sessionId}" ${reason}; retrying with a fresh session.\n`,
       );
       if (sessionErrorKind === "poisoned" && !executionTargetIsRemote) {
-        const claudeConfigDir = resolveSharedClaudeConfigDir(effectiveEnv);
+        const claudeConfigDir = localClaudeConfigDir;
         // Mirrors Claude Code's project-dir encoding: non-alphanumeric chars become "-"; existing hyphens pass through.
         const encodedCwd = effectiveExecutionCwd.replace(/[^a-zA-Z0-9-]/g, "-");
         const poisonedJsonlPath = path.join(claudeConfigDir, "projects", encodedCwd, `${sessionId}.jsonl`);
@@ -1532,7 +1579,28 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
           }
         }
       }
-      const retry = await runAttempt(null);
+      if (localResumeCandidate && ctx.signal?.aborted) {
+        return initial.proc.processTreeStopped === true
+          ? cancelledAfterProviderStop()
+          : holdUnverifiedStop(initial, runtimeSessionId || runtime.sessionId);
+      }
+      let retry: Awaited<ReturnType<typeof runAttempt>>;
+      try {
+        retry = await runAttempt(null);
+      } catch (error) {
+        if (localResumeCandidate && ctx.signal?.aborted && !attemptSpawned) {
+          return initial.proc.processTreeStopped === true
+            ? cancelledAfterProviderStop()
+            : holdUnverifiedStop(initial, runtimeSessionId || runtime.sessionId);
+        }
+        throw error;
+      }
+      if (localResumeCandidate && retry.proc.processTreeStopped === false) {
+        return holdUnverifiedStop(retry, null);
+      }
+      if (localResumeCandidate && ctx.signal?.aborted && retry.proc.processTreeStopped === true) {
+        return cancelledAfterProviderStop();
+      }
       return toAdapterResult(retry, { fallbackSessionId: null, clearSessionOnMissingSession: true });
     }
 

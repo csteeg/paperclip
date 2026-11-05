@@ -4,6 +4,7 @@ import { reconcileTaskChatRetryReceipts } from "./task-retry.js";
 import { registerIssueRecoveryWork } from "./recovery/work.js";
 import { registerRunDispatchWork } from "./heartbeat/dispatch-work.js";
 import { NATIVE_RETAINED_OWNER_WAIT } from "./native-runtime/native-controller-recovery.js";
+import { describeFailedAttachment } from "./native-runtime/remote-warm-session-recovery.js";
 import { externalConversationSettlementWork } from "./external-conversation-settlement-work.js";
 import { nativeRecoveryNoticeWork } from "./native-runtime/native-recovery-notice-work.js";
 import { nativeRunProjectionWork } from "./native-runtime/native-run-projection-work.js";
@@ -407,6 +408,10 @@ import {
   emitAgentTaskRunById,
 } from "./agent-task-run-telemetry.js";
 import { reportRunFailure } from "./run-failure-report.js";
+import {
+  ReviewedChatBindingDeniedError,
+  type ReviewedChatBindingDenialReason,
+} from "./reviewed-chat-binding-diagnostics.js";
 
 import { collectRunFailureSecretValues, type RunFailureReportOptions } from "./run-failure-diagnostics.js";
 import { companySkillService } from "./company-skills.js";
@@ -469,7 +474,6 @@ import {
   parseIssueAssigneeAdapterOverrides,
   gateProjectExecutionWorkspacePolicy,
   parseIssueExecutionWorkspaceSettings,
-  parseProjectExecutionWorkspacePolicy,
   resolveExecutionWorkspaceMode,
   selectEnvironmentExecutionWorkspaceSettings,
 } from "./execution-workspace-policy.js";
@@ -533,7 +537,7 @@ import {
 
 import { resolveAndRetainRunTrustPreset } from "./run-trust-preset.js";
 
-import { effectiveProjectWorkspacePolicy } from "./project-workspace-provider.js";
+import { effectiveProjectWorkspacePolicy, sourcelessProjectWorkspacePolicy } from "./project-workspace-provider.js";
 import type { PluginWorkerManager } from "./plugin-worker-manager.js";
 
 import { computeTaskDrain, applyTaskDrain, startTaskDrain, stopTaskDrain, readTaskDrain } from "./task-admission.js";
@@ -2242,6 +2246,7 @@ export function heartbeatService(
             context.interactionKind === "ask_user_questions" &&
             ["in_progress", "in_review"].includes(issueContext?.status ?? "")))
       ) {
+        let denialReason: ReviewedChatBindingDenialReason | null = null;
         const attested = await attestReviewedExternalChatRun({
           db,
           companyId: agent.companyId,
@@ -2252,9 +2257,11 @@ export function heartbeatService(
           onQuestionResponseAttested: (answeredAtMs) => {
             attestedQuestionResponseAtMs = answeredAtMs;
           },
+          onDenied: (reason) => {
+            denialReason = reason;
+          },
         });
-        if (!attested)
-          throw new Error("reviewed_chat_execution_binding_not_authorized");
+        if (!attested) throw new ReviewedChatBindingDeniedError(denialReason);
         context[PAPERCLIP_EXTERNAL_CHAT_EXECUTION_BOUND_KEY] = true;
       }
       const wakeCommentId = deriveCommentId(context, null);
@@ -2440,7 +2447,7 @@ export function heartbeatService(
       );
       const parsedProjectExecutionWorkspacePolicy = workspacePolicyContext?.hasWorkspace
         ? await effectiveProjectWorkspacePolicy(db, agent.companyId, workspacePolicyContext.executionWorkspacePolicy, workspacePolicyContext.hasGitSource)
-        : parseProjectExecutionWorkspacePolicy(workspacePolicyContext?.executionWorkspacePolicy);
+        : sourcelessProjectWorkspacePolicy(workspacePolicyContext?.executionWorkspacePolicy);
       const projectExecutionWorkspacePolicy =
         applyDefaultIsolatedExecutionWorkspacePolicy({
           projectPolicy: gateProjectExecutionWorkspacePolicy(
@@ -3638,6 +3645,13 @@ export function heartbeatService(
               failureDetail: coordinator?.failureDetail ?? null,
             },
           }).catch(() => undefined);
+          const failedAttachment = describeFailedAttachment(
+            (coordinator?.failureDetail as { message?: unknown } | null)?.message,
+          );
+          if (failedAttachment) {
+            await appendRunEvent(run, { eventType: "lifecycle", stream: "system", level: "warn", message: failedAttachment,
+              payload: { code: "native_run_attach_failed" } }).catch(() => undefined);
+          }
           if (coordinator?.nextAttemptAt) {
             scheduleNativeSessionResumeDispatch(
               run.id,
