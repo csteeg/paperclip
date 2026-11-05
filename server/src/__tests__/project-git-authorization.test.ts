@@ -374,4 +374,28 @@ const support = external ? { supported: true } : await getEmbeddedPostgresTestSu
       expect((await request(app("A")).put(url).send({ grantId: null })).status).toBe(200);
     });
 
+    it("only lets a board writer grant Claude workspace trust and revokes it when the source changes", async () => {
+      const f = await projectAuthorizationFixture();
+      function app(agent: boolean) {
+        const app = express(); app.use(express.json());
+        app.use((req, _res, next) => { req.actor = agent ? { type: "agent", agentId: f.input.agentId, companyId: f.input.companyId }
+          : { type: "board", source: "session", userId: "A", companyIds: [f.input.companyId], isInstanceAdmin: true }; next(); });
+        app.use("/api", projectRoutes(db)); app.use(errorHandler); return app;
+      }
+      const url = `/api/projects/${f.project.id}/workspaces/${f.workspace.id}/claude-project-trust`;
+      await db.update(projectWorkspaces).set({ repoRef: "main", defaultRef: null }).where(eq(projectWorkspaces.id, f.workspace.id));
+      const expectedUpdatedAt = f.workspace.updatedAt.toISOString();
+      const { sourceType, cwd, repoUrl, remoteProvider, remoteWorkspaceRef } = f.workspace;
+      const expectedSource = { sourceType, cwd, repoUrl, repoRef: "main", defaultRef: "main", remoteProvider, remoteWorkspaceRef };
+      expect((await request(app(true)).put(url).send({ agentIds: [f.input.agentId], expectedUpdatedAt, expectedSource })).status).toBe(403);
+      expect((await request(app(false)).put(url).send({ agentIds: [randomUUID()], expectedUpdatedAt, expectedSource })).status).toBe(422);
+      expect((await request(app(false)).put(url).send({ agentIds: [f.input.agentId], expectedUpdatedAt, expectedSource })).status).toBe(200);
+      expect((await request(app(false)).get(url)).body.agentIds).toEqual([f.input.agentId]);
+      const change = await request(app(false)).patch(`/api/projects/${f.project.id}/workspaces/${f.workspace.id}`)
+        .send({ repoUrl: "https://github.com/fixture/other.git" });
+      expect(change.status).toBe(200);
+      expect((await request(app(false)).get(url)).body.agentIds).toEqual([]);
+      expect((await request(app(false)).put(url).send({ agentIds: [f.input.agentId], expectedUpdatedAt, expectedSource })).status).toBe(409);
+    });
+
 });

@@ -3,6 +3,7 @@ import { applyObservabilityEnvironment } from "@paperclipai/adapter-utils/agent-
 import { createProviderStoppedBoundary } from "@paperclipai/adapter-utils/provider-stopped-boundary";
 import { createUsageCheckpointLog } from "@paperclipai/adapter-utils/usage-checkpoint";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AdapterExecutionContext, AdapterExecutionResult } from "@paperclipai/adapter-utils";
@@ -36,6 +37,7 @@ import {
   parseJson,
   applyPaperclipWorkspaceEnv,
   buildPaperclipEnv,
+  materializePaperclipSkillCopy,
   isPaperclipSkillSourceMissing,
   readPaperclipRuntimeSkillEntries,
   readPaperclipIssueWorkModeFromContext,
@@ -119,6 +121,46 @@ async function hasLocalClaudeSessionTranscript(input: {
   // keyed by its encoded project cwd and session id. Only call this for local
   // execution; a host-side miss says nothing about a remote execution host.
   return probeClaudeTranscript(input);
+}
+
+async function stageManagedUserSkills(configDir: string, skills: Awaited<ReturnType<typeof readPaperclipRuntimeSkillEntries>>, onLog: AdapterExecutionContext["onLog"]): Promise<void> {
+  if (!skills.length) return;
+  const resolved = await fs.realpath(configDir).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (!resolved) {
+    await onLog("stderr", "[paperclip] Selected Paperclip skills were not copied because the Claude configuration directory is unavailable.\n");
+    return;
+  }
+  const home = path.dirname(resolved);
+  const temp = await fs.realpath(os.tmpdir());
+  if (path.basename(resolved) !== "provider" || !path.basename(home).startsWith("paperclip-ai-") || path.dirname(home) !== temp) {
+    await onLog("stderr", "[paperclip] Selected Paperclip skills were not copied outside a Paperclip-managed temporary Claude configuration.\n");
+    return;
+  }
+  const skillsHome = path.join(resolved, "skills");
+  const existingHome = await fs.lstat(skillsHome).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return null; throw error; });
+  if (existingHome && (!existingHome.isDirectory() || existingHome.isSymbolicLink())) throw new Error("Managed Claude skills directory must be a real directory");
+  await fs.mkdir(skillsHome, { recursive: true });
+  for (const skill of skills) {
+    if (skill.runtimeName === "." || skill.runtimeName === ".." || path.basename(skill.runtimeName) !== skill.runtimeName || /[\\/]/.test(skill.runtimeName)) throw new Error("Invalid managed Claude skill name");
+    const target = path.join(skillsHome, skill.runtimeName);
+    const existing = await fs.lstat(target).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return null; throw error; });
+    if (existing) {
+      const sentinel = existing.isDirectory() && !existing.isSymbolicLink()
+        ? await fs.readFile(path.join(target, ".paperclip-materialized-skill.json"), "utf8").then((raw) => {
+          try { return JSON.parse(raw) as { version?: number }; } catch { return null; }
+        }, () => null)
+        : null;
+      if (sentinel?.version !== 1) {
+        await onLog("stderr", `[paperclip] Skipped selected skill "${skill.runtimeName}": the existing Claude skill was not created by Paperclip.\n`);
+        continue;
+      }
+    }
+    const result = await materializePaperclipSkillCopy(await fs.realpath(skill.source), target);
+    if (result.skippedSymlinks.length) throw new Error(`Managed Claude skill contains unsupported symbolic links: ${skill.runtimeName}`);
+  }
 }
 
 interface ClaudeExecutionInput {
@@ -634,6 +676,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       await onLog("stdout", `[paperclip] Imported ${managedClaudePluginRuntime.skillCount} personal Claude skills.\n`);
     }
   }
+  if (config.managedAiConnection && !hasExplicitClaudeConfigDir && managedAiHomeOverrides.home !== true) {
+    await stageManagedUserSkills(sharedClaudeConfigDir, mountableSkillEntries, onLog);
+  } else if (config.managedAiConnection && mountableSkillEntries.length) {
+    await onLog("stderr", "[paperclip] Selected Paperclip skills were not copied into the explicitly configured Claude home.\n");
+  }
   const networkScope = parseLocalProcessNetworkScope(config.networkScope);
   const filesystemScope = parseLocalProcessFilesystemScope(config.filesystemScope);
   const approvedManagedTranscriptDir = asString(ctx.context.managedAiTranscriptDir, "");
@@ -838,6 +885,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const runtimeRemoteExecution = parseObject(runtimeSessionParams.remoteExecution);
   const runtimePromptBundleKey = asString(runtimeSessionParams.promptBundleKey, "");
   const runtimeMcpServerIdentity = asString(runtimeSessionParams.mcpServerIdentity, "");
+  const claudeProjectSettingsAllowed = Boolean(config.managedAiConnection) &&
+    parseObject(context.paperclipWorkspace).claudeProjectSettingsAllowed === true;
+  const matchingProjectTrust = (runtimeSessionParams.claudeProjectSettingsAllowed === true) === claudeProjectSettingsAllowed;
   const hasMatchingPromptBundle =
     runtimePromptBundleKey.length === 0 || runtimePromptBundleKey === promptBundle.bundleKey;
   const hasMatchingMcpServers =
@@ -855,6 +905,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     runtimeSessionId.length > 0 &&
     isValidUuid &&
     hasMatchingPromptBundle &&
+    matchingProjectTrust &&
     // Each CLI invocation loads --mcp-config, including --resume invocations.
     // Refreshing tools does not invalidate the saved conversation.
     hasMatchingSessionCwd &&
@@ -963,7 +1014,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     attemptInstructionsFilePath: string | undefined,
   ) => {
     const args = ["--print", "--output-format", "stream-json", "--verbose"];
-    if (config.managedAiConnection) args.push("--setting-sources", "user");
+    if (config.managedAiConnection) args.push("--setting-sources", claudeProjectSettingsAllowed ? "user,project" : "user");
     if (resumeSessionId) args.push("--resume", resumeSessionId);
     args.push(...buildClaudeExecutionPermissionArgs({
       dangerouslySkipPermissions,
@@ -1292,6 +1343,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         cwd,
         promptBundleKey: promptBundle.bundleKey,
         mcpServerIdentity: runtimeMcpIdentity,
+        claudeProjectSettingsAllowed,
         ...(executionTargetIsRemote
           ? {
               remoteExecution: adapterExecutionTargetSessionIdentity(runtimeExecutionTarget),
