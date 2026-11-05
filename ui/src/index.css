@@ -5305,6 +5305,9 @@ html:not(.dark) .coordinator-sidebar {
     gap: calc(var(--spacing) * 6);
     align-items: start;
   }
+  .coordinator-needs-you .tc-question-context {
+    max-height: calc(80vh - calc(var(--spacing) * 24));
+  }
   :is(.decisions-layout[data-question-layout="side"], .coordinator-needs-you) .tc-question-answers {
     position: sticky;
     top: calc(var(--spacing) * 4);
