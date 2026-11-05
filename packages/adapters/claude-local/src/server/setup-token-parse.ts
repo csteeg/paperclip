@@ -195,8 +195,8 @@ const URL_PREAMBLE_RE = /the url below to sign in/i;
 // the line.
 const PROMPT_LINE_RE = /^Paste code here if prompted\b[\s>*]*$/;
 
-// The copy hint that `claude` 2.1.291 prints between the URL block and the
-// prompt. The parser skips this exact line and binds no value from it.
+// Claude Code prints this copy hint between the URL block and the prompt.
+// Allow terminal spacing and punctuation variations, but bind no value from it.
 const COPY_HINT_LINE_RE = /^Hold\s+Shift\s+while\s+selecting\s+to\s+use\s+your\s+terminal['’]s\s+native\s+copy\.?$/i;
 
 // The maximum number of characters between the end of the URL preamble line and
