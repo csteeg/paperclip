@@ -5293,24 +5293,24 @@ html:not(.dark) .coordinator-sidebar {
   .agent-selection-bar { transition: none; transform: translate(-50%, 0); }
 }
 
-/* The Decisions desk can give context and its answer form separate columns. */
+/* Decisions question context remains independently scrollable in both layouts. */
 .decisions-layout { width: 100%; container-type: inline-size; }
+.decisions-resize-handle { right: calc(var(--spacing) * -1); width: calc(var(--spacing) * 2); }
 .decisions-layout[data-question-layout="side"] .attention-queue-row { overflow: clip; }
+.coordinator-needs-you { max-width: 112rem; container-type: inline-size; }
 @container (min-width: 60rem) {
-  .decisions-layout[data-question-layout="side"] .tc-question-page:has(.tc-question-context) {
+  :is(.decisions-layout[data-question-layout="side"], .coordinator-needs-you) .tc-question-page:has(.tc-question-context) {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: calc(var(--spacing) * 6);
     align-items: start;
   }
-  .decisions-layout[data-question-layout="side"] .tc-question-context {
-    max-height: none;
-    overflow: visible;
-  }
-  .decisions-layout[data-question-layout="side"] .tc-question-answers {
+  :is(.decisions-layout[data-question-layout="side"], .coordinator-needs-you) .tc-question-answers {
     position: sticky;
     top: calc(var(--spacing) * 4);
     max-height: calc(100vh - calc(var(--spacing) * 8));
     overflow-y: auto;
+    border-left: 1px solid var(--border);
+    padding-left: calc(var(--spacing) * 6);
   }
 }

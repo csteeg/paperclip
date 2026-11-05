@@ -555,15 +555,38 @@ function ClassicWhatNeedsMe({ userId }: { userId: string | null }) {
   const hasAnything = activeItems.length > 0 || snoozedItems.length > 0 || dismissedItems.length > 0;
 
   return (
-    <div ref={rootRef} className="decisions-layout space-y-4" data-question-layout={layout.sideBySide ? "side" : "stacked"} style={{ maxWidth: layout.width }}>
+    <div ref={rootRef} className="decisions-layout relative space-y-4" data-question-layout={layout.sideBySide ? "side" : "stacked"} style={{ maxWidth: layout.width }}>
+      <div
+        role="separator"
+        aria-label="Resize decisions column"
+        aria-orientation="vertical"
+        aria-valuemin={600}
+        aria-valuemax={1800}
+        aria-valuenow={layout.width}
+        tabIndex={0}
+        className="decisions-resize-handle group absolute inset-y-0 z-20 cursor-col-resize touch-none outline-none"
+        onPointerDown={(event) => {
+          if (event.button !== 0) return;
+          event.preventDefault();
+          event.currentTarget.setPointerCapture(event.pointerId);
+        }}
+        onPointerMove={(event) => {
+          if (!event.currentTarget.hasPointerCapture(event.pointerId) || !rootRef.current) return;
+          const width = Math.round(Math.max(600, Math.min(1800, event.clientX - rootRef.current.getBoundingClientRect().left)));
+          updateLayout({ ...layout, width });
+        }}
+        onKeyDown={(event) => {
+          const width = event.key === "ArrowLeft" ? layout.width - 20 : event.key === "ArrowRight" ? layout.width + 20 : event.key === "Home" ? 600 : event.key === "End" ? 1800 : null;
+          if (width === null) return;
+          event.preventDefault();
+          updateLayout({ ...layout, width: Math.max(600, Math.min(1800, width)) });
+        }}
+        onDoubleClick={() => updateLayout({ ...layout, width: 768 })}
+      ><div className="mx-auto h-full w-0.5 bg-transparent transition-colors group-hover:bg-ring group-focus-visible:bg-ring" /></div>
       <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-xl font-bold">Decisions</h1>
           <div className="flex items-center gap-3">
-            <label className="flex items-center gap-2 text-xs text-muted-foreground">
-              Width
-              <input type="range" min={600} max={1800} step={20} value={layout.width} aria-label="Decisions column width" onChange={(event) => updateLayout({ ...layout, width: Number(event.target.value) })} />
-            </label>
             <Button type="button" variant="outline" size="sm" aria-pressed={layout.sideBySide} onClick={() => updateLayout({ ...layout, sideBySide: !layout.sideBySide, width: !layout.sideBySide ? Math.max(layout.width, 1200) : layout.width })}>
               <Columns2 aria-hidden /> Questions on right
             </Button>
