@@ -1057,6 +1057,21 @@ folder), or an exhausted budget leaves a board-owned recovery action. Stranded-w
 recovery names this failure for the statuses it scans; for other statuses, such as
 a `blocked` task woken by a reply, the failure path records the action directly.
 
+A retained sandbox can still hold a workspace's earlier root after the workspace
+moved to another allocation, for example when child tasks inherit a parent's
+workspace and save newer work on their own sandboxes. When the parent wakes on its
+retained sandbox, the restore may replace that occupied root only when the server
+proves it is the workspace's own earlier allocation on this sandbox: the last
+recorded use of that root on this sandbox is an earlier epoch that ended in a
+quiesced, committed final save, and the folder carries a Paperclip preparation or
+restore receipt. Its files are then already part of the saved lineage being
+restored. Any other occupant (no receipt, a later unsaved use, or a sandbox that
+never saved that root) is still refused with `reason=occupied_root`. The replaced
+root's `.paperclip-runtime` state, such as a retained runner session, is never in
+a snapshot and belongs to the sandbox, so it moves into the restored root. Only the
+old preparation or restore receipt and export staging are dropped. A retained
+native continuation then reads its runner state at the same path.
+
 The provider's own idle auto-stop must not coincide with the warm runner idle
 window. The host forwards the run's effective warm idle window (environment
 `runnerIdleTimeoutMs`, else the agent's `idleTimeoutMs`) to the sandbox provider
@@ -1873,6 +1888,12 @@ does not prove that the provider stopped or that a retry is safe; it remains
 non-recoverable until the existing ownership and recovery checks establish the
 next permitted action.
 
+The same applies when the shared session notification stream closes
+(`notification_transport_failed`). The stream can close because of host-side
+runner supervision, such as a stopped sandbox plugin worker, as well as because
+of the provider. The terminal failure message therefore keeps the redacted,
+bounded cause. It does not name the provider unless the cause does.
+
 If a failed sidecar control closes an ACPX session before the event pump observes
 the failure, its terminal retains the original closed-code diagnostic. Later
 polling must not replace it with a generic closed-session message or infer a
@@ -2153,6 +2174,31 @@ when the task returns to the stopped run's agent. It also applies when that agen
 is the current review participant. Before the receipt, the hold prevents a second
 executor on the workspace. A snapshot-only save does not release the hold,
 because the task workspace does not contain the saved files.
+
+A Stop or reassignment can reach a native run while its provider session is
+still opening. The startup owner then fences the late handle before any prompt,
+and the Stop acknowledgement records `nativeCancellation.beforeProviderTurn`.
+A reattached provider from restart recovery never gets this proof. When the run
+also has no runner event outside the exact startup lifecycle events (harness, session, workspace ready,
+runtime phase, credential refresh), no turn or provider event, and
+no native result, no provider outcome
+is unknown. The completed copyback receipt then releases the hold for the stopped
+run's own agent as well, so the user's redirect continues once. The hold row and
+its evidence are unchanged.
+
+A queued turn for the same task that never started is not a workspace writer for
+automatic recovery. The hold gates its dispatch until the recovery receipt is
+complete, so recovery and that turn cannot both wait for each other. Running
+turns, and queued turns for other tasks that share the workspace, still block
+recovery.
+
+After recovery saves the files of a run whose sandbox is destroyed after each
+turn (an ephemeral lease), it re-stops the sandbox and then queues the destroy.
+The lease carries the verified stop forward as
+`workspaceRecoveryCleanup.stopReceipt`. The saved message, Retry and the next
+remote workspace writer wait for that stop, not for the destroy. So they continue
+right after recovery, instead of after the cleanup retry. A lease without a
+matching stop receipt still blocks them.
 
 The deadline is a backstop, not the normal failure path. When native task
 preparation fails after a fresh controller claim and before any provider turn,
@@ -2852,6 +2898,14 @@ outside the loaded conversation. The user does not need to select a workspace
 or grant access to the other task. An explicit pending workspace choice takes precedence over recovery.
 
 ### Operator identity and permission for manual dispatch
+
+Routine creation keeps the authenticated responsible user separate from creator
+attribution. An agent-created routine uses the server-resolved on-behalf-of user
+from its run or API key; the agent remains the creator. Without a bound identity,
+the service retains its parent-task and company-default fallback. Automatic
+routine executions use the saved revision's responsible user. A person clicking
+Run now supplies a new execution identity, so that manual task uses the clicking
+person's authority and AI account selection rather than the routine creator's.
 
 A legacy queued-message Interrupt is a new instruction from the user who clicks
 it. The new run uses that user's execution identity, including when someone else
@@ -3807,6 +3861,18 @@ A successor claims its existing native coordinator and starts renewal before
 retiring a superseded warm session. An unclaimed preparation cannot authorize
 the predecessor's checkpoint writes. Shared attachment staging follows verified
 retirement; a failed claim or Stop cannot close that predecessor or stage files.
+
+A completed native turn keeps its exact coordinator claim and the existing
+execution lease renewal until its required warm checkpoint, session close and
+instruction collection have joined. It then stops and joins renewal and releases
+only that claim. A checkpoint or collection failure keeps its initiating error
+while the same fenced release runs; a changed controller or owner is never
+cleared. Restart detachment retains its existing recovery owner and its typed
+outcome takes precedence over checkpoint, collection or renewal-stop errors.
+Only closed cleanup-failure flags accompany that outcome; raw secondary errors
+are not attached. Renewal exists
+only for this active obligation and stops on normal completion or unwinding; it
+does not create an idle worker or another recovery budget.
 Recovery also preserves the implicit isolated-home default when binding admitted
 configuration, so an unchanged home does not invalidate the retained session.
 Explicit home-mode changes retain their normal configuration-change checks.
