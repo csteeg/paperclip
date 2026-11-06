@@ -15,6 +15,7 @@ vi.mock("@/hooks/useAgentChatNavigation", () => ({ useAgentChatNavigation: () =>
   companyId: "company", userId: fixture.userId, enabled: true, agents: { data: fixture.agents }, chats: { data: fixture.chats }, session: { isSuccess: true },
 }), useOpenAgentChat: () => fixture.openNewChat }));
 vi.mock("./AgentChatPicker", () => ({ AgentChatPicker: ({ open, onSelect, agents }: any) => open ? <button onClick={() => onSelect(agents[0])}>Choose agent</button> : null }));
+vi.mock("./AgentConversationsSidebar", () => ({ AgentConversationsSidebar: () => <a href="/chats/alex/old">Old conversation</a> }));
 vi.mock("@/hooks/useRecentTasks", () => ({ useRecentTasks: () => ({ entries: [] }) }));
 vi.mock("@/context/DialogContext", () => ({ useDialogActions: () => ({ openNewIssue: fixture.openNewIssue }) }));
 vi.mock("@/context/SidebarContext", () => ({ useSidebar: () => ({ collapsed: fixture.collapsed, peeking: false, isMobile: false, setSidebarOpen: vi.fn() }) }));
@@ -54,10 +55,13 @@ beforeEach(() => {
 describe("Coordinator task creation", () => {
   it("starts a new chat and links recent conversations by their own id", async () => {
     fixture.agents = [{ id: "agent", companyId: "company", name: "Alex", urlKey: "alex", status: "idle" }];
-    fixture.chats = [{ id: "chat-one", conversationAgentId: "agent", updatedAt: "2026-10-20T12:00:00Z" }, { id: "chat-two", conversationAgentId: "agent", updatedAt: "2026-10-21T12:00:00Z" }];
+    fixture.chats = [{ id: "chat-one", title: "First chat", conversationAgentId: "agent", updatedAt: "2026-10-20T12:00:00Z" }, { id: "chat-two", title: "Second chat", conversationAgentId: "agent", updatedAt: "2026-10-21T12:00:00Z" }];
     await renderSidebar();
     expect(container.querySelector('a[href="/chats/alex/chat-one"]')).not.toBeNull();
     expect(container.querySelector('a[href="/chats/alex/chat-two"]')).not.toBeNull();
+    expect(container.querySelector('a[href="/chats/alex/chat-one"]')?.textContent).toContain("First chat");
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="All conversations"]')!.click());
+    expect(document.querySelector('a[href="/chats/alex/old"]')).not.toBeNull();
     await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="New chat"]')!.click());
     await act(async () => [...container.querySelectorAll("button")].find(button => button.textContent === "Choose agent")!.click());
     expect(fixture.openNewChat).toHaveBeenCalledWith(fixture.agents[0]);
