@@ -62,7 +62,7 @@ export function assertPoolAdapterPolicyCompatible(config: Record<string, unknown
   if (config.opencodePermissionMode != null && config.opencodePermissionMode !== "allow") refuse();
   if (config.codexPermissionMode != null && config.codexPermissionMode !== "never") refuse();
 }
-export function applyAiConnectionRouterTaskSettings(config: Record<string, unknown>, selection: AiConnectionRouterSelection, configuredAdapterType?: string, sourcePolicyConfig = config) {
+export function applyAiConnectionRouterTaskSettings(config: Record<string, unknown>, selection: AiConnectionRouterSelection, configuredAdapterType?: string, sourcePolicyConfig = config): Record<string, unknown> {
   const targetAdapter = selection.adapterType ?? (configuredAdapterType ? poolExecutionAdapterType(selection.binding, configuredAdapterType) : undefined);
   const switchingHarness = configuredAdapterType && targetAdapter && poolHarnessChanges(sourcePolicyConfig, configuredAdapterType, targetAdapter, selection.runtimeConfig);
   if (switchingHarness) assertPoolAdapterPolicyCompatible(sourcePolicyConfig, configuredAdapterType, targetAdapter!, selection.runtimeConfig);

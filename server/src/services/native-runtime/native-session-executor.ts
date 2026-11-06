@@ -134,7 +134,7 @@ import type {
   AdapterExecutionResult,
   AdapterRuntimeEvent,
 } from "../../adapters/index.js";
-import type { NativeFinalizationResult } from "@paperclipai/shared";
+import { readProviderFailure, type NativeFinalizationResult } from "@paperclipai/shared";
 import type {
   DurablePrpControlPlane,
   DurableRecoveryIdentity,
