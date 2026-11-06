@@ -1245,6 +1245,15 @@ describe("qualified ACPX runtime sidecar", () => {
       error: { message: "ACPX working directory must be a non-root directory" } });
   });
 
+  it("rejects a commit without an owned provider preparation", async () => {
+    const sidecar = startSidecar();
+    sidecar.write(initializeRequest(1, "claude", "claude-sonnet-5"));
+    expect(await sidecar.next(frame => frame.id === 1, 20_000)).toMatchObject({ ok: true });
+    sidecar.write({ protocolVersion: ACPX_SIDECAR_PROTOCOL_VERSION, id: 2, command: "session.commit", params: { preparationId: "missing" } });
+    expect(await sidecar.next(frame => frame.id === 2)).toMatchObject({ ok: false,
+      error: { message: "ACPX provider preparation does not match" } });
+  }, 30_000);
+
   it.each(["off", "low", "high", "max"])(
     "accepts Pi thinking level %s through the actual session.open dispatcher",
     async (piThinkingLevel) => {
@@ -1446,7 +1455,7 @@ class SidecarProcess {
     this.#child = spawn(
       fileURLToPath(new URL("../../node_modules/.bin/tsx", import.meta.url)),
       [fileURLToPath(new URL("./acpx-runtime-sidecar.ts", import.meta.url))],
-      { stdio: ["pipe", "pipe", "pipe"], env: { PATH: process.env.PATH, LANG: "C.UTF-8" } },
+      { stdio: ["pipe", "pipe", "pipe"], env: { PATH: process.env.PATH, LANG: "C.UTF-8", ...(process.env.NODE_PATH ? { NODE_PATH: process.env.NODE_PATH } : {}), ...(process.env.PAPERCLIP_TEST_SIDECAR_ESBUILD ? { ESBUILD_BINARY_PATH: process.env.PAPERCLIP_TEST_SIDECAR_ESBUILD } : {}) } },
     );
     let stdout = "";
     this.#child.stdout.setEncoding("utf8");
@@ -1478,8 +1487,9 @@ class SidecarProcess {
 
   async next(
     predicate: (frame: Record<string, unknown>) => boolean,
+    timeoutMs = 5_000,
   ): Promise<Record<string, unknown>> {
-    const deadline = Date.now() + 5_000;
+    const deadline = Date.now() + timeoutMs;
     for (;;) {
       const index = this.#frames.findIndex(predicate);
       if (index >= 0) return this.#frames.splice(index, 1)[0]!;

@@ -25,6 +25,7 @@ import {
   agentConfigRevisions,
   agentRuntimeState,
   agentTaskSessions,
+  agentAccountSessions,
   heartbeatRunEvents,
   heartbeatRuns,
   workspaceRestoreFailureCodesSql,
@@ -1650,8 +1651,8 @@ export function createHeartbeatRunState(db: Db) {
         if (run?.status === "cancelled" || run?.contextSnapshot?.conversationSessionGeneration !== issue.conversationSessionGeneration) return null;
       }
     const existing = await tx.select().from(agentTaskSessions).where(and(eq(agentTaskSessions.companyId, input.companyId), eq(agentTaskSessions.agentId, input.agentId), eq(agentTaskSessions.adapterType, input.adapterType), eq(agentTaskSessions.taskKey, input.taskKey))).then((rows) => rows[0] ?? null);
-    if (existing) {
-      return tx
+    const saved = existing
+      ? await tx
         .update(agentTaskSessions)
         .set({
           sessionParamsJson: input.sessionParamsJson,
@@ -1662,10 +1663,8 @@ export function createHeartbeatRunState(db: Db) {
         })
         .where(eq(agentTaskSessions.id, existing.id))
         .returning()
-        .then((rows) => rows[0] ?? null);
-    }
-
-    return tx
+        .then((rows) => rows[0] ?? null)
+      : await tx
       .insert(agentTaskSessions)
       .values({
         companyId: input.companyId,
@@ -1679,6 +1678,18 @@ export function createHeartbeatRunState(db: Db) {
       })
       .returning()
       .then((rows) => rows[0] ?? null);
+    const identity = input.sessionParamsJson?.paperclipAiCredentialIdentity;
+    if (saved && typeof identity === "string" && identity.length > 0) {
+      const state = {
+        sessionParamsJson: input.sessionParamsJson,
+        sessionDisplayId: input.sessionDisplayId,
+        lastRunId: input.lastRunId,
+        lastError: input.lastError,
+      };
+      await tx.insert(agentAccountSessions).values({ companyId: input.companyId, sessionId: saved.id, sessionIdentity: identity, ...state })
+        .onConflictDoUpdate({ target: [agentAccountSessions.companyId, agentAccountSessions.sessionId, agentAccountSessions.sessionIdentity], set: { ...state, updatedAt: new Date() } });
+    }
+    return saved;
     });
   }
 
@@ -1690,6 +1701,7 @@ export function createHeartbeatRunState(db: Db) {
       adapterType?: string | null;
       expectedRunId?: string;
       includeIssueAliases?: boolean;
+      sessionIdentity?: string;
     },
   ) {
     const conditions = [
@@ -1733,6 +1745,22 @@ export function createHeartbeatRunState(db: Db) {
           const [run] = await tx.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, opts.expectedRunId));
           if (run?.status === "cancelled" || run?.contextSnapshot?.conversationSessionGeneration !== issue.conversationSessionGeneration) return 0;
         }
+      }
+      if (opts?.sessionIdentity !== undefined) {
+        const parents = await tx.select().from(agentTaskSessions).where(and(...conditions)).for("update");
+        let cleared = 0;
+        for (const parent of parents) {
+          const deleted = await tx.delete(agentAccountSessions).where(and(
+            eq(agentAccountSessions.companyId, companyId),
+            eq(agentAccountSessions.sessionId, parent.id),
+            eq(agentAccountSessions.sessionIdentity, opts.sessionIdentity),
+          )).returning({ id: agentAccountSessions.id });
+          cleared += deleted.length;
+          if (parent.sessionParamsJson?.paperclipAiCredentialIdentity === opts.sessionIdentity) {
+            await tx.update(agentTaskSessions).set({ sessionParamsJson: null, sessionDisplayId: null, lastRunId: null, lastError: null, updatedAt: new Date() }).where(eq(agentTaskSessions.id, parent.id));
+          }
+        }
+        return cleared;
       }
       const goals = await tx.select({ id: agentTaskSessions.id }).from(agentTaskSessions)
         .where(and(...conditions, sql`${agentTaskSessions.goalStatus} is not null`, sql`${agentTaskSessions.goalStatus} <> 'complete'`)).limit(1);
