@@ -173,6 +173,7 @@ import {
   type AgentDetailView,
 } from "./agent-detail-navigation";
 import { LogViewer } from "../components/run-log/LogViewer";
+import { runAdapterType } from "../lib/run-adapter";
 import { asRecord, asNonEmptyString } from "../components/run-log/RunDetails";
 
 export { LogViewer } from "../components/run-log/LogViewer";
@@ -2909,7 +2910,7 @@ export function RunAccountingMetrics({ run }: { run: HeartbeatRun }) {
   );
 }
 
-function RunDetail({ run: initialRun, agentRouteId, adapterType, adapterConfig }: { run: HeartbeatRun; agentRouteId: string; adapterType: string; adapterConfig: Record<string, unknown> }) {
+function RunDetail({ run: initialRun, agentRouteId, adapterType: configuredAdapterType, adapterConfig }: { run: HeartbeatRun; agentRouteId: string; adapterType: string; adapterConfig: Record<string, unknown> }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { data: hydratedRun } = useQuery({
@@ -2921,6 +2922,10 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType, adapterConfig }
     ),
   });
   const run = hydratedRun ?? initialRun;
+  const adapterType = runAdapterType(run, configuredAdapterType);
+  const runAdapterConfig = adapterType === configuredAdapterType
+    ? adapterConfig
+    : asRecord(asRecord(run.contextSnapshot?.aiRouterSelection)?.runtimeConfig) ?? {};
   const { data: boardAccess } = useQuery({
     queryKey: queryKeys.access.currentBoardAccess,
     queryFn: () => accessApi.getCurrentBoardAccess(),
@@ -2934,7 +2939,7 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType, adapterConfig }
   });
   const paperclipDeveloperMode =
     experimentalSettings?.enablePaperclipDeveloperMode === true;
-  const canRerunWithProviderTrace = canUseProviderTrace && supportsRawProviderTrace(adapterType, adapterConfig);
+  const canRerunWithProviderTrace = canUseProviderTrace && supportsRawProviderTrace(adapterType, runAdapterConfig);
   const { data: providerTraceRows } = useQuery({
     queryKey: queryKeys.providerTraceMetadata(run.companyId, [run.id]),
     queryFn: () => heartbeatsApi.providerTraceMetadata(run.companyId, [run.id]),
@@ -3201,9 +3206,9 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType, adapterConfig }
             {/* Adapter type · provider · model */}
             {(() => {
               const displayProvider = metrics.provider
-                ?? asNonEmptyString(adapterConfig?.provider);
+                ?? asNonEmptyString(runAdapterConfig.provider);
               const displayModel = metrics.model
-                ?? asNonEmptyString(adapterConfig?.model);
+                ?? asNonEmptyString(runAdapterConfig.model);
               if (!adapterType && !displayProvider && !displayModel) return null;
               return (
                 <div className="text-(length:--text-micro) text-muted-foreground font-mono flex items-center gap-1.5 flex-wrap">
