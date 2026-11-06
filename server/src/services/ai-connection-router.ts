@@ -496,7 +496,7 @@ export function aiConnectionRouterService(db: Db, workerManager?: PluginWorkerMa
     if (!["paperclip_runner", ...LOCAL_POOL_ADAPTERS].includes(input.adapterType) || !cursor || !row || row.connectionStatus === "archived" || !row.pool.config.enabled ||
         row.pool.pluginKey !== BUILTIN_AI_FAILOVER_ROUTER_KEY || row.pool.config.mode !== "failover" ||
         !pin || !samePoolSelection(pin.selection, input.expectedSelection, input.adapterType) || pin.member.id !== pin.selection.memberId ||
-        !isDeepStrictEqual(pin.member.binding, pin.selection.binding) || !row.pool.config.members.some(member => isDeepStrictEqual(member, pin.member))) return { kind: "unavailable" };
+        !isDeepStrictEqual(pin.member.binding, pin.selection.binding) || !row.pool.config.members.some(member => member.id === pin.member.id && isDeepStrictEqual(member.binding, pin.member.binding))) return { kind: "unavailable" };
     const members = row.pool.config.members.filter((member) => !input.attemptedMemberIds.includes(member.id));
     const memberIdentities = new Map<string, string>();
     let legacySourceIdentity: string | null = null;
