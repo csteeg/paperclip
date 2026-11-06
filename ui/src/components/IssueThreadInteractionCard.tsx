@@ -3894,6 +3894,7 @@ export function IssueThreadInteractionCard({
     ? [interaction.payload.questionSet?.description, ...interaction.payload.questions.flatMap(question => [question.prompt, question.helpText])]
     : interaction.kind === "request_confirmation" ? [interaction.payload.prompt, interaction.payload.detailsMarkdown] : [];
   const summaryIsRepeated = bodyContext.some(text => text?.trim() === interaction.summary?.trim());
+  const titleIsRepeated = bodyContext.some(text => text?.trim() === interaction.title?.trim());
   const addressedElsewhere = Boolean(interaction.addresseeAgentId
     || (interaction.addresseeUserId && interaction.addresseeUserId !== currentUserId));
 
@@ -3903,7 +3904,7 @@ export function IssueThreadInteractionCard({
     <InteractionAudienceContext.Provider value={audience}>
       <div data-presentation={presentationVariant} className={compactDecision ? "coordinator-decision-content space-y-4" : cn("rounded-lg border p-5 shadow-none", styles.shell)}>
         {compactDecision ? <>
-          {!bodyNamesDecision && interaction.title ? <h2 className="text-lg font-medium">{interaction.title}</h2> : null}
+          {interaction.title && (!bodyNamesDecision || (interaction.kind === "ask_user_questions" && !titleIsRepeated)) ? <h2 className="text-lg font-medium">{interaction.title}</h2> : null}
           {interaction.summary && !summaryIsRepeated && !connectionAuthorization && interaction.kind !== "connection_intent" ? <p className="text-sm text-muted-foreground">{interaction.summary}</p> : null}
           {interaction.status === "pending" ? <div className={addressedElsewhere ? undefined : "sr-only"}><InteractionAudienceLine audience={audience} variant="compact" /></div> : null}
         </> : <div className="flex flex-wrap items-start justify-between gap-4">

@@ -313,6 +313,15 @@ describe("IssueThreadInteractionCard", () => {
     ]);
   });
 
+  it("shows the decision title above distinct questions without duplicating a matching prompt", () => {
+    const interaction = { ...pendingAskUserQuestionsInteraction, title: "Which approach should we use?" };
+    const host = renderCard({ presentationVariant: "coordinator-decision", interaction });
+    expect(host.querySelector("h2")?.textContent).toBe(interaction.title);
+    const prompt = interaction.payload.questions[0]!.prompt;
+    const repeated = renderCard({ presentationVariant: "coordinator-decision", interaction: { ...interaction, title: prompt } });
+    expect(repeated.querySelector("h2")).toBeNull();
+  });
+
   it("keeps Coordinator confirmation details collapsed while preserving context, exact target, and approval", async () => {
     const onAcceptInteraction = vi.fn(async () => undefined);
     const interaction = { ...pendingRequestConfirmationInteraction, title: "Repeated approval context", summary: "Repeated approval context", payload: { ...pendingRequestConfirmationInteraction.payload, prompt: "Repeated approval context", detailsMarkdown: "Revision proof: sha256-test-proof" } };
