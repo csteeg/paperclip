@@ -81,6 +81,8 @@ export function legacyExecutionNeedsReconciliation(
       || run.errorCode === REMOTE_WORKSPACE_PREPARATION_TIMEOUT_CODE || run.errorCode === REUSABLE_SANDBOX_RESUME_FAILED_CODE
       || run.errorCode === REMOTE_WORKSPACE_RESTORE_FAILED_CODE) &&
       evidence?.kind === "bootstrap" && evidence.providerWorkStarted === false) return false;
+  if ((run.errorCode === "provider_quota" || run.resultJson?.errorFamily === "provider_quota") &&
+      evidence?.kind === "bootstrap" && evidence.providerWorkStarted === false) return false;
   if (executionFailureRetryCount(run) >= 2) return true;
   return !(
     evidence?.kind === "bootstrap" && evidence.providerWorkStarted === false

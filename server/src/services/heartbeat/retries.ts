@@ -141,6 +141,13 @@ export function isTransientWorkspacePreparationCode(code: string | null | undefi
 export const BOUNDED_TRANSIENT_HEARTBEAT_RETRY_MAX_ATTEMPTS =
   BOUNDED_TRANSIENT_HEARTBEAT_RETRY_DELAYS_MS.length;
 
+const PROVIDER_QUOTA_RETRY_DELAYS_MS = [30_000, 60_000, 120_000, 60_000] as const;
+
+export function failedRunRetryBudgetSpent(run: Parameters<typeof executionFailureRetryCount>[0] & { errorCode?: string | null; resultJson?: Record<string, unknown> | null }): boolean {
+  return executionFailureRetryCount(run) >= (run.errorCode === "provider_quota" || run.resultJson?.errorFamily === "provider_quota"
+    ? PROVIDER_QUOTA_RETRY_DELAYS_MS.length : BOUNDED_TRANSIENT_HEARTBEAT_RETRY_MAX_ATTEMPTS);
+}
+
 const INTERACTION_CONTINUATION_INFRA_MAX_ATTEMPTS = 2;
 
 const MAX_TURN_CONTINUATION_LIVE_RUN_STATUSES = [
@@ -441,10 +448,15 @@ export function createHeartbeatRetries(db: Db, dependencies: HeartbeatRetryDepen
       (interruptedPreparation ? "interrupted_preparation" : BOUNDED_TRANSIENT_HEARTBEAT_RETRY_REASON);
     const wakeReason =
       opts?.wakeReason ?? BOUNDED_TRANSIENT_HEARTBEAT_RETRY_WAKE_REASON;
+    const transientRecovery =
+      retryReason === BOUNDED_TRANSIENT_HEARTBEAT_RETRY_REASON
+        ? readTransientRecoveryContractFromRun(run)
+        : null;
+    const quotaRetry = transientRecovery?.errorFamily === "provider_quota";
     const maxAttempts = Math.max(
       0,
       Math.floor(
-        opts?.maxAttempts ?? BOUNDED_TRANSIENT_HEARTBEAT_RETRY_MAX_ATTEMPTS,
+        opts?.maxAttempts ?? (quotaRetry ? PROVIDER_QUOTA_RETRY_DELAYS_MS.length : BOUNDED_TRANSIENT_HEARTBEAT_RETRY_MAX_ATTEMPTS),
       ),
     );
     const consumedAttempts = executionRetryAttemptCount(run, retryReason);
@@ -462,6 +474,13 @@ export function createHeartbeatRetries(db: Db, dependencies: HeartbeatRetryDepen
               maxAttempts,
             }
           : null
+        : nextAttempt <= maxAttempts && quotaRetry
+          ? (() => {
+              const baseDelayMs = PROVIDER_QUOTA_RETRY_DELAYS_MS[nextAttempt - 1];
+              if (baseDelayMs === undefined) return null;
+              const delayMs = nextAttempt === 3 ? baseDelayMs : Math.round(baseDelayMs * (0.8 + Math.min(1, Math.max(0, (opts?.random ?? Math.random)())) * 0.4));
+              return { attempt: nextAttempt, baseDelayMs, delayMs, dueAt: new Date(now.getTime() + delayMs), maxAttempts };
+            })()
         : nextAttempt <= maxAttempts
           ? computeBoundedTransientHeartbeatRetrySchedule(
               nextAttempt,
@@ -472,10 +491,6 @@ export function createHeartbeatRetries(db: Db, dependencies: HeartbeatRetryDepen
     const baseSchedule = computedBaseSchedule
       ? { ...computedBaseSchedule, maxAttempts }
       : null;
-    const transientRecovery =
-      retryReason === BOUNDED_TRANSIENT_HEARTBEAT_RETRY_REASON
-        ? readTransientRecoveryContractFromRun(run)
-        : null;
     const codexTransientFallbackMode =
       agent.adapterType === "codex_local" &&
       transientRecovery?.errorFamily === "transient_upstream"
