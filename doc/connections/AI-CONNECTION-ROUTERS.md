@@ -1,5 +1,39 @@
 # Experimental AI connection routers
 
+The built-in **Ordered failover pool** is available without a router plugin or
+the experimental router flag. It is configured with existing AI connections,
+ordered by preference and bound to a Paperclip Runner or legacy Claude agent. On a confirmed
+account allowance exhaustion, Paperclip records a company-scoped cooldown for
+the credential and skips it until its reset time. A known provider reset is
+preserved; without one the default cooldown is one hour. Accounts sharing the
+same stored credential and epoch share a cooldown. Independently stored
+credentials are not assumed to represent the same external account.
+
+Before selecting an account for a task without an existing pin, the host may
+read the responsible user's authorized Claude subscription usage. When an
+account-wide limit is exhausted, extra usage is disabled, and the provider gives
+a future reset, it records the cooldown and tries the next account. Unknown or
+scoped limits, missing authorization and unsuccessful usage checks do not block
+selection. This observation is a momentary preflight; it cannot guarantee that
+capacity remains available when the provider starts. Existing task pins are not
+changed by this check.
+
+Legacy `claude_local` agents can select only Claude accounts from a pool;
+Codex and other providers require Paperclip Runner. This supports selection
+before a task starts, not automatic takeover of an interrupted Claude run.
+If a selected account becomes unavailable before provider startup, Paperclip
+can atomically choose another Claude account and schedule a fresh attempt only
+when the original run's durable prestart fence, task history, session and
+current ownership checks all permit it. Otherwise it retains the existing
+account and waits for its cooldown. User Stop is serialized with that retry.
+
+An automatic continuation must prove that the prior execution is stopped and
+that workspace, history and action outcomes are safe to continue. When that
+evidence is unavailable, the task remains held for recovery. A provider switch
+starts a separate provider conversation with bounded Paperclip task history;
+provider-private conversation state and full tool history are not transferred.
+The task's existing account sessions remain isolated by credential identity.
+
 AI routers are virtual, company-scoped connections owned by a capability-gated
 plugin (`ai.connections.route`). The instance flag `enableAiConnectionRouters`
 defaults to false. Pools also default to disabled. The host must implement this

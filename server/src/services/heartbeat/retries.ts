@@ -2,6 +2,7 @@ import { notifyAttentionRetentionWork } from "../retention-work-notifications.js
 import { normalizeAgentNameKey } from "../agent-name-key.js";
 import { notifyStatusCardIssueChange } from "../status-card-notifications.js";
 import { notifyScheduledRetryDispatch } from "../run-dispatch-notifications.js";
+import { switchUnstartedLegacyQuotaPin } from "./quota-prestart-fence.js";
 import { deriveTaskKeyWithHeartbeatFallback } from "./run-state.js";
 import { infrastructureRetryDelayMs } from "../system-recovery-state.js";
 import {
@@ -141,6 +142,27 @@ export function isTransientWorkspacePreparationCode(code: string | null | undefi
 
 export const BOUNDED_TRANSIENT_HEARTBEAT_RETRY_MAX_ATTEMPTS =
   BOUNDED_TRANSIENT_HEARTBEAT_RETRY_DELAYS_MS.length;
+
+/** A policy decision only: callers must establish and recheck evidence under
+ * the same durable claim used to create the successor and transition its pin. */
+export function evaluateQuotaFailoverEvidence(input: {
+  errorFamily: string | null | undefined;
+  sourceStatus: string;
+  stopRequested: boolean | undefined;
+  providerStopped: boolean | undefined;
+  cleanupSettled: boolean | undefined;
+  actionOutcomesSettled: boolean | undefined;
+  sessionSwitchSafe: boolean | undefined;
+}): { allowed: true } | { allowed: false; reason: string } {
+  if (input.errorFamily !== "provider_quota") return { allowed: false, reason: "not_quota" };
+  if (input.sourceStatus !== "failed") return { allowed: false, reason: "source_not_failed" };
+  if (input.stopRequested !== false) return { allowed: false, reason: "stop_pending_or_unknown" };
+  if (input.providerStopped !== true) return { allowed: false, reason: "provider_stop_unconfirmed" };
+  if (input.cleanupSettled !== true) return { allowed: false, reason: "cleanup_unsettled" };
+  if (input.actionOutcomesSettled !== true) return { allowed: false, reason: "action_outcomes_unsettled" };
+  if (input.sessionSwitchSafe !== true) return { allowed: false, reason: "session_switch_unconfirmed" };
+  return { allowed: true };
+}
 
 export function failedRunRetryBudgetSpent(run: Parameters<typeof executionFailureRetryCount>[0] & { errorCode?: string | null; resultJson?: Record<string, unknown> | null }): boolean {
   return executionFailureRetryCount(run) >= (run.errorCode === "provider_quota" || run.resultJson?.errorFamily === "provider_quota"
@@ -734,6 +756,7 @@ export function createHeartbeatRetries(db: Db, dependencies: HeartbeatRetryDepen
             | "issue_terminal_status"
             | "issue_not_in_progress"
             | "continuation_user_authorization_missing"
+            | "legacy_quota_stopped"
             | "issue_execution_lock_changed";
           issueId: string | null;
           details: Record<string, unknown>;
@@ -754,6 +777,13 @@ export function createHeartbeatRetries(db: Db, dependencies: HeartbeatRetryDepen
           await tx.execute(
             sql`select id from heartbeat_runs where company_id = ${run.companyId} and id = ${run.id} for update`,
           );
+          if (retryReason === AI_CONNECTION_POOL_WAIT_RETRY_REASON) {
+            const [current] = await tx.select({ resultJson: heartbeatRuns.resultJson }).from(heartbeatRuns)
+              .where(and(eq(heartbeatRuns.companyId, run.companyId), eq(heartbeatRuns.id, run.id)));
+            if (current?.resultJson?.legacyQuotaStopRequested) return {
+              outcome: "not_scheduled", reason: "The pending pool retry was stopped", errorCode: "legacy_quota_stopped", issueId, details: {},
+            };
+          }
           const [existing] = await tx
             .select()
             .from(heartbeatRuns)
@@ -1011,6 +1041,16 @@ export function createHeartbeatRetries(db: Db, dependencies: HeartbeatRetryDepen
           }
         }
 
+        if (retryReason === AI_CONNECTION_POOL_WAIT_RETRY_REASON && issueId && !sessionBefore && agent.adapterType === "claude_local") {
+          const selected = await switchUnstartedLegacyQuotaPin(tx as unknown as Db, { companyId: run.companyId,
+            runId: run.id, issueId, agentId: run.agentId, userId: responsibleUserId });
+          if (selected) {
+            schedule.dueAt = now;
+            schedule.delayMs = 0;
+            retryContextSnapshot.aiRouterSelection = selected;
+            retryContextSnapshot.scheduledRetryAt = now.toISOString();
+          }
+        }
         const scheduledRunId = randomUUID();
         if (contextSnapshot.explicitUserContinuation) {
           const continuation = issueId && retryReason === "transient_failure" ? await admitExplicitContinuationRetry({
