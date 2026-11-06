@@ -17,7 +17,7 @@ import { createAgentLifecycle } from "../services/agent-lifecycle.js";
 import { isAgentSetupDraft } from "../modules/agent-lifecycle/index.js";
 
 import { agentIdentityService } from "../services/agent-identity.js";
-import { aiConnectionRouterService, poolMemberRuntimeConfig } from "../services/ai-connection-router.js";
+import { aiConnectionRouterService, assertPoolAdapterPolicyCompatible, LOCAL_POOL_ADAPTERS, poolMemberRuntimeConfig } from "../services/ai-connection-router.js";
 import { connectionIntentService } from "../services/connection-intents.js";
 import { isCloudManagedInstance } from "../services/cloud-instance.js";
 import { dotRunnerBroker } from "../services/dot-runner-broker.js";
@@ -2170,7 +2170,7 @@ export function agentRoutes(
   }
 
   async function assertBuiltinPoolAdapter(companyId: string, adapterType: string, binding: AiRuntimeConnectionBinding | undefined) {
-    if (adapterType === "paperclip_runner" || adapterType === "claude_local" || binding?.mode !== "router") return;
+    if (adapterType === "paperclip_runner" || LOCAL_POOL_ADAPTERS.includes(adapterType) || binding?.mode !== "router") return;
     const [pool] = await db.select({ pluginKey: aiConnectionPools.pluginKey }).from(aiConnectionPools).where(and(
       eq(aiConnectionPools.companyId, companyId), eq(aiConnectionPools.id, binding.connectionId),
     ));
@@ -3203,11 +3203,14 @@ export function agentRoutes(
       let compatible = false;
       for (const member of pool.members) {
         let runtime: ReturnType<typeof poolMemberRuntimeConfig>;
-        try { runtime = poolMemberRuntimeConfig(member, adapterType); } catch { continue; }
+        try {
+          runtime = poolMemberRuntimeConfig(member, adapterType);
+          assertPoolAdapterPolicyCompatible(config, adapterType, runtime.adapterType, runtime.config);
+        } catch { continue; }
         compatible = true;
         const allowUninstalledShared = newAgent && await canInstallSharedAiConnectionForNewAgent(db, req, companyId, member.binding);
         try {
-          const selection = await aiConnectionService(db).select({ companyId, agentId, userId, adapterType, binding: member.binding,
+          const selection = await aiConnectionService(db).select({ companyId, agentId, userId, adapterType: runtime.adapterType, binding: member.binding,
             model: runtime.config.model, runnerProvider: runtime.config.provider, acpxAgent: runtime.config.acpxAgent,
             allowUninstalledPersonal: newAgent, allowUninstalledShared });
           memberConnectionIds.add(selection.connection.id);

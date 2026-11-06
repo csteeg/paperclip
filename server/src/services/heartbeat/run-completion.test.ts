@@ -235,7 +235,7 @@ describe.skipIf(!support.supported && !process.env.PAPERCLIP_TEST_DATABASE_URL)(
     expect(await receipts()).toEqual([]);
     expect(await db.select().from(aiConnectionQuotaCooldowns)).toEqual([]);
     expect(await recordVerifiedRouterQuotaCooldown(db, { ...call, retryNotBefore: null, now, credentialIdentity: `${grantId}:shared:no-auth` })).toBe(true);
-    expect((await db.select().from(aiConnectionQuotaCooldowns))[0]!.retryAt).toEqual(new Date(now.getTime() + PROVIDER_LIMIT_DEFAULT_COOLDOWN_MS));
+    expect((await db.select().from(aiConnectionQuotaCooldowns))[0]!.retryAt).toEqual(new Date(now.getTime() + 2 * 60 * 60_000));
     const distant = new Date(now.getTime() + 30 * 24 * 60 * 60_000);
     await db.delete(heartbeatRunEvents).where(eq(heartbeatRunEvents.sourceEventId, receiptId));
     expect(await recordVerifiedRouterQuotaCooldown(db, { ...call, retryNotBefore: distant.toISOString(), now, credentialIdentity: `${grantId}:shared:no-auth` })).toBe(true);
@@ -245,10 +245,10 @@ describe.skipIf(!support.supported && !process.env.PAPERCLIP_TEST_DATABASE_URL)(
       startedAt: now, finishedAt: now, errorCode: "provider_quota", resultJson: { retryNotBefore: oldLimit.toISOString() } });
     const startup = { db, binding: { runId: f.run.id, companyId: f.run.companyId, agentId: f.run.agentId },
       attempt: 1, retryable: true, failure: null, now };
-    expect((await planNativeStartupRetry({ ...startup, managedAiCredentialIdentity: `${grantId}:shared:no-auth` })).providerCooldownAt).toEqual(distant);
+    expect((await planNativeStartupRetry({ ...startup, managedAiAccountIdentity: `${grantId}:shared:no-auth` })).providerCooldownAt).toEqual(distant);
     await db.delete(aiConnectionQuotaCooldowns);
-    expect((await planNativeStartupRetry({ ...startup, managedAiCredentialIdentity: `${grantId}:shared:no-auth` })).providerCooldownAt).toBeNull();
-    expect((await planNativeStartupRetry({ ...startup, managedAiCredentialIdentity: `${randomUUID()}:shared:no-auth` })).providerCooldownAt).toEqual(oldLimit);
+    expect((await planNativeStartupRetry({ ...startup, managedAiAccountIdentity: `${grantId}:shared:no-auth` })).providerCooldownAt).toBeNull();
+    expect((await planNativeStartupRetry({ ...startup, managedAiAccountIdentity: `${randomUUID()}:shared:no-auth` })).providerCooldownAt).toEqual(oldLimit);
     await db.update(aiConnectionTaskPins).set({ taskKey: "other" }).where(eq(aiConnectionTaskPins.id, (await db.select().from(aiConnectionTaskPins))[0]!.id));
     expect(await recordVerifiedRouterQuotaCooldown(db, { ...call, credentialIdentity: `${grantId}:shared:no-auth` })).toBe(false);
     expect(await db.select().from(aiConnectionQuotaCooldowns)).toEqual([]);
@@ -506,6 +506,18 @@ describe.skipIf(!support.supported && !process.env.PAPERCLIP_TEST_DATABASE_URL)(
     expect(f.deps.handleSuccessfulRunHandoff).not.toHaveBeenCalled();
     expect(f.deps.scheduleBoundedRetryForRun).not.toHaveBeenCalled();
     expect((await db.select().from(issues).where(eq(issues.id, issue.id)))[0]?.status).toBe("in_progress");
+  });
+
+  it.each([false, true])("uses only host-authored execution settlement metadata (trusted=%s)", async trusted => {
+    const f = await fixture({ runtimeMode: "legacy" });
+    const settlement = { providerStopped: true as const, workspaceSettled: true as const, actionOutcomes: "unknown" as const };
+    f.input.adapterResult = { exitCode: 1, signal: null, timedOut: false, errorCode: "provider_quota",
+      resultJson: { executionSettlement: settlement, executionRecovery: { kind: "bootstrap", providerWorkStarted: false } },
+      ...(trusted ? { executionSettlement: settlement } : {}) };
+    await f.completion.completeRun(f.input);
+    const saved = await read(f.run.id);
+    expect(saved?.resultJson?.executionSettlement).toEqual(trusted ? settlement : undefined);
+    expect(saved?.resultJson?.executionRecovery).toBeUndefined();
   });
 
   it("persists usage, accounting, final logs, presentation and the next task session", async () => {

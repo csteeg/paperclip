@@ -294,14 +294,11 @@ import {
 } from "./ai-connection-runtime.js";
 import { retainManagedClaudeTranscripts } from "./managed-claude-transcripts.js";
 import { aiConnectionBindingSchema, aiRuntimeConnectionBindingSchema, type AiConnectionRouterSelection } from "@paperclipai/shared";
-import { aiConnectionRouterService, AiConnectionPoolExhausted, applyAiConnectionRouterTaskSettings } from "./ai-connection-router.js";
+import { aiConnectionRouterService, AiConnectionPoolExhausted, applyAiConnectionRouterTaskSettings, LOCAL_POOL_ADAPTERS, poolExecutionAdapterType } from "./ai-connection-router.js";
+import { effectiveRunAgent } from "./heartbeat/effective-run-adapter.js";
 import {
   getExecutionBlocker,
 } from "./execution-blocker.js";
-import {
-  claimedAdapterType,
-} from "./conversation-continuation.js";
-
 import {
   settleInterruptedNativeBootstrap,
 } from "./legacy-execution-recovery.js";
@@ -2050,14 +2047,7 @@ export function heartbeatService(
         if (failedRun) await releaseIssueExecutionAndPromote(failedRun);
         return;
       }
-      let agent = loadedAgent;
-
-      // The claimed adapter identity is immutable recovery evidence. Do not
-      // execute a newly selected adapter under a previous adapter's claim.
-      const selectedAdapter = claimedAdapterType(run);
-      if (selectedAdapter && selectedAdapter !== agent.adapterType) {
-        throw new Error("Agent adapter changed during startup; start a new turn with the updated agent.");
-      }
+      let agent = effectiveRunAgent(run, loadedAgent);
 
       const dispatchIssueId = readNonEmptyString(parseObject(run.contextSnapshot).issueId);
       const resumingAdmittedConversationTurn = !!runOptions.nativeLeaseOwner
@@ -2089,6 +2079,10 @@ export function heartbeatService(
       }
       const runtime = await timePreparation("runtime_state", () => ensureRuntimeState(agent));
       const context = parseObject(run.contextSnapshot);
+      if (agent.adapterType !== loadedAgent.adapterType) {
+        delete context.resumeSessionParams;
+        delete context.resumeSessionDisplayId;
+      }
       const authorizeFailedChatRetryExecution = (stage?: "dispatching") =>
         retryChatControlAdmission(async () => {
           executionControl.controller.signal.throwIfAborted();
@@ -2156,7 +2150,11 @@ export function heartbeatService(
           );
         }
       }
-      const taskKey = deriveTaskKeyWithHeartbeatFallback(context, null);
+      const admittedPoolId = readNonEmptyString(parseObject(context.aiRouterSelection).poolId);
+      const admittedProfile = parseObject(run.runnerProfileJson);
+      const admittedPool = admittedPoolId && (parseObject(admittedProfile.adapterDispatch).poolId === admittedPoolId ||
+        Object.keys(parseObject(admittedProfile.nativeExecutionInput)).length > 0);
+      let taskKey = deriveTaskKeyWithHeartbeatFallback(context, null) ?? (admittedPool ? readNonEmptyString(context.aiRouterTaskKey) : null);
       const sessionCodec = getAdapterSessionCodec(agent.adapterType);
       const issueId = readNonEmptyString(context.issueId);
       if (issueId && canApplyTaskWorkspaceSelectionAtAdmission({ admittedInput: parseObject(run.runnerProfileJson).nativeExecutionInput, restarting: Boolean(runOptions.nativeRestartRecovery), hasLeaseOwner: Boolean(runOptions.nativeLeaseOwner) })) {
@@ -2512,7 +2510,8 @@ export function heartbeatService(
           )
         : null;
       const savedRouterInput = parseObject(parseObject(run.runnerProfileJson).nativeExecutionInput);
-      const routerHasPersistedInput = Object.keys(savedRouterInput).length > 0;
+      const routerHasPersistedInput = Object.keys(savedRouterInput).length > 0 ||
+        (typeof parseObject(parseObject(run.runnerProfileJson).adapterDispatch).poolId === "string" && Boolean(context.aiRouterSelection));
       if (agent.adapterType === "paperclip_runner") {
         const homeConfig = bindHeartbeatRunnerHomeMode(config, savedRouterInput);
         if ("homeMode" in homeConfig) config = { ...config, homeMode: homeConfig.homeMode };
@@ -2531,32 +2530,42 @@ export function heartbeatService(
             await db.update(heartbeatRuns).set({ contextSnapshot: sql`coalesce(${heartbeatRuns.contextSnapshot}, '{}'::jsonb) || ${JSON.stringify({ aiRouterTaskKey: routerTaskKey })}::jsonb` }).where(and(eq(heartbeatRuns.id, run.id), eq(heartbeatRuns.companyId, agent.companyId)));
           }
           context.aiRouterTaskKey = routerTaskKey;
+          const poolPreparationFailure = parseObject(parseObject(parseObject(run.runnerProfileJson).adapterDispatch).poolPreparationFailure);
+          if (poolPreparationFailure.kind === "exhausted" && typeof poolPreparationFailure.retryAt === "string" && typeof poolPreparationFailure.poolId === "string") {
+            throw new AiConnectionPoolExhausted(poolPreparationFailure.retryAt, poolPreparationFailure.poolId);
+          }
+          if (typeof poolPreparationFailure.message === "string") throw new Error(poolPreparationFailure.message);
           const savedIdentity = taskSession?.sessionParamsJson?.paperclipAiCredentialIdentity;
           const router = aiConnectionRouterService(db, options.pluginWorkerManager);
           const selection = await router.resolve({
             companyId: agent.companyId, poolId: requestedAiBinding.connectionId, agentId: agent.id,
-            userId: responsibleUserId, adapterType: agent.adapterType, taskKey: String(context.aiRouterTaskKey),
+            userId: responsibleUserId, adapterType: loadedAgent.adapterType, taskKey: String(context.aiRouterTaskKey),
+            sourceAdapterConfig: { ...parseObject(loadedAgent.adapterConfig), ...issueAssigneeOverrides?.adapterConfig },
             overrides: issueAssigneeOverrides?.adapterConfig ?? {},
             existingGrantId: typeof savedIdentity === "string" ? savedIdentity.split(":")[0] : undefined,
             requireExisting: Boolean(taskSession?.sessionDisplayId) && !shouldResetTaskSessionForWake(context),
             persisted: routerHasPersistedInput ? context.aiRouterSelection as AiConnectionRouterSelection | undefined : undefined,
           });
+          if (poolExecutionAdapterType(selection.binding, loadedAgent.adapterType) !== agent.adapterType) {
+            throw new Error("The pool adapter changed after this run was claimed; start a new turn.");
+          }
           context.aiRouterSelection = selection;
-          if (agent.adapterType === "claude_local") {
+          taskKey ??= routerTaskKey;
+          if (LOCAL_POOL_ADAPTERS.includes(loadedAgent.adapterType)) {
             await options.afterLegacyPoolSelection?.(run.id, selection);
             await router.recheckLegacyPinnedPoolAccount({ companyId: agent.companyId, agentId: agent.id,
               userId: responsibleUserId, taskKey: String(context.aiRouterTaskKey), selection });
           }
           aiBinding = selection.binding;
           // Provider-specific fields from the configured harness must not leak into the selected member.
-          config = applyAiConnectionRouterTaskSettings(config, selection);
-          if (issueAssigneeOverrides) issueAssigneeOverrides = { ...issueAssigneeOverrides, adapterConfig: applyAiConnectionRouterTaskSettings(issueAssigneeOverrides.adapterConfig ?? {}, selection) };
+          config = applyAiConnectionRouterTaskSettings(config, selection, loadedAgent.adapterType);
+          if (issueAssigneeOverrides) issueAssigneeOverrides = { ...issueAssigneeOverrides, adapterConfig: applyAiConnectionRouterTaskSettings(issueAssigneeOverrides.adapterConfig ?? {}, selection, loadedAgent.adapterType, { ...parseObject(loadedAgent.adapterConfig), ...issueAssigneeOverrides.adapterConfig }) };
           agent = { ...agent, adapterConfig: config };
           context.aiRouterSelection = selection;
           await db.update(heartbeatRuns).set({ contextSnapshot: sql`coalesce(${heartbeatRuns.contextSnapshot}, '{}'::jsonb) || ${JSON.stringify({ aiRouterTaskKey: context.aiRouterTaskKey, aiRouterSelection: selection })}::jsonb` }).where(eq(heartbeatRuns.id, run.id));
           await appendRunEvent(run, { eventType: "lifecycle", stream: "system", level: "info", message: "Using task-pinned pool account", payload: { poolId: selection.poolId, memberId: selection.memberId, provider: aiBinding.provider, model: config.model, notes: selection.notes } });
         } catch (error) {
-          if (error instanceof AiConnectionPoolExhausted && !routerHasPersistedInput) {
+          if (error instanceof AiConnectionPoolExhausted && Object.keys(savedRouterInput).length === 0) {
             const now = new Date();
             context.aiConnectionBusyDeferredWhileAssignee = issueContext?.assigneeAgentId === agent.id;
             const cancelled = await setRunStatusIfRunning(run.id, "cancelled", {
@@ -2587,7 +2596,7 @@ export function heartbeatService(
       }
       // No provider-capable preparation may cross this durable boundary while
       // the first-claim prestart evidence remains in its preparing state.
-      if (agent.adapterType === "claude_local") await consumeLegacyQuotaPrestartFence(db, run);
+      if (parseObject(run.runnerProfileJson).legacyQuotaPrestartFence) await consumeLegacyQuotaPrestartFence(db, run);
       if (isConversation(issueContext)) {
         delete context.resumeSessionParams;
         delete context.resumeSessionDisplayId;

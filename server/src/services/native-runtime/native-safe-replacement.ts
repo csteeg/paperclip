@@ -1,3 +1,4 @@
+import { NATIVE_POOL_FAILURE_CODES, nativePoolFailureKind } from "./native-pool-failure.js";
 import { notifyScheduledRetryDispatch } from "../run-dispatch-notifications.js";
 import { notifyNativeStatusReassessment } from "../native-status-reassessment-notifications.js";
 import { notifyUnsafeWorkspaceExportRecovery } from "../unsafe-workspace-export-notifications.js";
@@ -6,7 +7,7 @@ import { logger } from "../../middleware/logger.js";
 import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { stat } from "node:fs/promises";
-import { and, eq, inArray, isNull, ne, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, notInArray, sql } from "drizzle-orm";
 import {
   agentWakeupRequests,
   agents,
@@ -121,17 +122,17 @@ export function nativeReplacementPending() {
     eq(nativeRunFinalizations.phase, "terminal_failure"),
     inArray(
       nativeRunFinalizations.failureCode,
-      ["native_provider_terminal_failed", "native_session_cleanup_quarantined", "provider_transport_failed", "native_provider_usage_limit"],
+      ["native_provider_terminal_failed", "native_session_cleanup_quarantined", "provider_transport_failed", ...NATIVE_POOL_FAILURE_CODES],
     ),
-    sql`(${nativeRunFinalizations.failureCode} <> 'native_provider_usage_limit' or exists (
+    sql`(${nativeRunFinalizations.failureCode} not in ('native_provider_usage_limit', 'native_provider_auth_failed', 'native_provider_runner_failed') or exists (
       select 1 from heartbeat_run_events e where e.company_id = ${heartbeatRuns.companyId}
-        and e.run_id = ${heartbeatRuns.id} and e.event_type = 'ai_connection.quota_attributed'
-        and e.source_event_id = 'ai-connection-quota-attributed:' || ${heartbeatRuns.id}::text
+        and e.run_id = ${heartbeatRuns.id} and e.event_type = 'ai_connection.' || case ${nativeRunFinalizations.failureCode} when 'native_provider_auth_failed' then 'auth' when 'native_provider_runner_failed' then 'runner' else 'quota' end || '_attributed'
+        and e.source_event_id = 'ai-connection-' || case ${nativeRunFinalizations.failureCode} when 'native_provider_auth_failed' then 'auth' when 'native_provider_runner_failed' then 'runner' else 'quota' end || '-attributed:' || ${heartbeatRuns.id}::text
     ))`,
     isNull(nativeRunFinalizations.resultId),
     sql`coalesce(${nativeRunFinalizations.failureDetail}->>'successorRunId', '') = ''`,
     sql`coalesce(${nativeRunFinalizations.failureDetail}->>'replacementDenied', '') = ''`,
-    sql`(${nativeRunFinalizations.failureCode} <> 'native_provider_usage_limit' or coalesce(${heartbeatRuns.resultJson}->'executionCancellation'->>'state', '') not in ('requested', 'acknowledged'))`,
+    sql`(${nativeRunFinalizations.failureCode} not in ('native_provider_usage_limit', 'native_provider_auth_failed', 'native_provider_runner_failed') or coalesce(${heartbeatRuns.resultJson}->'executionCancellation'->>'state', '') not in ('requested', 'acknowledged'))`,
   );
 }
 
@@ -156,24 +157,25 @@ export async function reconcileSafeNativeReplacements(
       eq(nativeRunFinalizations.runId, heartbeatRuns.id),
     )
     .where(
-      and(nativeReplacementPending(), eq(nativeRunFinalizations.failureCode, "native_provider_usage_limit")),
+      and(nativeReplacementPending(), inArray(nativeRunFinalizations.failureCode, NATIVE_POOL_FAILURE_CODES)),
     )
-    .orderBy(sql`case when ${nativeRunFinalizations.failureCode} = 'native_provider_usage_limit' and
+    .orderBy(sql`case when ${nativeRunFinalizations.failureCode} in ('native_provider_usage_limit', 'native_provider_auth_failed', 'native_provider_runner_failed') and
         coalesce(${nativeRunFinalizations.failureDetail}->>'replacementWaitingForCleanup', 'false') = 'true' and
         exists (select 1 from environment_leases l where l.company_id = ${heartbeatRuns.companyId}
           and l.heartbeat_run_id = ${heartbeatRuns.id} and l.released_at is null
           and l.status in ('active', 'pending_cleanup') and coalesce(l.cleanup_status, '') not in ('failed', 'success')) then 2
-      when ${nativeRunFinalizations.failureCode} = 'native_provider_usage_limit' and
+      when ${nativeRunFinalizations.failureCode} in ('native_provider_usage_limit', 'native_provider_auth_failed', 'native_provider_runner_failed') and
         ${nativeRunFinalizations.nextAttemptAt} > ${now.toISOString()}::timestamptz then 1 else 0 end`,
       nativeRunFinalizations.nextAttemptAt, heartbeatRuns.createdAt, heartbeatRuns.id)
     .limit(25);
   const otherCandidates = await db.select({ run: heartbeatRuns, coordinator: nativeRunFinalizations })
     .from(heartbeatRuns).innerJoin(nativeRunFinalizations, eq(nativeRunFinalizations.runId, heartbeatRuns.id))
-    .where(and(nativeReplacementPending(), ne(nativeRunFinalizations.failureCode, "native_provider_usage_limit")))
+    .where(and(nativeReplacementPending(), notInArray(nativeRunFinalizations.failureCode, NATIVE_POOL_FAILURE_CODES)))
     .orderBy(heartbeatRuns.createdAt, heartbeatRuns.id).limit(25);
   const candidates = [...quotaCandidates, ...otherCandidates];
   let scheduled = 0;
   for (const { run, coordinator } of candidates) {
+    const poolFailure = nativePoolFailureKind(coordinator.failureCode);
     const holdQuotaForOperator = async (cause: string, nextAction: string) => {
         await db.transaction(async tx => {
           const [task] = await tx.select().from(issues).where(and(
@@ -182,7 +184,7 @@ export async function reconcileSafeNativeReplacements(
           const [current] = await tx.select().from(nativeRunFinalizations).where(and(
             eq(nativeRunFinalizations.runId, run.id), eq(nativeRunFinalizations.companyId, run.companyId),
           )).for("update");
-          if (!current || current.phase !== "terminal_failure" || current.failureCode !== "native_provider_usage_limit" ||
+          if (!current || current.phase !== "terminal_failure" || current.failureCode !== coordinator.failureCode ||
               current.failureDetail?.successorRunId || current.failureDetail?.replacementDenied) return;
           await notifyExecutionRunWork(tx, { companyId: run.companyId });
           await tx.update(nativeRunFinalizations).set({ nextAttemptAt: null, updatedAt: now,
@@ -214,7 +216,7 @@ export async function reconcileSafeNativeReplacements(
         );
       // Teardown is still in progress. The next sweep rechecks its durable outcome.
       if (leases.some((lease) => lease.releasedAt === null)) {
-        if (coordinator.failureCode === "native_provider_usage_limit") {
+        if (Boolean(poolFailure)) {
           if (leases.some(lease => lease.releasedAt === null &&
               (!['active', 'pending_cleanup'].includes(lease.status) || ['failed', 'success'].includes(lease.cleanupStatus ?? '')))) {
             await holdQuotaForOperator("provider_ownership_unverified", "Verify the previous provider and its workspace have stopped before continuing.");
@@ -222,7 +224,7 @@ export async function reconcileSafeNativeReplacements(
             await db.transaction(async tx => {
               await tx.select({ id: issues.id }).from(issues).where(and(eq(issues.id, coordinator.issueId), eq(issues.companyId, run.companyId))).for("update");
               const [current] = await tx.select().from(nativeRunFinalizations).where(eq(nativeRunFinalizations.runId, run.id)).for("update");
-              if (!current || current.phase !== "terminal_failure" || current.failureCode !== "native_provider_usage_limit" || current.failureDetail?.successorRunId || current.failureDetail?.replacementDenied) return;
+              if (!current || current.phase !== "terminal_failure" || current.failureCode !== coordinator.failureCode || current.failureDetail?.successorRunId || current.failureDetail?.replacementDenied) return;
               const currentLeases = await tx.select().from(environmentLeases).where(and(eq(environmentLeases.companyId, run.companyId), eq(environmentLeases.heartbeatRunId, run.id))).for("update");
               if (!currentLeases.some(lease => lease.releasedAt === null) || currentLeases.some(lease => lease.releasedAt === null &&
                   (!['active', 'pending_cleanup'].includes(lease.status) || ['failed', 'success'].includes(lease.cleanupStatus ?? '')))) {
@@ -244,7 +246,7 @@ export async function reconcileSafeNativeReplacements(
       // A transport label alone is not evidence. Keep inspecting these candidates
       // as process cleanup and the final transcript become durable.
       if (coordinator.failureCode !== "native_provider_terminal_failed" && !stoppedSession) {
-        if (coordinator.failureCode === "native_provider_usage_limit") await holdQuotaForOperator("provider_ownership_unverified", "Verify the previous provider stopped and reconcile its complete action history before continuing.");
+        if (poolFailure) await holdQuotaForOperator("provider_ownership_unverified", "Verify the previous provider stopped and reconcile its complete action history before continuing.");
         continue;
       }
       const invocations = await db
@@ -268,7 +270,11 @@ export async function reconcileSafeNativeReplacements(
             eq(heartbeatRunEvents.runId, run.id),
             inArray(heartbeatRunEvents.eventType, [
               "harness.diagnostic",
+              "semantic_tool.input",
+              "semantic_tool.result",
               "tool.execution.started",
+              "tool.execution.completed",
+              "item.completed",
               "workspace.changed",
               "workspace.change.updated",
               "delegation.started",
@@ -278,6 +284,18 @@ export async function reconcileSafeNativeReplacements(
             ]),
           ),
         );
+      const freshConversation = Boolean(poolFailure);
+      const eventPayload = (event: { payload: unknown }) => {
+        const envelope = record(event.payload);
+        return envelope.prpEvent ? record(record(envelope.prpEvent).payload) : envelope;
+      };
+      const completedProviderActions = freshConversation ? events
+        .filter(event => event.eventType === "tool.execution.completed")
+        .filter(event => {
+          const p = eventPayload(event);
+          return typeof p.executionId === "string" && typeof p.name === "string" &&
+            ["succeeded", "completed"].includes(String(p.status));
+        }) : [];
       const safeControlReads = new Set([
         "connections_search",
         "connection_request",
@@ -287,10 +305,19 @@ export async function reconcileSafeNativeReplacements(
         "paperclip_read_document",
       ]);
       const uncertainProviderActions = events.flatMap((event) => {
-        const envelope = record(event.payload);
-        const p = envelope.prpEvent
-          ? record(record(envelope.prpEvent).payload)
-          : envelope;
+        const p = eventPayload(event);
+        if (["tool.execution.completed", "item.completed", "semantic_tool.result"].includes(event.eventType)) return [];
+        if (event.eventType === "semantic_tool.input") {
+          if (!freshConversation) return [];
+          const call = record(p.semantic_tool);
+          const settled = typeof call.callId === "string" && events.some(done => {
+            const result = record(eventPayload(done).semantic_tool);
+            return done.eventType === "semantic_tool.result" && result.callId === call.callId &&
+              result.operationId === call.operationId && result.outcome === "succeeded";
+          });
+          return settled ? [] : [String(call.callId ?? "unconfirmed semantic tool")];
+        }
+        if (freshConversation && ["workspace.changed", "workspace.change.updated", "artifact.generated"].includes(event.eventType)) return [];
         if (event.eventType === "harness.diagnostic")
           return p.classification === "descendant"
             ? [`descendant ${String(p.receivedThreadId ?? "unknown")}`]
@@ -307,6 +334,16 @@ export async function reconcileSafeNativeReplacements(
           return [event.eventType];
         if (event.eventType === "tool.execution.started") {
           const name = typeof p.name === "string" ? p.name : "unknown tool";
+          if (freshConversation && completedProviderActions.some(done => {
+            const completed = eventPayload(done);
+            const startSource = record(record(event.payload).prpEvent);
+            const completedSource = record(record(done.payload).prpEvent);
+            return completed.executionId === p.executionId && completed.name === name &&
+              (startSource.sourceInstanceId === undefined ||
+                completedSource.sourceInstanceId === startSource.sourceInstanceId &&
+                Number(completedSource.sourceSeq) > Number(startSource.sourceSeq));
+          })) return [];
+
           const completedTaskControlCallIds = stoppedSession?.evidence.completedTaskControlCallIds;
           if (name === "paperclip_finish" && Array.isArray(completedTaskControlCallIds) &&
               completedTaskControlCallIds.includes(p.executionId)) return [];
@@ -323,6 +360,14 @@ export async function reconcileSafeNativeReplacements(
             (!receiptedRead && !safeControlReads.has(name))
             ? [String(p.executionId ?? name)]
             : [];
+        }
+        if (freshConversation && event.eventType === "item.started") {
+          const source = record(record(event.payload).prpEvent);
+          if (typeof source.itemId === "string" && events.some(done => {
+            const terminal = record(record(done.payload).prpEvent);
+            return done.eventType === "item.completed" && terminal.itemId === source.itemId &&
+              terminal.sourceInstanceId === source.sourceInstanceId && eventPayload(done).status === "completed";
+          })) return [];
         }
         return [
           "command_execution",
@@ -347,7 +392,7 @@ export async function reconcileSafeNativeReplacements(
           exposeLowTrustRaw: false,
         });
         if (continuation.unresolvedInteractionIds.length > 0) {
-          if (coordinator.failureCode === "native_provider_usage_limit") await holdQuotaForOperator("continuation_evidence_incomplete", "Resolve the outstanding task interactions before continuing.");
+          if (poolFailure) await holdQuotaForOperator("continuation_evidence_incomplete", "Resolve the outstanding task interactions before continuing.");
           continue;
         }
         historyComplete = true;
@@ -357,6 +402,7 @@ export async function reconcileSafeNativeReplacements(
       const remoteWorkspace = await remoteWorkspaceReplacementEvidence(db, run, coordinator.issueId, leases);
       const decision = decideNativeReplacement({
         failedSession: true,
+        freshConversation,
         // A facade transport failure can conceal an authoritative protocol
         // rejection. A stopped process and read receipts do not resolve that.
         failureMeaningKnown:
@@ -382,14 +428,14 @@ export async function reconcileSafeNativeReplacements(
         effectInventoryComplete:
           Boolean(stoppedSession) || (record(run.runnerProfileJson).recoveryEventInventoryVersion === 1 &&
           record(execution.provider).kind === "codex"),
-        attempts: coordinator.attempt,
+        attempts: poolFailure ? 0 : coordinator.attempt,
         invocations,
         apiReceipts: record(record(run.resultJson).apiToolReceipts),
         uncertainProviderActions,
       });
       if (!decision.allowed) {
         // Lack of containment can be temporary; do not prevent the next proof.
-        if (decision.cause === "provider_ownership_unverified" && coordinator.failureCode !== "native_provider_usage_limit") continue;
+        if (decision.cause === "provider_ownership_unverified" && !poolFailure) continue;
         await db.transaction(async (tx) => {
           await tx.execute(
             sql`select set_config('statement_timeout', '15000', true), set_config('lock_timeout', '1000', true)`,
@@ -489,7 +535,7 @@ export async function reconcileSafeNativeReplacements(
           current.failureCode !== coordinator.failureCode ||
           current.failureDetail?.successorRunId ||
           current.failureDetail?.replacementDenied ||
-          current.attempt >= 3
+          (!poolFailure && current.attempt >= 3)
         )
           return false;
         if (task.status === "blocked") {
@@ -514,7 +560,7 @@ export async function reconcileSafeNativeReplacements(
           const [currentRun] = await tx.select().from(heartbeatRuns).where(and(
             eq(heartbeatRuns.id, run.id), eq(heartbeatRuns.companyId, run.companyId),
           )).for("update");
-          if (current.failureCode === "native_provider_usage_limit" && currentRun &&
+          if (Boolean(nativePoolFailureKind(current.failureCode)) && currentRun &&
               ["requested", "acknowledged"].includes(String(record(record(currentRun.resultJson).executionCancellation).state))) {
             stopFenced = true;
             return false;
@@ -527,7 +573,7 @@ export async function reconcileSafeNativeReplacements(
         }
         let quotaSelection: AiConnectionRouterSelection | undefined;
         let quotaCycleReset = false;
-        if (current.failureCode === "native_provider_usage_limit") {
+        if (Boolean(nativePoolFailureKind(current.failureCode))) {
           // The cooldown is account-wide; only the run-bound attribution receipt
           // proves that this particular execution exhausted its selected account.
           const context = record(run.contextSnapshot);
@@ -542,11 +588,11 @@ export async function reconcileSafeNativeReplacements(
           const [receipt] = await tx.select().from(heartbeatRunEvents).where(and(
             eq(heartbeatRunEvents.companyId, run.companyId), eq(heartbeatRunEvents.runId, run.id),
             eq(heartbeatRunEvents.agentId, run.agentId), isNull(heartbeatRunEvents.sourceInstanceId),
-            eq(heartbeatRunEvents.eventType, "ai_connection.quota_attributed"),
-            eq(heartbeatRunEvents.sourceEventId, `ai-connection-quota-attributed:${run.id}`),
+            eq(heartbeatRunEvents.eventType, `ai_connection.${poolFailure}_attributed`),
+            eq(heartbeatRunEvents.sourceEventId, `ai-connection-${poolFailure}-attributed:${run.id}`),
           ));
           const attribution = record(receipt?.payload);
-          if (attribution.schema !== "paperclip.ai-connection-quota-attribution.v1" ||
+          if (attribution.schema !== `paperclip.ai-connection-${poolFailure}-attribution.v1` ||
               attribution.companyId !== run.companyId || attribution.runId !== run.id ||
               attribution.agentId !== run.agentId || attribution.poolId !== poolId ||
               attribution.taskKey !== taskKey || attribution.memberId !== selection.memberId ||
@@ -589,6 +635,8 @@ export async function reconcileSafeNativeReplacements(
             companyId: run.companyId, poolId, agentId: run.agentId, taskKey,
             expectedSelection: selection as unknown as AiConnectionRouterSelection,
             userId: run.responsibleUserId, adapterType: agent.adapterType, attemptedMemberIds,
+            failureKind: poolFailure!,
+            sourceAdapterConfig: { ...record(agent.adapterConfig), ...record(record(task.assigneeAdapterOverrides).adapterConfig) },
           };
           let transition = await router.transitionQuotaPin(transitionInput);
           if (transition.kind !== "selected") {
@@ -601,14 +649,18 @@ export async function reconcileSafeNativeReplacements(
             for (const attempted of attemptedRuns) {
               const attemptedSelection = record(record(attempted.contextSnapshot).aiRouterSelection);
               const attemptedBinding = record(attemptedSelection.binding);
+              const [attemptedOwner] = await tx.select().from(nativeRunFinalizations).where(and(
+                eq(nativeRunFinalizations.companyId, run.companyId), eq(nativeRunFinalizations.runId, attempted.id)));
+              const attemptedKind = nativePoolFailureKind(attemptedOwner?.failureCode);
+              if (!attemptedKind) continue;
               const [proof] = await tx.select().from(heartbeatRunEvents).where(and(
                 eq(heartbeatRunEvents.companyId, run.companyId), eq(heartbeatRunEvents.runId, attempted.id),
                 eq(heartbeatRunEvents.agentId, run.agentId), isNull(heartbeatRunEvents.sourceInstanceId),
-                eq(heartbeatRunEvents.eventType, "ai_connection.quota_attributed"),
-                eq(heartbeatRunEvents.sourceEventId, `ai-connection-quota-attributed:${attempted.id}`),
+                eq(heartbeatRunEvents.eventType, `ai_connection.${attemptedKind}_attributed`),
+                eq(heartbeatRunEvents.sourceEventId, `ai-connection-${attemptedKind}-attributed:${attempted.id}`),
               ));
               const p = record(proof?.payload);
-              if (p.schema !== "paperclip.ai-connection-quota-attribution.v1" || p.companyId !== run.companyId ||
+              if (p.schema !== `paperclip.ai-connection-${attemptedKind}-attribution.v1` || p.companyId !== run.companyId ||
                   p.runId !== attempted.id || p.agentId !== run.agentId || p.poolId !== poolId || p.taskKey !== taskKey ||
                   p.memberId !== attemptedSelection.memberId || p.connectionId !== attemptedBinding.connectionId ||
                   p.grantId !== attemptedBinding.grantId || !isDeepStrictEqual(p.selection, attemptedSelection) ||
@@ -639,7 +691,7 @@ export async function reconcileSafeNativeReplacements(
           }
           if (transition.kind === "cooldown") {
             await tx.update(nativeRunFinalizations).set({ nextAttemptAt: transition.retryAt, updatedAt: now,
-              failureDetail: { ...current.failureDetail, replacementWaitingForCleanup: false, nextAction: `Wait for an eligible account's usage limit to reset at ${transition.retryAt.toISOString()}.` },
+              failureDetail: { ...current.failureDetail, replacementWaitingForCleanup: false, nextAction: `Wait for an eligible account to become available at ${transition.retryAt.toISOString()}.` },
             }).where(eq(nativeRunFinalizations.runId, run.id));
             cooling = true;
             return false;
@@ -657,8 +709,10 @@ export async function reconcileSafeNativeReplacements(
           if (!stoppedSession.retire()) throw new Error("native_replacement_stopped_session_changed");
           await appendHeartbeatRunEvent(tx as unknown as Db, {
             companyId: run.companyId, runId: run.id, agentId: run.agentId,
-            eventType: "native.stopped_text_turn_verified", stream: "system", level: "info",
-            message: "The previous runner and provider stopped. The interrupted turn had no external actions; any completion bookkeeping has a verified receipt.",
+            eventType: freshConversation ? "native.stopped_conversation_verified" : "native.stopped_text_turn_verified", stream: "system", level: "info",
+            message: freshConversation
+              ? "The previous runner and provider stopped. A fresh conversation will preserve completed actions without replaying them."
+              : "The previous runner and provider stopped. The interrupted turn had no external actions; any completion bookkeeping has a verified receipt.",
             payload: stoppedSession.evidence,
           });
         }
@@ -667,6 +721,7 @@ export async function reconcileSafeNativeReplacements(
         const predecessorContext = { ...record(run.contextSnapshot) };
         if (quotaSelection) {
           predecessorContext.aiRouterSelection = quotaSelection;
+          predecessorContext.aiPoolFailover = { sourceRunId: run.id, reason: poolFailure };
           delete predecessorContext.aiConnection;
         }
         // History comes from the failed source run. Consumed wake fields must
@@ -717,7 +772,7 @@ export async function reconcileSafeNativeReplacements(
           contextSnapshot: context,
           retryOfRunId: run.id,
           scheduledRetryAt: dueAt,
-          scheduledRetryAttempt: current.attempt,
+          scheduledRetryAttempt: poolFailure ? run.scheduledRetryAttempt + 1 : current.attempt,
           scheduledRetryReason: NATIVE_SAFE_REPLACEMENT_REASON,
         });
         await options.failpoint?.("successor_inserted");
@@ -731,7 +786,10 @@ export async function reconcileSafeNativeReplacements(
             failureDetail: {
               ...current.failureDetail,
               ...(quotaCycleReset ? { quotaCycleResetSuccessorRunId: successorRunId } : {}),
-              ...(stoppedSession ? { stoppedTextTurn: stoppedSession.evidence } : {}),
+              ...(quotaSelection ? { poolFailover: { sourceRunId: run.id, reason: poolFailure, selection: quotaSelection } } : {}),
+              ...(stoppedSession ? freshConversation
+                ? { stoppedConversation: stoppedSession.evidence }
+                : { stoppedTextTurn: stoppedSession.evidence } : {}),
               successorRunId,
               nextAction:
                 "Continue in the linked fresh provider session after the retry delay.",
@@ -799,12 +857,12 @@ export async function reconcileSafeNativeReplacements(
       if (created) {
         await options.failpoint?.("lineage_committed");
         scheduled += 1;
-      } else if (!cooling && !stopFenced && coordinator.failureCode === "native_provider_usage_limit") {
+      } else if (!cooling && !stopFenced && Boolean(poolFailure)) {
         await holdQuotaForOperator("quota_failover_unavailable", "Inspect account permissions, pool configuration, and the original run before choosing a recovery action.");
       }
     } catch (error) {
       if (options.failpoint) throw error;
-      if (coordinator.failureCode === "native_provider_usage_limit") {
+      if (Boolean(poolFailure)) {
         try {
           await holdQuotaForOperator("quota_failover_reconciliation_failed", "Inspect the failed quota recovery and reconcile the original run before continuing.");
         } catch (holdError) {

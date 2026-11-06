@@ -1,8 +1,12 @@
+import { notifyExecutionRunWork } from "../execution-control-notifications.js";
+import { nativePoolFailureKind } from "../native-runtime/native-pool-failure.js";
 import { preserveAcceptedRunUsageProjectionSql } from "../usage-receipts.js";
 import { providerFailureFromError } from "../../vendor/paperclip-runner/index.js";
 import { createHash } from "node:crypto";
 import { extractClaudeRetryNotBefore, isClaudeProviderQuotaError } from "@paperclipai/adapter-claude-local/server";
 import { nativeTaskSessionPublicationHandled } from "../native-runtime/native-task-session-publication.js";
+import { poolFailureKind, POOL_ACCOUNT_DEFAULT_COOLDOWN_MS, hasCompanyPoolAffinity } from "./pool-failover.js";
+import { effectiveRunAgent } from "./effective-run-adapter.js";
 import { settledResponsePublicationSql } from "../native-runtime/native-response-publication-receipt.js";
 import { notifyChatRunMilestones } from "../chat-run-milestone-notifications.js";
 import { measureRunPhase } from "../execution-preparation-timing.js";
@@ -84,13 +88,13 @@ function providerQuotaRetryAt(value: unknown): string | undefined {
 /** Only an in-process credential identity can bind a quota result to a pin. */
 export async function recordVerifiedRouterQuotaCooldown(db: Db, input: {
   runId: string; companyId: string; agentId: string; credentialIdentity: string | undefined;
-  retryNotBefore: string | null | undefined; now?: Date;
+  retryNotBefore: string | null | undefined; now?: Date; failureKind?: "quota" | "auth" | "runner";
 }) {
   const now = input.now ?? new Date();
   const supplied = input.retryNotBefore ? Date.parse(input.retryNotBefore) : NaN;
   const deadline = new Date(Number.isFinite(supplied) && supplied > now.getTime()
     ? supplied
-    : now.getTime() + PROVIDER_LIMIT_DEFAULT_COOLDOWN_MS);
+    : now.getTime() + (input.failureKind === "runner" ? 5 * 60_000 : POOL_ACCOUNT_DEFAULT_COOLDOWN_MS));
   return db.transaction(async tx => {
     const [candidate] = await tx.select({ scopeKind: heartbeatRuns.scopeKind, issueId: heartbeatRuns.issueId }).from(heartbeatRuns)
       .where(and(eq(heartbeatRuns.id, input.runId), eq(heartbeatRuns.companyId, input.companyId), eq(heartbeatRuns.agentId, input.agentId)));
@@ -100,8 +104,16 @@ export async function recordVerifiedRouterQuotaCooldown(db: Db, input: {
     const [run] = await tx.select().from(heartbeatRuns).where(and(eq(heartbeatRuns.id, input.runId),
       eq(heartbeatRuns.companyId, input.companyId), eq(heartbeatRuns.agentId, input.agentId))).for("update");
     if (!run || run.scopeKind !== candidate.scopeKind || run.issueId !== candidate.issueId || run.status !== "failed" ||
-      !(readHeartbeatRunErrorFamily(run) === "provider_quota" ||
+      !(input.failureKind ? poolFailureKind(run) === input.failureKind : readHeartbeatRunErrorFamily(run) === "provider_quota" ||
         (run.errorCode === "native_provider_usage_limit" && isConfirmedProviderQuotaFailure(run.resultJson?.providerFailure)))) return false;
+    if (run.runtimeMode === "native") {
+      if ((input.failureKind ?? "quota") === "quota" && !isConfirmedProviderQuotaFailure(run.resultJson?.providerFailure)) return false;
+      const [owner] = await tx.select().from(nativeRunFinalizations).where(and(eq(nativeRunFinalizations.companyId, run.companyId),
+        eq(nativeRunFinalizations.runId, run.id)));
+      if (!owner || owner.phase !== "terminal_failure" || owner.leaseOwner || owner.resultId ||
+          nativePoolFailureKind(owner.failureCode) !== (input.failureKind ?? "quota") ||
+          (input.failureKind === "runner" && owner.failureDetail?.originalFailureCode !== run.errorCode)) return false;
+    }
     const context = parseObject(run.contextSnapshot);
     const selection = parseObject(context.aiRouterSelection);
     const binding = parseObject(selection.binding);
@@ -113,7 +125,7 @@ export async function recordVerifiedRouterQuotaCooldown(db: Db, input: {
     const credentialIdentity = grantId && input.credentialIdentity ? quotaIdentityFromSessionSnapshot(grantId, input.credentialIdentity) : null;
     if (!poolId || !uuid.test(poolId) || !connectionId || !uuid.test(connectionId) || !grantId || !credentialIdentity || !taskKey) return false;
     const taskMatches = run.scopeKind === "issue" ? taskKey === run.issueId || Boolean(issue?.identifier && taskKey === issue.identifier)
-      : taskKey === run.id || (taskKey === "__heartbeat__" && run.invocationSource === "timer" && context.wakeSource === "timer");
+      : await hasCompanyPoolAffinity(tx as unknown as Db, run, taskKey);
     if (!taskMatches) return false;
     const [agent] = await tx.select().from(agents).where(and(eq(agents.id, run.agentId), eq(agents.companyId, run.companyId))).for("share");
     const configured = parseObject(parseObject(agent?.runtimeConfig).aiConnection);
@@ -122,29 +134,31 @@ export async function recordVerifiedRouterQuotaCooldown(db: Db, input: {
       .innerJoin(aiConnectionPools, and(eq(aiConnectionPools.id, aiConnectionTaskPins.poolId), eq(aiConnectionPools.companyId, aiConnectionTaskPins.companyId)))
       .where(and(eq(aiConnectionTaskPins.companyId, run.companyId), eq(aiConnectionTaskPins.poolId, poolId),
         eq(aiConnectionTaskPins.agentId, run.agentId), eq(aiConnectionTaskPins.taskKey, taskKey),
-        sql`${aiConnectionTaskPins.selection} = ${JSON.stringify(selection)}::jsonb`,
+        sql`(${aiConnectionTaskPins.selection} - 'runtimeConfig' - 'notes' - 'adapterType') =
+          (${JSON.stringify(selection)}::jsonb - 'runtimeConfig' - 'notes' - 'adapterType')`,
         sql`${aiConnectionTaskPins.member}->>'id' = ${selection.memberId ?? ""}`,
-        sql`${aiConnectionTaskPins.member}->'binding' = ${JSON.stringify(binding)}::jsonb`,
-        sql`${aiConnectionPools.config}->'members' @> jsonb_build_array(${aiConnectionTaskPins.member})`)).for("update");
+        sql`${aiConnectionTaskPins.member}->'binding' = ${JSON.stringify(binding)}::jsonb`)).for("update");
     if (!pin) return false;
-    const eventId = `ai-connection-quota-attributed:${run.id}`;
+    const kind = input.failureKind ?? "quota";
+    const eventId = `ai-connection-${kind}-attributed:${run.id}`;
     const [existing] = await tx.select().from(heartbeatRunEvents).where(and(eq(heartbeatRunEvents.runId, run.id), eq(heartbeatRunEvents.sourceEventId, eventId))).limit(1);
     const existingPayload = parseObject(existing?.payload);
     const receiptDeadline = existing && !Number.isFinite(supplied) ? readNonEmptyString(existingPayload.retryAt) : deadline.toISOString();
     if (!receiptDeadline || !Number.isFinite(Date.parse(receiptDeadline))) return false;
-    const payload = { schema: "paperclip.ai-connection-quota-attribution.v1", companyId: run.companyId, runId: run.id,
+    const payload = { schema: `paperclip.ai-connection-${kind}-attribution.v1`, companyId: run.companyId, runId: run.id,
       agentId: run.agentId, poolId, taskKey, memberId: selection.memberId, connectionId, grantId, selection, retryAt: receiptDeadline,
       quotaIdentityHash: createHash("sha256").update(credentialIdentity).digest("hex") };
     if (existing) {
       const [matches] = await tx.select({ id: heartbeatRunEvents.id }).from(heartbeatRunEvents).where(and(eq(heartbeatRunEvents.id, existing.id),
         eq(heartbeatRunEvents.companyId, run.companyId), eq(heartbeatRunEvents.agentId, run.agentId),
-        eq(heartbeatRunEvents.eventType, "ai_connection.quota_attributed"), sql`${heartbeatRunEvents.sourceInstanceId} is null`,
+        eq(heartbeatRunEvents.eventType, `ai_connection.${kind}_attributed`), sql`${heartbeatRunEvents.sourceInstanceId} is null`,
         sql`${heartbeatRunEvents.payload} = ${JSON.stringify(payload)}::jsonb`)).limit(1);
       if (!matches) return false;
     } else {
+      await notifyExecutionRunWork(tx, { companyId: run.companyId });
       const seq = await allocateHeartbeatRunEventSeq(tx as unknown as Db, run.id);
       await tx.insert(heartbeatRunEvents).values({ companyId: run.companyId, runId: run.id, agentId: run.agentId, seq,
-        eventType: "ai_connection.quota_attributed", stream: "system", level: "info", sourceEventId: eventId, payload });
+        eventType: `ai_connection.${kind}_attributed`, stream: "system", level: "info", sourceEventId: eventId, payload });
     }
     await aiConnectionRouterService(tx as unknown as Db).recordQuotaCooldown(run.companyId, connectionId, credentialIdentity, new Date(receiptDeadline));
     return true;
@@ -729,7 +743,8 @@ export function createHeartbeatRunCompletion(db: Db, dependencies: HeartbeatRunC
             ...parseObject(adapterResult.resultJson),
             ...(adapterResult.executionRecovery
               ? { executionRecovery: adapterResult.executionRecovery }
-              : {}),
+              : run.runtimeMode !== "native" ? { executionRecovery: undefined } : {}),
+            executionSettlement: adapterResult.executionSettlement,
             ...(outcome === "cancelled" ? controllerLeaseLossResultJson(signal) : {}),
             configFreshness: configFreshnessResultMetadata,
           },
@@ -846,12 +861,14 @@ export function createHeartbeatRunCompletion(db: Db, dependencies: HeartbeatRunC
     const finalizedRun = persistedRun ?? (await getRun(run.id));
     const nativeQuotaFailure = adapterResult.errorCode === "native_provider_usage_limit"
       ? readProviderFailure(adapterResult.resultJson?.providerFailure) : null;
+    const poolFailure = persistedRun ? poolFailureKind(persistedRun) : null;
     if (persistedRun && outcome === "failed" &&
-      (adapterResult.errorFamily === "provider_quota" || adapterResult.errorCode === "provider_quota" || isConfirmedProviderQuotaFailure(nativeQuotaFailure))) {
+      (poolFailure || adapterResult.errorFamily === "provider_quota" || adapterResult.errorCode === "provider_quota" || isConfirmedProviderQuotaFailure(nativeQuotaFailure))) {
       await recordVerifiedRouterQuotaCooldown(db, {
         runId: persistedRun.id, companyId: persistedRun.companyId, agentId: persistedRun.agentId,
         credentialIdentity: sessionConfigMetadata.aiCredentialIdentity,
         retryNotBefore: adapterResult.retryNotBefore ?? providerQuotaRetryAt(nativeQuotaFailure),
+        ...(poolFailure ? { failureKind: poolFailure } : {}),
       }).catch(err => logger.warn({ err, runId: run.id }, "failed to record router quota cooldown"));
     }
     const settleAgent = () => finalizeAgentStatus(agent.id, outcome, runErrorMessage, {
@@ -1062,7 +1079,7 @@ export function createHeartbeatRunCompletion(db: Db, dependencies: HeartbeatRunC
         }
       } else if (
         outcome === "failed" &&
-        readTransientRecoveryContractFromRun(livenessRun)
+        (readTransientRecoveryContractFromRun(livenessRun) || poolFailureKind(livenessRun))
       ) {
         await scheduleBoundedRetryForRun(livenessRun, agent);
       } else if (
@@ -1306,10 +1323,11 @@ export function createHeartbeatRunCompletion(db: Db, dependencies: HeartbeatRunC
     }
 
     const failedRun = failedRunWrite.run;
-    if (failedRun && failureOutcome === "failed" && nativeTerminalFailureCode === "native_provider_usage_limit" && isConfirmedProviderQuotaFailure(providerFailure)) {
+    const nativePoolFailure = nativePoolFailureKind(nativeTerminalFailureCode);
+    if (failedRun && failureOutcome === "failed" && nativePoolFailure) {
       await recordVerifiedRouterQuotaCooldown(db, { runId: failedRun.id, companyId: failedRun.companyId,
         agentId: failedRun.agentId, credentialIdentity: sessionConfigMetadata.aiCredentialIdentity,
-        retryNotBefore: providerQuotaRetryAt(providerFailure) }).catch(error => logger.warn({ err: error, runId: run.id }, "failed to record router quota cooldown"));
+        retryNotBefore: providerQuotaRetryAt(readProviderFailure(failedRun.resultJson?.providerFailure)), failureKind: nativePoolFailure }).catch(error => logger.warn({ err: error, runId: run.id }, "failed to record router quota cooldown"));
     }
     const settleAgent = () => finalizeAgentStatus(agent.id, "failed", message, {
       wasFirstHeartbeat: timerClaimWasFirstHeartbeat(run),
@@ -1495,7 +1513,12 @@ export function createHeartbeatRunCompletion(db: Db, dependencies: HeartbeatRunC
       { err: identityRedactor.redact({ message: outerErr instanceof Error ? outerErr.message : String(outerErr), stack: outerErr instanceof Error ? outerErr.stack : undefined }), runId },
       "heartbeat execution setup failed",
     );
-    const setupFailureAgent = await getAgent(run.agentId).catch(() => null);
+    const configuredFailureAgent = await getAgent(run.agentId).catch(() => null);
+    let setupFailureAgent: Agent | null = null;
+    if (configuredFailureAgent) {
+      try { setupFailureAgent = effectiveRunAgent(run, configuredFailureAgent); }
+      catch { /* Configuration drift must not prevent terminalizing the admitted run. */ }
+    }
     // The structured failure payload drives the recovery notice and next
     // action, so it is persisted even when the agent lookup failed and the
     // agent-scoped stop metadata cannot be merged in.
@@ -1638,8 +1661,10 @@ export function createHeartbeatRunCompletion(db: Db, dependencies: HeartbeatRunC
             });
           }
         } else if (livenessRun.errorCode !== PROJECT_ACCESS_DENIED) {
-          await (isTransientWorkspacePreparationCode(livenessRun.errorCode)
+          await (poolFailureKind(livenessRun)
             ? scheduleBoundedRetryForRun(livenessRun, failedAgent)
+            : isTransientWorkspacePreparationCode(livenessRun.errorCode)
+              ? scheduleBoundedRetryForRun(livenessRun, failedAgent)
             : scheduleInteractionContinuationInfrastructureRetryIfEligible(livenessRun, failedAgent)
           ).catch((retryError) => {
             logger.warn(

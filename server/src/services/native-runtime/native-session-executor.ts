@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from "node:util";
+import { NATIVE_POOL_FAILURE_CODES, DEFINITIVE_NATIVE_RUNNER_FAILURE_CODES, nativePoolFailureKind } from "./native-pool-failure.js";
 import { NativeSessionDiagnostics, nativeSessionDiagnostics, type NativeDiagnosticLease } from "./native-session-diagnostics.js";
 import { nativePostResultFailureCategory, type NativePostResultFailureCategory } from "./native-post-result-failure.js";
 import { logger } from "../../middleware/logger.js";
@@ -134,7 +136,7 @@ import type {
   AdapterExecutionResult,
   AdapterRuntimeEvent,
 } from "../../adapters/index.js";
-import type { NativeFinalizationResult } from "@paperclipai/shared";
+import { readProviderFailure, type NativeFinalizationResult } from "@paperclipai/shared";
 import type {
   DurablePrpControlPlane,
   DurableRecoveryIdentity,
@@ -3097,6 +3099,9 @@ export async function verifyStoppedNativeSessionForReplacement(
   db: Db,
   run: typeof heartbeatRuns.$inferSelect,
 ): Promise<{ evidence: Record<string, unknown>; retire: () => boolean } | null> {
+  if (NATIVE_POOL_FAILURE_CODES.includes(run.errorCode ?? "") || DEFINITIVE_NATIVE_RUNNER_FAILURE_CODES.includes(run.errorCode ?? "")) {
+    return verifyStoppedNativeSessionForContinuation(db, run);
+  }
   try {
     if (run.runtimeMode !== "native" || run.status !== "failed" || !run.finishedAt ||
         !run.nativeIssueId || !run.nativeSessionId || !run.runnerInstanceId) return null;
@@ -7139,6 +7144,30 @@ export function nativeProviderUsageLimitFromEvent(
   );
 }
 
+export function nativeProviderQuotaFailureFromEvent(
+  event: Pick<PrpEvent, "sourceKind" | "eventType" | "payload">,
+): ReturnType<typeof readProviderFailure> {
+  if (!nativeProviderUsageLimitFromEvent(event)) return null;
+  const error = record(record(event.payload).error);
+  return readProviderFailure(error.providerFailure) ?? (error.codexErrorInfo === "usageLimitExceeded"
+    ? { schema: "paperclip.provider-failure.v1", provider: "openai", phase: "turn", category: "quota_exhausted",
+        message: "The provider reported an exhausted usage allowance.", providerCode: "usageLimitExceeded", retryability: "requires_action" }
+    : null);
+}
+
+export function nativeProviderAuthenticationFailureFromEvent(
+  event: Pick<PrpEvent, "sourceKind" | "eventType" | "payload">,
+): ReturnType<typeof readProviderFailure> {
+  const payload = record(event.payload);
+  if (event.sourceKind !== "runner" || event.eventType !== "turn.failed" || payload.status !== "failed") return null;
+  const error = record(payload.error), failure = readProviderFailure(error.providerFailure);
+  if (failure?.category === "authentication") return failure;
+  return ["unauthorized", "invalid_api_key"].includes(String(error.codexErrorInfo))
+    ? { schema: "paperclip.provider-failure.v1", provider: "openai", phase: "turn", category: "authentication",
+        message: "The provider rejected the selected account credentials.", providerCode: String(error.codexErrorInfo), retryability: "requires_action" }
+    : null;
+}
+
 export function nativeSessionFailureDisposition(
   attempt: number,
   now = new Date(),
@@ -7158,7 +7187,7 @@ export function nativeSessionFailureDisposition(
     sourceFailureCode === NATIVE_CURRENT_WAKE_COMMENTS_CHANGED_AFTER_READ ||
     sourceFailureCode === "native_session_cleanup_quarantined" ||
     sourceFailureCode === "native_adopted_runner_authentication_timeout" ||
-    sourceFailureCode === "native_provider_usage_limit";
+    sourceFailureCode === "native_provider_usage_limit" || sourceFailureCode === "native_provider_auth_failed";
   const permissionDeclined = sourceFailureCode === "native_permission_declined";
   const exhausted = permanentFailure || permissionDeclined || attempt >= 3;
   return {
@@ -7168,7 +7197,7 @@ export function nativeSessionFailureDisposition(
     failureCode: permanentFailure || permissionDeclined
       ? sourceFailureCode!
       : exhausted
-        ? ("native_session_retry_exhausted" as const)
+        ? (DEFINITIVE_NATIVE_RUNNER_FAILURE_CODES.includes(sourceFailureCode ?? "") ? "native_provider_runner_failed" as const : "native_session_retry_exhausted" as const)
         : ("native_session_interrupted" as const),
     nextAttemptAt: exhausted ? null : new Date(now.getTime() + 30_000),
   };
@@ -7207,6 +7236,7 @@ export function nativeSessionFailureSourceCode(
   | typeof NATIVE_PROVIDER_STATE_INCOMPATIBLE
   | "native_provider_approval_required"
   | "native_provider_usage_limit"
+  | "native_provider_auth_failed"
   | "native_session_cleanup_quarantined"
   | "native_adopted_runner_authentication_timeout"
   | "runner_remote_provider_artifact_incompatible"
@@ -8969,6 +8999,7 @@ async function executePaperclipNativeSessionWithinScope(
             .select({
               retryOfRunId: heartbeatRuns.retryOfRunId,
               scheduledRetryReason: heartbeatRuns.scheduledRetryReason,
+              contextSnapshot: heartbeatRuns.contextSnapshot,
               agentId: heartbeatRuns.agentId,
               companyId: heartbeatRuns.companyId,
               nativeIssueId: heartbeatRuns.nativeIssueId,
@@ -9074,7 +9105,18 @@ async function executePaperclipNativeSessionWithinScope(
               predecessor.phase !== "terminal_failure"
             )
               throw new Error("native_replacement_lineage_invalid");
-            incidentAttempts = Math.max(incidentAttempts, predecessor.attempt);
+            const handoff = record(predecessor.failureDetail?.poolFailover);
+            const currentContext = record(boundRun.contextSnapshot), failover = record(currentContext.aiPoolFailover);
+            const target = record(handoff.selection), selected = record(currentContext.aiRouterSelection);
+            const poolHandoff = nativePoolFailureKind(predecessor.failureCode) &&
+              handoff.sourceRunId === boundRun.retryOfRunId && handoff.reason === nativePoolFailureKind(predecessor.failureCode) &&
+              failover.sourceRunId === handoff.sourceRunId && failover.reason === handoff.reason && currentContext.forceFreshSession === true &&
+              typeof target.poolId === "string" && typeof target.memberId === "string" &&
+              target.poolId === selected.poolId && target.memberId === selected.memberId &&
+              isDeepStrictEqual(target.binding, selected.binding);
+            // A verified pool handoff grants a new account its own bounded
+            // provider recovery attempts. Ordinary replacements keep the incident budget.
+            if (!poolHandoff) incidentAttempts = Math.max(incidentAttempts, predecessor.attempt);
           }
           const nextAttempt = nextNativeProviderAttempt(
             incidentAttempts,
@@ -9275,6 +9317,8 @@ async function executePaperclipNativeSessionWithinScope(
   let firstTokenRecorded = false;
   const observeDeliverableText = createNativeDeliverableTextObservation();
   let providerUsageLimitObserved = false;
+  let providerQuotaFailureObserved: ReturnType<typeof readProviderFailure> = null;
+  let providerAuthenticationFailureObserved: ReturnType<typeof readProviderFailure> = null;
   const providerFailureObservation = createNativeProviderFailureObservation(input.execution.provider);
   let turnCompletedAtMs: number | null = null;
   let runnerSessionStartupScope: NativeRunSpanScope | null = null;
@@ -9491,6 +9535,8 @@ async function executePaperclipNativeSessionWithinScope(
         await liveQuestions.observe(event);
         await projectSessionGoalEvent(event);
         providerUsageLimitObserved ||= nativeProviderUsageLimitFromEvent(event);
+        providerQuotaFailureObserved ??= nativeProviderQuotaFailureFromEvent(event);
+        providerAuthenticationFailureObserved ??= nativeProviderAuthenticationFailureFromEvent(event);
         providerFailureObservation.observe(event);
         const eventAtMs = Date.parse(event.emittedAt);
         const milestoneAtMs = Number.isFinite(eventAtMs)
@@ -9700,6 +9746,8 @@ async function executePaperclipNativeSessionWithinScope(
         await liveQuestions.observe(event);
         await projectSessionGoalEvent(event);
         providerUsageLimitObserved ||= nativeProviderUsageLimitFromEvent(event);
+        providerQuotaFailureObserved ??= nativeProviderQuotaFailureFromEvent(event);
+        providerAuthenticationFailureObserved ??= nativeProviderAuthenticationFailureFromEvent(event);
         providerFailureObservation.observe(event);
         const questionFallback = await materializeRuntimeQuestionFallback({
           db: input.db,
@@ -10666,7 +10714,7 @@ async function executePaperclipNativeSessionWithinScope(
           ? classifiedFailureCode
           : providerUsageLimitObserved
             ? "native_provider_usage_limit"
-            : classifiedFailureCode;
+            : providerAuthenticationFailureObserved ? "native_provider_auth_failed" : classifiedFailureCode;
       const bootstrap = input.useRunnerd && input.runnerExecutionTarget?.kind === "remote"
           && !input.restartRecovery && !retainedTransition && !remoteWarmRecovery
           ? {
@@ -10695,9 +10743,9 @@ async function executePaperclipNativeSessionWithinScope(
           : disposition.phase;
       const failureCode =
         recoveryEvidence.recoveryMode === "ambiguous_state"
-          ? sourceFailureCode
+          ? DEFINITIVE_NATIVE_RUNNER_FAILURE_CODES.includes(sourceFailureCode) ? "native_provider_runner_failed" : sourceFailureCode
           : disposition.failureCode;
-      const providerFailure = providerFailureFromError(error);
+      const providerFailure = providerFailureFromError(error) ?? providerQuotaFailureObserved ?? providerAuthenticationFailureObserved;
       // Pre-provider startup retries back off and wait out a known provider
       // limit; their exhaustion explains the startup failure.
       const startupRetryExhausted =
@@ -10716,7 +10764,7 @@ async function executePaperclipNativeSessionWithinScope(
               retryable: phase === "retryable_failure",
               failure: providerFailure,
               now,
-              managedAiCredentialIdentity: input.managedAiCredentialIdentity,
+              managedAiAccountIdentity: input.managedAiAccountIdentity,
             })
           : null;
       const providerCooldownAt = startupRetry?.providerCooldownAt ?? null;
@@ -11287,7 +11335,8 @@ async function executePaperclipNativeSessionWithinScope(
     workspaceFinalizeStatus: "pending",
   };
   const providerFailure = providerFailureObservation.forTerminal(native.turnId, native.terminal);
-  const providerExplanation = providerFailureObservation.providerFailureForTerminal(native.turnId, native.terminal);
+  const providerExplanation = providerFailureObservation.providerFailureForTerminal(native.turnId, native.terminal)
+    ?? (native.terminal.runTerminalState === "failed" ? providerQuotaFailureObserved ?? providerAuthenticationFailureObserved : null);
   // Keep the generic failure behavior, but record why the turn failed.
   const unclassifiedTurnFailure = providerFailureObservation.unclassifiedTurnFailure(native.turnId, native.terminal);
   const adapterResult: AdapterExecutionResult = {
