@@ -3097,6 +3097,9 @@ export async function verifyStoppedNativeSessionForReplacement(
   db: Db,
   run: typeof heartbeatRuns.$inferSelect,
 ): Promise<{ evidence: Record<string, unknown>; retire: () => boolean } | null> {
+  if (run.errorCode === "native_provider_usage_limit") {
+    return verifyStoppedNativeSessionForContinuation(db, run);
+  }
   try {
     if (run.runtimeMode !== "native" || run.status !== "failed" || !run.finishedAt ||
         !run.nativeIssueId || !run.nativeSessionId || !run.runnerInstanceId) return null;
@@ -7139,6 +7142,17 @@ export function nativeProviderUsageLimitFromEvent(
   );
 }
 
+export function nativeProviderQuotaFailureFromEvent(
+  event: Pick<PrpEvent, "sourceKind" | "eventType" | "payload">,
+): ReturnType<typeof readProviderFailure> {
+  if (!nativeProviderUsageLimitFromEvent(event)) return null;
+  const error = record(record(event.payload).error);
+  return readProviderFailure(error.providerFailure) ?? (error.codexErrorInfo === "usageLimitExceeded"
+    ? { schema: "paperclip.provider-failure.v1", provider: "openai", phase: "turn", category: "quota_exhausted",
+        message: "The provider reported an exhausted usage allowance.", providerCode: "usageLimitExceeded", retryability: "requires_action" }
+    : null);
+}
+
 export function nativeSessionFailureDisposition(
   attempt: number,
   now = new Date(),
@@ -9275,6 +9289,7 @@ async function executePaperclipNativeSessionWithinScope(
   let firstTokenRecorded = false;
   const observeDeliverableText = createNativeDeliverableTextObservation();
   let providerUsageLimitObserved = false;
+  let providerQuotaFailureObserved: ReturnType<typeof readProviderFailure> = null;
   const providerFailureObservation = createNativeProviderFailureObservation(input.execution.provider);
   let turnCompletedAtMs: number | null = null;
   let runnerSessionStartupScope: NativeRunSpanScope | null = null;
@@ -9491,6 +9506,7 @@ async function executePaperclipNativeSessionWithinScope(
         await liveQuestions.observe(event);
         await projectSessionGoalEvent(event);
         providerUsageLimitObserved ||= nativeProviderUsageLimitFromEvent(event);
+        providerQuotaFailureObserved ??= nativeProviderQuotaFailureFromEvent(event);
         providerFailureObservation.observe(event);
         const eventAtMs = Date.parse(event.emittedAt);
         const milestoneAtMs = Number.isFinite(eventAtMs)
@@ -9700,6 +9716,7 @@ async function executePaperclipNativeSessionWithinScope(
         await liveQuestions.observe(event);
         await projectSessionGoalEvent(event);
         providerUsageLimitObserved ||= nativeProviderUsageLimitFromEvent(event);
+        providerQuotaFailureObserved ??= nativeProviderQuotaFailureFromEvent(event);
         providerFailureObservation.observe(event);
         const questionFallback = await materializeRuntimeQuestionFallback({
           db: input.db,
@@ -10697,7 +10714,7 @@ async function executePaperclipNativeSessionWithinScope(
         recoveryEvidence.recoveryMode === "ambiguous_state"
           ? sourceFailureCode
           : disposition.failureCode;
-      const providerFailure = providerFailureFromError(error);
+      const providerFailure = providerFailureFromError(error) ?? providerQuotaFailureObserved;
       // Pre-provider startup retries back off and wait out a known provider
       // limit; their exhaustion explains the startup failure.
       const startupRetryExhausted =
@@ -11287,7 +11304,8 @@ async function executePaperclipNativeSessionWithinScope(
     workspaceFinalizeStatus: "pending",
   };
   const providerFailure = providerFailureObservation.forTerminal(native.turnId, native.terminal);
-  const providerExplanation = providerFailureObservation.providerFailureForTerminal(native.turnId, native.terminal);
+  const providerExplanation = providerFailureObservation.providerFailureForTerminal(native.turnId, native.terminal)
+    ?? (native.terminal.runTerminalState === "failed" ? providerQuotaFailureObserved : null);
   // Keep the generic failure behavior, but record why the turn failed.
   const unclassifiedTurnFailure = providerFailureObservation.unclassifiedTurnFailure(native.turnId, native.terminal);
   const adapterResult: AdapterExecutionResult = {
