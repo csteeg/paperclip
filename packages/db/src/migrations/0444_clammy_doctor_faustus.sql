@@ -1,3 +1,4 @@
+-- Retained local migration identity; distinct from the equivalent upstream pool migration.
 -- Keep renumbered pool migrations safe on instances that already applied the earlier branch version.
 CREATE TABLE IF NOT EXISTS "agent_account_sessions" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
