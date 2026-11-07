@@ -4,6 +4,7 @@ import { aiConnectionTaskPins, aiConnectionQuotaCooldowns, heartbeatRuns, type D
 import { readProviderFailure, type ProviderFailure } from "@paperclipai/shared";
 import { logger } from "../../middleware/logger.js";
 import { infrastructureRetryDelayMs, PROVIDER_LIMIT_DEFAULT_COOLDOWN_MS } from "../system-recovery-state.js";
+import { parseProviderQuotaClockReset } from "../provider-quota-reset.js";
 import { quotaIdentityFromSessionSnapshot } from "../ai-connection-router.js";
 
 /** Categories that report an exhausted account or request allowance. */
@@ -14,30 +15,97 @@ const PROVIDER_LIMIT_ERROR_CODES = ["native_provider_usage_limit", "provider_quo
 const NATIVE_PROVIDER_LIMIT_WINDOW_MS = 24 * 60 * 60_000;
 const LIMIT_EVIDENCE_ROWS = 20;
 
-function limitCooldownAt(failure: ProviderFailure | null, observedAt: Date): number | null {
+type ProviderLimitEvidence = { resetAt: number; resetReported: boolean; category: string; sourceRunId: string | null };
+
+function limitEvidence(failure: ProviderFailure | null, observedAt: Date, sourceRunId: string | null): ProviderLimitEvidence | null {
   if (!failure || !PROVIDER_LIMIT_CATEGORIES.includes(failure.category)) return null;
   const retryAt = failure.retryAt ? Date.parse(failure.retryAt) : Number.NaN;
-  return Number.isFinite(retryAt) ? retryAt : observedAt.getTime() + PROVIDER_LIMIT_DEFAULT_COOLDOWN_MS;
+  if (Number.isFinite(retryAt)) return { resetAt: retryAt, resetReported: true, category: failure.category, sourceRunId };
+  // ACP harnesses report the reset only in the provider's own wording.
+  const clockReset = parseProviderQuotaClockReset(failure.message, observedAt);
+  return clockReset
+    ? { resetAt: clockReset.getTime(), resetReported: true, category: failure.category, sourceRunId }
+    : { resetAt: observedAt.getTime() + PROVIDER_LIMIT_DEFAULT_COOLDOWN_MS, resetReported: false, category: failure.category, sourceRunId };
 }
+
+export type AgentProviderLimitCooldown = {
+  /** When the agent's provider allowance is expected to return. */
+  resetAt: Date;
+  /** False when no reset was reported and the default cooldown applies. */
+  resetReported: boolean;
+  category: string;
+  /** The run whose failure recorded the latest reset. */
+  sourceRunId: string | null;
+};
 
 /**
  * The latest known provider limit for this agent, from the current failure or
  * from the agent's recent runs. A later successful run clears older evidence.
  */
-async function nativeProviderCooldownAt(input: {
+export async function agentProviderLimitCooldown(db: Db, input: {
+  companyId: string;
+  agentId: string;
+  /** Excluded from the evidence; the caller supplies its own failure. */
+  runId?: string;
+  failure?: ProviderFailure | null;
+  now: Date;
+}): Promise<AgentProviderLimitCooldown | null> {
+  const now = input.now.getTime();
+  let latest = limitEvidence(input.failure ?? null, input.now, input.runId ?? null);
+  const rows = await db
+    .select({
+      id: heartbeatRuns.id,
+      status: heartbeatRuns.status,
+      errorCode: heartbeatRuns.errorCode,
+      observedAt: sql<Date>`coalesce(${heartbeatRuns.finishedAt}, ${heartbeatRuns.updatedAt})`.mapWith(heartbeatRuns.updatedAt),
+      providerFailure: sql<unknown>`${heartbeatRuns.resultJson} -> 'providerFailure'`,
+      retryNotBefore: sql<string | null>`${heartbeatRuns.resultJson} ->> 'retryNotBefore'`,
+    })
+    .from(heartbeatRuns)
+    .where(and(
+      eq(heartbeatRuns.companyId, input.companyId),
+      eq(heartbeatRuns.agentId, input.agentId),
+      gte(heartbeatRuns.startedAt, new Date(now - NATIVE_PROVIDER_LIMIT_WINDOW_MS)),
+      ...(input.runId ? [ne(heartbeatRuns.id, input.runId)] : []),
+      or(
+        eq(heartbeatRuns.status, "succeeded"),
+        inArray(heartbeatRuns.errorCode, PROVIDER_LIMIT_ERROR_CODES),
+        inArray(sql<string>`${heartbeatRuns.resultJson} #>> '{providerFailure,category}'`, PROVIDER_LIMIT_CATEGORIES),
+      ),
+    ))
+    .orderBy(desc(sql`coalesce(${heartbeatRuns.finishedAt}, ${heartbeatRuns.updatedAt})`))
+    .limit(LIMIT_EVIDENCE_ROWS);
+  for (const row of rows) {
+    // The provider accepted work after this point, so its allowance was restored.
+    if (row.status === "succeeded") break;
+    let recorded = limitEvidence(readProviderFailure(row.providerFailure), row.observedAt, row.id);
+    if (recorded === null && PROVIDER_LIMIT_ERROR_CODES.includes(row.errorCode ?? "")) {
+      const reset = row.retryNotBefore ? Date.parse(row.retryNotBefore) : Number.NaN;
+      recorded = Number.isFinite(reset)
+        ? { resetAt: reset, resetReported: true, category: "quota_exhausted", sourceRunId: row.id }
+        : { resetAt: row.observedAt.getTime() + PROVIDER_LIMIT_DEFAULT_COOLDOWN_MS, resetReported: false, category: "quota_exhausted", sourceRunId: row.id };
+    }
+    if (recorded && (!latest || recorded.resetAt > latest.resetAt)) latest = recorded;
+  }
+  if (!latest || latest.resetAt <= now) return null;
+  return {
+    resetAt: new Date(Math.min(latest.resetAt, now + NATIVE_PROVIDER_LIMIT_WINDOW_MS)),
+    resetReported: latest.resetReported,
+    category: latest.category,
+    sourceRunId: latest.sourceRunId,
+  };
+}
+
+async function routedAccountCooldown(input: {
   db: Db;
   binding: { companyId: string; agentId: string; runId: string };
   failure: ProviderFailure | null;
   now: Date;
   managedAiAccountIdentity?: string;
-}): Promise<Date | null> {
-  const now = input.now.getTime();
-  let cooldownAt = limitCooldownAt(input.failure, input.now) ?? 0;
-  // Only the host's current credential identity can authorize narrowing a
-  // historical agent-wide hold to an account. Unverifiable runs retain the
-  // legacy agent-wide policy.
-  const [routed] = input.managedAiAccountIdentity ? await input.db
-    .select({ connectionId: sql<string>`${aiConnectionTaskPins.selection}->'binding'->>'connectionId'`, grantId: sql<string>`${aiConnectionTaskPins.selection}->'binding'->>'grantId'` })
+}): Promise<{ matched: boolean; cooldown: Date | null }> {
+  if (!input.managedAiAccountIdentity) return { matched: false, cooldown: null };
+  const [routed] = await input.db
+    .select({ grantId: sql<string>`${aiConnectionTaskPins.selection}->'binding'->>'grantId'` })
     .from(heartbeatRuns)
     .innerJoin(aiConnectionTaskPins, and(eq(aiConnectionTaskPins.companyId, heartbeatRuns.companyId),
       eq(aiConnectionTaskPins.agentId, heartbeatRuns.agentId),
@@ -52,50 +120,15 @@ async function nativeProviderCooldownAt(input: {
       sql`((${heartbeatRuns.scopeKind} = 'issue' and (${heartbeatRuns.issueId}::text = ${aiConnectionTaskPins.taskKey}
           or exists (select 1 from issues where issues.id = ${heartbeatRuns.issueId} and issues.company_id = ${heartbeatRuns.companyId} and issues.identifier = ${aiConnectionTaskPins.taskKey})))
         or (${heartbeatRuns.scopeKind} <> 'issue' and (${heartbeatRuns.id}::text = ${aiConnectionTaskPins.taskKey}
-          or (${aiConnectionTaskPins.taskKey} = '__heartbeat__' and ${heartbeatRuns.invocationSource} = 'timer' and ${heartbeatRuns.contextSnapshot}->>'wakeSource' = 'timer'))))`)).limit(1) : [];
-  const credentialIdentity = routed && input.managedAiAccountIdentity
-    ? quotaIdentityFromSessionSnapshot(routed.grantId, input.managedAiAccountIdentity) : null;
-  if (routed && credentialIdentity) {
-    const [account] = await input.db.select({ retryAt: aiConnectionQuotaCooldowns.retryAt }).from(aiConnectionQuotaCooldowns)
-      .where(and(eq(aiConnectionQuotaCooldowns.companyId, input.binding.companyId),
-        eq(aiConnectionQuotaCooldowns.credentialIdentity, credentialIdentity))).limit(1);
-    cooldownAt = Math.max(cooldownAt, account?.retryAt.getTime() ?? 0);
-    return cooldownAt > now ? new Date(cooldownAt) : null;
-  }
-  const rows = await input.db
-    .select({
-      status: heartbeatRuns.status,
-      errorCode: heartbeatRuns.errorCode,
-      observedAt: sql<Date>`coalesce(${heartbeatRuns.finishedAt}, ${heartbeatRuns.updatedAt})`.mapWith(heartbeatRuns.updatedAt),
-      providerFailure: sql<unknown>`${heartbeatRuns.resultJson} -> 'providerFailure'`,
-      retryNotBefore: sql<string | null>`${heartbeatRuns.resultJson} ->> 'retryNotBefore'`,
-    })
-    .from(heartbeatRuns)
-    .where(and(
-      eq(heartbeatRuns.companyId, input.binding.companyId),
-      eq(heartbeatRuns.agentId, input.binding.agentId),
-      gte(heartbeatRuns.startedAt, new Date(now - NATIVE_PROVIDER_LIMIT_WINDOW_MS)),
-      ne(heartbeatRuns.id, input.binding.runId),
-      or(
-        eq(heartbeatRuns.status, "succeeded"),
-        inArray(heartbeatRuns.errorCode, PROVIDER_LIMIT_ERROR_CODES),
-        inArray(sql<string>`${heartbeatRuns.resultJson} #>> '{providerFailure,category}'`, PROVIDER_LIMIT_CATEGORIES),
-      ),
-    ))
-    .orderBy(desc(sql`coalesce(${heartbeatRuns.finishedAt}, ${heartbeatRuns.updatedAt})`))
-    .limit(LIMIT_EVIDENCE_ROWS);
-  for (const row of rows) {
-    // The provider accepted work after this point, so its allowance was restored.
-    if (row.status === "succeeded") break;
-    const failure = readProviderFailure(row.providerFailure);
-    let recorded = limitCooldownAt(failure, row.observedAt);
-    if (recorded === null && PROVIDER_LIMIT_ERROR_CODES.includes(row.errorCode ?? "")) {
-      const reset = row.retryNotBefore ? Date.parse(row.retryNotBefore) : Number.NaN;
-      recorded = Number.isFinite(reset) ? reset : row.observedAt.getTime() + PROVIDER_LIMIT_DEFAULT_COOLDOWN_MS;
-    }
-    if (recorded !== null) cooldownAt = Math.max(cooldownAt, recorded);
-  }
-  return cooldownAt > now ? new Date(Math.min(cooldownAt, now + NATIVE_PROVIDER_LIMIT_WINDOW_MS)) : null;
+          or (${aiConnectionTaskPins.taskKey} = '__heartbeat__' and ${heartbeatRuns.invocationSource} = 'timer' and ${heartbeatRuns.contextSnapshot}->>'wakeSource' = 'timer'))))`)).limit(1);
+  const identity = routed ? quotaIdentityFromSessionSnapshot(routed.grantId, input.managedAiAccountIdentity) : null;
+  if (!identity) return { matched: false, cooldown: null };
+  const [account] = await input.db.select({ retryAt: aiConnectionQuotaCooldowns.retryAt }).from(aiConnectionQuotaCooldowns)
+    .where(and(eq(aiConnectionQuotaCooldowns.companyId, input.binding.companyId),
+      eq(aiConnectionQuotaCooldowns.credentialIdentity, identity))).limit(1);
+  const current = limitEvidence(input.failure, input.now, input.binding.runId)?.resetAt ?? 0;
+  const resetAt = Math.max(current, account?.retryAt.getTime() ?? 0);
+  return { matched: true, cooldown: resetAt > input.now.getTime() ? new Date(resetAt) : null };
 }
 
 /**
@@ -114,7 +147,18 @@ export async function planNativeStartupRetry(input: {
 }): Promise<{ nextAttemptAt: Date | null; providerCooldownAt: Date | null }> {
   // Limit evidence only refines the schedule. A failed read must not stop the
   // failure from settling, so the retry falls back to plain backoff.
-  const providerCooldownAt = await nativeProviderCooldownAt(input).catch((error: unknown) => {
+  const providerCooldownAt = await (async () => {
+    const account = await routedAccountCooldown(input);
+    if (account.matched) return account.cooldown;
+    const cooldown = await agentProviderLimitCooldown(input.db, {
+      companyId: input.binding.companyId,
+      agentId: input.binding.agentId,
+      runId: input.binding.runId,
+      failure: input.failure,
+      now: input.now,
+    });
+    return cooldown?.resetAt ?? null;
+  })().catch((error: unknown) => {
     logger.warn({ err: error, runId: input.binding.runId }, "native provider limit evidence unavailable");
     return null;
   });
