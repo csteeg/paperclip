@@ -1,18 +1,32 @@
+import { isDeepStrictEqual } from "node:util";
+import { resolvePaperclipRunnerProviderProfile } from "../native-runtime/provider-profile.js";
 import { agentTaskSessions, aiConnectionPools, aiConnectionTaskPins, agents, heartbeatRuns, issues, type Db } from "@paperclipai/db";
 import { and, eq, sql } from "drizzle-orm";
 import { parseObject } from "../../adapters/utils.js";
-import { applyAiConnectionRouterTaskSettings, poolExecutionAdapterType, aiConnectionRouterService, LOCAL_POOL_ADAPTERS, AiConnectionPoolExhausted } from "../ai-connection-router.js";
+import { applyAiConnectionRouterTaskSettings, aiConnectionRouterService, LOCAL_POOL_ADAPTERS, AiConnectionPoolExhausted } from "../ai-connection-router.js";
 import { BUILTIN_AI_FAILOVER_ROUTER_KEY, type AiConnectionRouterSelection } from "@paperclipai/shared";
 import { HttpError } from "../../errors.js";
 import { deriveTaskKeyWithHeartbeatFallback, shouldResetTaskSessionForWake } from "./run-state.js";
 import { reselectUnstartedPoolSuccessor } from "./pool-failover.js";
 import type { PluginWorkerManager } from "../plugin-worker-manager.js";
+import { resolveHarnessPoolExecution } from "./harness-pool-admission.js";
 
 export async function preparePoolAdapterClaim(db: Db, run: typeof heartbeatRuns.$inferSelect,
-  agent: typeof agents.$inferSelect, userId: string | null, workerManager?: PluginWorkerManager) {
+  agent: typeof agents.$inferSelect, userId: string | null, workerManager?: PluginWorkerManager): Promise<{ adapterDispatch: Record<string, unknown>; context: Record<string, unknown> & { aiRouterSelection?: AiConnectionRouterSelection } }> {
   const existing = parseObject(parseObject(run.runnerProfileJson).adapterDispatch);
   if (typeof existing.adapterType === "string") return { adapterDispatch: existing, context: {} };
   const adapterDispatch = { adapterType: agent.adapterType, configuredAdapterType: agent.adapterType };
+  if (agent.runtimeConfig.harnessPool) {
+    try {
+      const admitted = await resolveHarnessPoolExecution({ db, run, agent, userId });
+      return { adapterDispatch: { ...adapterDispatch, poolId: admitted.selection.poolId, memberId: admitted.selection.memberId, harnessPoolProfile: admitted.profile },
+        context: { aiRouterSelection: admitted.routerSelection, aiRouterTaskKey: admitted.taskKey, harnessPoolSelection: admitted.selection } };
+    } catch (error) {
+      return { adapterDispatch: { ...adapterDispatch, poolPreparationFailure: error instanceof AiConnectionPoolExhausted
+        ? { kind: "exhausted", message: error.message, poolId: error.poolId, retryAt: error.retryAt }
+        : { kind: "configuration", message: error instanceof Error ? error.message : "Pool harness preparation failed" } }, context: {} };
+    }
+  }
   const binding = parseObject(parseObject(agent.runtimeConfig).aiConnection);
   if (run.startedAt || binding.mode !== "router" || typeof binding.connectionId !== "string" || !LOCAL_POOL_ADAPTERS.includes(agent.adapterType))
     return { adapterDispatch, context: {} };
@@ -26,7 +40,7 @@ export async function preparePoolAdapterClaim(db: Db, run: typeof heartbeatRuns.
   const [pin] = await db.select({ selection: aiConnectionTaskPins.selection }).from(aiConnectionTaskPins).where(and(
     eq(aiConnectionTaskPins.companyId, agent.companyId), eq(aiConnectionTaskPins.agentId, agent.id),
     eq(aiConnectionTaskPins.poolId, binding.connectionId), eq(aiConnectionTaskPins.taskKey, taskKey))).limit(1);
-  const sessionAdapterType = pin ? poolExecutionAdapterType(pin.selection.binding, agent.adapterType) : agent.adapterType;
+  const sessionAdapterType = pin?.selection.adapterType ?? agent.adapterType;
   const [session] = await db.select().from(agentTaskSessions).where(and(eq(agentTaskSessions.companyId, agent.companyId),
     eq(agentTaskSessions.agentId, agent.id), eq(agentTaskSessions.adapterType, sessionAdapterType), eq(agentTaskSessions.taskKey, taskKey))).limit(1);
   const [issue] = typeof context.issueId === "string" ? await db.select({ overrides: issues.assigneeAdapterOverrides }).from(issues)
@@ -41,7 +55,7 @@ export async function preparePoolAdapterClaim(db: Db, run: typeof heartbeatRuns.
       sourceAdapterConfig: { ...parseObject(agent.adapterConfig), ...parseObject(parseObject(issue?.overrides).adapterConfig) },
       skipUsageProbe: pool?.pluginKey === BUILTIN_AI_FAILOVER_ROUTER_KEY,
       existingGrantId: typeof identity === "string" ? identity.split(":")[0] : undefined });
-    return { adapterDispatch: { ...adapterDispatch, adapterType: selection.adapterType ?? poolExecutionAdapterType(selection.binding, agent.adapterType), poolId: selection.poolId, memberId: selection.memberId },
+    return { adapterDispatch: { ...adapterDispatch, adapterType: selection.adapterType ?? agent.adapterType, poolId: selection.poolId, memberId: selection.memberId },
       context: { aiRouterSelection: selection, aiRouterTaskKey: taskKey } };
   } catch (error) {
     const failure = error instanceof AiConnectionPoolExhausted
@@ -66,7 +80,10 @@ export function effectiveRunAgent<T extends Pick<typeof agents.$inferSelect, "ad
   if (configured && configured !== agent.adapterType) throw new Error("Agent adapter changed during startup; start a new turn with the updated agent.");
   if (!selected || (selected === agent.adapterType && typeof dispatch.poolId !== "string")) return agent;
   const selection = parseObject(run.contextSnapshot).aiRouterSelection as AiConnectionRouterSelection | undefined;
-  if (!selection || dispatch.poolId !== selection.poolId || dispatch.memberId !== selection.memberId || poolExecutionAdapterType(selection.binding, agent.adapterType) !== selected ||
-      (selection.adapterType && selection.adapterType !== selected)) throw new Error("The admitted pool adapter does not match its selection.");
-  return { ...agent, adapterType: selected, adapterConfig: applyAiConnectionRouterTaskSettings(parseObject(agent.adapterConfig), selection, agent.adapterType) };
+  if (!selection || dispatch.poolId !== selection.poolId || dispatch.memberId !== selection.memberId ||
+      (selection.adapterType ?? agent.adapterType) !== selected) throw new Error("The admitted pool adapter does not match its selection.");
+  const adapterConfig = applyAiConnectionRouterTaskSettings(parseObject(agent.adapterConfig), selection, agent.adapterType);
+  if (dispatch.harnessPoolProfile && !isDeepStrictEqual(dispatch.harnessPoolProfile, resolvePaperclipRunnerProviderProfile(adapterConfig)))
+    throw new Error("The admitted Pool harness profile changed before dispatch.");
+  return { ...agent, adapterType: selected, adapterConfig };
 }
