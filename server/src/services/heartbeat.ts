@@ -1,3 +1,4 @@
+import { effectiveAiConnectionInput } from "@paperclipai/shared";
 import { resolveProviderApiPlacement } from "./native-runtime/provider-api-placement.js";
 import { matchesClaudeProjectTrustGrant, type ClaudeProjectTrustIdentity } from "./claude-project-trust.js";
 import { isContextCompactionRun } from "./context-compaction.js";
@@ -1286,7 +1287,7 @@ export function heartbeatService(
   const heartbeatQueue = createHeartbeatQueue(db, {
     canStartNewExternalBotWork: async agent => {
       if (agent.adapterType !== "paperclip_runner" || agent.adapterConfig.provider !== "grok_bot") return true;
-      const aiConnection = aiRuntimeConnectionBindingSchema.safeParse(agent.runtimeConfig?.aiConnection);
+      const aiConnection = aiRuntimeConnectionBindingSchema.safeParse(effectiveAiConnectionInput(agent.runtimeConfig));
       if (aiConnection.success && aiConnection.data.mode === "router") return true;
       return dotRunnerBroker(db).canStartNewWork(agent.companyId, agent.id,
         readNonEmptyString(agent.adapterConfig.externalBindingId) ?? "");
@@ -2554,7 +2555,7 @@ export function heartbeatService(
       }
       const persistedRouterPoolId = routerHasPersistedInput ? readNonEmptyString(parseObject(context.aiRouterSelection).poolId) : null;
       const preconfiguredHome = agent.adapterType === "paperclip_runner" && config.homeMode === "preconfigured";
-      const requestedAiBinding = preconfiguredHome ? undefined : persistedRouterPoolId ? { mode: "router" as const, connectionId: persistedRouterPoolId } : agent.runtimeConfig?.aiConnection ? aiRuntimeConnectionBindingSchema.parse(agent.runtimeConfig.aiConnection) : undefined;
+      const requestedAiBinding = preconfiguredHome ? undefined : persistedRouterPoolId ? { mode: "router" as const, connectionId: persistedRouterPoolId } : effectiveAiConnectionInput(agent.runtimeConfig) ? aiRuntimeConnectionBindingSchema.parse(effectiveAiConnectionInput(agent.runtimeConfig)) : undefined;
       let aiBinding = requestedAiBinding?.mode === "router" ? undefined : requestedAiBinding;
       const originalAiIssueOverrides = issueAssigneeOverrides;
       if (requestedAiBinding?.mode === "router") {
@@ -2602,6 +2603,7 @@ export function heartbeatService(
           await appendRunEvent(run, { eventType: "lifecycle", stream: "system", level: "info", message: "Using task-pinned pool account", payload: { poolId: selection.poolId, memberId: selection.memberId, provider: aiBinding.provider, model: config.model, notes: selection.notes } });
         } catch (error) {
           if (error instanceof AiConnectionPoolExhausted && Object.keys(savedRouterInput).length === 0) {
+            context.aiRouterPoolId = error.poolId;
             const now = new Date();
             context.aiConnectionBusyDeferredWhileAssignee = issueContext?.assigneeAgentId === agent.id;
             const cancelled = await setRunStatusIfRunning(run.id, "cancelled", {
