@@ -59,7 +59,6 @@ import { aiConnectionService } from "../ai-connections.js";
 import { aiConnectionRouterService } from "../ai-connection-router.js";
 import { BUILTIN_AI_FAILOVER_ROUTER_KEY } from "@paperclipai/shared";
 import { recordVerifiedRouterQuotaCooldown } from "../heartbeat/run-completion.js";
-import { executionControlSchedule } from "../execution-control-work.js";
 import { reopenNativeQuotaPoolWaits } from "./native-quota-wake.js";
 import { reconcileAbandonedExecutionControl } from "../execution-control-reconciliation.js";
 const externalDatabaseUrl = process.env.PAPERCLIP_TEST_DATABASE_URL;
