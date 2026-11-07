@@ -127,6 +127,8 @@ describe("OAuth Resource Indicators and Provider Handling", () => {
   describe("Authorization URL construction", () => {
     function createMockAuthStart(authorizationUrl: string, resource: string | null, scopes: string[] = ["https://mcp.dev.azure.com/.default"]) {
       const mockDb = {
+        transaction: async (callback: (tx: Db) => Promise<unknown>) => callback(mockDb),
+        select: () => ({ from: () => ({ where: () => ({ for: async () => [connectionRow] }) }) }),
         delete: () => ({ where: () => Promise.resolve() }),
         insert: () => ({ values: () => Promise.resolve() }),
         update: () => ({ set: () => ({ where: () => Promise.resolve() }) }),
@@ -138,7 +140,9 @@ describe("OAuth Resource Indicators and Provider Handling", () => {
         name: "Test Connection",
         status: "draft" as const,
         credentialPolicy: "per_user" as const,
+        credentialSecretRefs: [],
         config: { transport: "http", sourceTemplateKey: null },
+        transportConfig: {},
       };
 
       return createOAuthAuthorizationStart(mockDb, {
@@ -159,7 +163,7 @@ describe("OAuth Resource Indicators and Provider Handling", () => {
             clientSecret: null,
             clientSecretEnv: null,
           },
-          source: "static" as const,
+          source: "preconfigured" as const,
         }),
         oauthEndpointsForConnection: async () => ({
           provider: "fixture-provider",
@@ -169,7 +173,10 @@ describe("OAuth Resource Indicators and Provider Handling", () => {
           offlineAccessSupported: true,
           scopes,
         }),
-        assertOAuthEndpointUrl: (_type, url) => url,
+        assertOAuthEndpointUrl: (_type, url) => {
+          if (typeof url !== "string") throw new TypeError("Expected a fixture OAuth endpoint URL");
+          return url;
+        },
       });
     }
 
@@ -258,7 +265,10 @@ describe("OAuth Resource Indicators and Provider Handling", () => {
 
       const protocol = createOAuthClientProtocol({
         fetchRemoteHttpUrl,
-        assertOAuthEndpointUrl: (_type, url) => url,
+        assertOAuthEndpointUrl: (_type, url) => {
+          if (typeof url !== "string") throw new TypeError("Expected a fixture OAuth endpoint URL");
+          return url;
+        },
       });
 
       return { protocol, calls };
