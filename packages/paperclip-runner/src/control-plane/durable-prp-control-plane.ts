@@ -4407,6 +4407,8 @@ const runnerPlatformEnvironmentKeys = [
   "HOME",
   "CODEX_HOME",
   "SystemRoot",
+  "SystemDrive",
+  "LOCALAPPDATA",
   "WINDIR",
   "PATHEXT",
   "LANG",
@@ -4494,7 +4496,7 @@ function runnerEnvironment(
     PAPERCLIP_RUNNER_BOOTSTRAP_TICKET: ticket,
   };
   for (const key of runnerPlatformEnvironmentKeys) {
-    const value = platformSource[key];
+    const value = platformSource[key] ?? (process.platform === "win32" ? platformSource[key.toUpperCase()] : undefined);
     if (value !== undefined) environment[key] = value;
   }
   // Provider credentials cross this boundary only when the caller supplies an
