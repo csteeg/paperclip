@@ -20,6 +20,29 @@ export const pendingLifecycleWork = and(
   sql`not (${agents.lifecycleState} = 'verifying' and coalesce(${agents.lifecycleOperation}->>'retryRequired', 'false') = 'true')`,
 );
 
+/** Register the producer's wake before changing a verification prerequisite. */
+export async function requestAgentLifecycleRecheckInTransaction(
+  tx: Pick<Db, "select" | "update">,
+  input: { companyId: string; agentId: string; expectedVersion?: number },
+  notify: () => Promise<void>,
+): Promise<boolean> {
+  if (!("nestedIndex" in tx)) throw new AgentLifecycleConflict("Lifecycle rechecks require the producer transaction");
+  const [agent] = await tx.select().from(agents).where(and(
+    eq(agents.id, input.agentId), eq(agents.companyId, input.companyId),
+  )).for("update");
+  if (!agent || !["preparing", "verifying"].includes(agent.lifecycleState)
+    || agent.lifecycleOperation?.retryRequired
+    || input.expectedVersion !== undefined && agent.lifecycleVersion !== input.expectedVersion) return false;
+  await notify();
+  await tx.update(agents).set({ lifecycleError: null,
+    lifecycleOperation: agent.lifecycleOperation?.leaseOwner
+      ? sql`${agents.lifecycleOperation} || '{"recheckRequested":true}'::jsonb`
+      : sql`${agents.lifecycleOperation} - 'recheckRequested' - 'retryAt'`,
+    updatedAt: new Date(),
+  }).where(and(eq(agents.id, agent.id), eq(agents.companyId, input.companyId), eq(agents.lifecycleVersion, agent.lifecycleVersion)));
+  return true;
+}
+
 /** The caller owns the accounting transaction and has locked this agent. */
 async function changeLockedAgent(tx: Db, effects: LifecycleEffects, agent: LifecycleRow,
   command: LifecycleCommand, options: ChangeOptions = {}, policyHolds?: string[], restartPause = false) {
@@ -34,7 +57,7 @@ async function changeLockedAgent(tx: Db, effects: LifecycleEffects, agent: Lifec
     if (agent.lifecycleOperation?.leaseUntil && Date.parse(agent.lifecycleOperation.leaseUntil) > Date.now()) return agent;
     await effects.notifyWork(tx);
     const [updated] = await tx.update(agents).set({ lifecycleError: null,
-      lifecycleOperation: sql`${agents.lifecycleOperation} - 'retryAt' - 'retryRequired' - 'verificationFailures' - 'leaseOwner' - 'leaseUntil'`, updatedAt: new Date() }).where(eq(agents.id, agent.id)).returning();
+      lifecycleOperation: sql`${agents.lifecycleOperation} - 'retryAt' - 'retryRequired' - 'verificationFailures' - 'leaseOwner' - 'leaseUntil' - 'recheckRequested'`, updatedAt: new Date() }).where(eq(agents.id, agent.id)).returning();
     return updated;
   }
   if (command === "resume" && !["ready", "paused", "pausing", "resuming"].includes(agent.lifecycleState)) transition(agent.lifecycleState, command);
@@ -182,14 +205,15 @@ export function createLifecycleStore(db: Db, effects: LifecycleEffects): Lifecyc
     async defer(agent, owner, error, now, options) {
       const retry: Partial<AgentLifecycleOperation> = options?.retryRequired && agent.lifecycleState === "verifying"
         ? { retryRequired: true }
-        : { retryAt: new Date(now.getTime() + (error ? 60_000 : 2_000)).toISOString() };
+        : { retryAt: options?.retryAt ?? new Date(now.getTime() + (error ? 60_000 : 2_000)).toISOString() };
       if (options?.verificationFailures !== undefined && agent.lifecycleState === "verifying") {
         retry.verificationFailures = options.verificationFailures;
       }
       const rows = await db.update(agents).set({
         lifecycleError: error,
-        lifecycleOperation: sql`(${agents.lifecycleOperation} - 'leaseOwner' - 'leaseUntil' - 'retryAt' - 'retryRequired')
-          || ${JSON.stringify(retry)}::jsonb`,
+        lifecycleOperation: sql`(${agents.lifecycleOperation} - 'leaseOwner' - 'leaseUntil' - 'retryAt' - 'retryRequired' - 'recheckRequested')
+          || case when ${Boolean(options?.retryAt)} and coalesce(${agents.lifecycleOperation}->>'recheckRequested', 'false') = 'true'
+            then '{}'::jsonb else ${JSON.stringify(retry)}::jsonb end`,
         updatedAt: now,
       }).where(and(eq(agents.id, agent.id), eq(agents.lifecycleVersion, agent.lifecycleVersion),
         sql`${agents.lifecycleOperation}->>'leaseOwner' = ${owner}`)).returning({ id: agents.id });
