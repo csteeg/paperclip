@@ -13,6 +13,8 @@ export interface AgentLifecycleOperation {
   leaseOwner?: string;
   leaseUntil?: string;
   retryAt?: string;
+  /** A producer changed an execution prerequisite while the current owner was testing. */
+  recheckRequested?: boolean;
   /** A failed configuration check waits for configuration repair or an explicit retry. */
   retryRequired?: boolean;
   /** Failed generic host verification tests for this saved configuration. */

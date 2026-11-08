@@ -23,6 +23,20 @@ function fixture() {
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe("lifecycle readiness handoff", () => {
+  it("preserves a pool cooldown deadline without spending verification failures", async () => {
+    const { store, driver, worker } = fixture();
+    const retryAt = new Date(Date.now() + 2 * 60 * 60_000).toISOString();
+    driver.runHost.mockRejectedValue(Object.assign(new Error("private provider detail"), {
+      code: "ai_connection_pool_exhausted", retryAt,
+    }));
+    await worker.process(agent.id);
+    expect(store.defer).toHaveBeenCalledExactlyOnceWith(agent, expect.any(String),
+      expect.stringContaining("pool"), expect.any(Date), { retryAt });
+    expect(store.completeHost).not.toHaveBeenCalled();
+    expect(store.change).not.toHaveBeenCalled();
+    expect(store.defer.mock.calls[0][2]).not.toContain("private provider detail");
+    await worker.stop();
+  });
   it("notifies the scheduler only after host, plugins, and readiness have committed", async () => {
     const { store, driver, worker } = fixture();
     let commit!: (ready: LifecycleAgent) => void;
