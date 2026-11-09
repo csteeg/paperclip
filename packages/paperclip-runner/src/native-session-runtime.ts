@@ -33,6 +33,7 @@ import {
   NativeSessionCleanupQuarantinedError,
   NativeSessionProtocolIntegrityError,
   isNativeRestartInterruption,
+  isNativeReceiptLimitInterruption,
   nativeRestartInterruptedTurnId,
 } from "./contracts/native-session-backend.js";
 import {
@@ -2645,11 +2646,13 @@ export async function executeNativeSession(
       return snapshot;
     };
     const recoveredSnapshot = await session.snapshot();
-    const restartContinuation = () => ({
+    const restartContinuation = (internalReceiptLimit = false) => ({
       message: { role: "user" as const, text: JSON.stringify({
         schema: "paperclip.native-continuation.v1",
         events: [
-          "This is a resumed session after a Paperclip control-plane restart. Paperclip restored this same conversation and workspace; the restart interrupted the previous turn.",
+          internalReceiptLimit
+            ? "Paperclip internally interrupted the previous turn to release its tool-receipt capacity. The provider confirmed that turn stopped and all admitted tools have durable results. Continue in this same conversation and workspace, using the saved results. Use smaller batches of tool calls."
+            : "This is a resumed session after a Paperclip control-plane restart. Paperclip restored this same conversation and workspace; the restart interrupted the previous turn.",
           "Continue the current user request from the recorded progress and preserved workspace.",
           "Shell commands and background processes started in earlier turns may no longer be running, and their tool sessions may be gone. Do not block only because such a process or its tool session cannot be found or inspected.",
           "Reconcile any unfinished tool or command before proceeding: check the workspace for the outputs or artifacts it should have produced. If the expected output is present, use it. If the expected output is missing, re-run the command.",
@@ -2696,12 +2699,12 @@ export async function executeNativeSession(
     // terminal waits for this setup so it neither misses the borrowed turn nor
     // persists its own checkpoint ahead of the continuation's.
     let continuationSetup: Promise<void> | null = null;
-    const startRestartContinuation = (signal?: AbortSignal) => {
+    const startRestartContinuation = (signal?: AbortSignal, internalReceiptLimit = false) => {
       restartContinuationStarted = true;
       continuationSetup = (async () => {
         // The driver reports the borrowed marker with the accepted turn; a
         // later snapshot may already show the marker returned.
-        const started = await session.startTurn(restartContinuation());
+        const started = await session.startTurn(restartContinuation(internalReceiptLimit));
         if (started.borrowedDispositionMarker === true) borrowedContinuationTurnId = started.turnId;
         await checkpoint(signal);
       })();
@@ -2724,8 +2727,20 @@ export async function executeNativeSession(
       await checkpoint(signal);
       return true;
     };
+
     const resumeInterruptedTurn = async (event: PrpEvent, signal: AbortSignal) => {
       if (await requestContinuationDisposition(event, signal)) return true;
+      if (!restartContinuationStarted && input.provider.kind === "codex" &&
+          !options.sessionCompaction && !options.sessionGoalControl && !options.resumeSessionGoalHeartbeat &&
+          event.eventType === "turn.interrupted" && isNativeReceiptLimitInterruption(event.payload.error)) {
+        const snapshot = await session.snapshot();
+        signal.throwIfAborted();
+        if (nativeRestartInterruptedTurnId(snapshot) !== event.turnId) return false;
+        await persistCheckpoint(snapshot, signal);
+        signal.throwIfAborted();
+        await startRestartContinuation(signal, true);
+        return true;
+      }
       if (restartContinuationStarted || !recovered || !options.resumeInterruptedTurn ||
           // A compaction-only run never continues task work after a restart.
           // Runnerd records a restart-lost turn only for these providers, after
@@ -2973,7 +2988,10 @@ export async function executeNativeSession(
           }
           await checkpoint();
         } else if (shouldStartFreshTurn && recovered && checkpointedInterruption) {
-          await startRestartContinuation();
+          await startRestartContinuation(undefined, recoveredSnapshot.terminalTurns?.some(turn => {
+            if (turn.turnId !== checkpointedInterruption) return false;
+            try { return isNativeReceiptLimitInterruption(JSON.parse(turn.fingerprint).error); } catch { return false; }
+          }) ?? false);
         } else if (shouldStartFreshTurn) {
           let modelEnvelope = recovered
             ? buildNativeModelEnvelope(input, { resumedSession: true })
