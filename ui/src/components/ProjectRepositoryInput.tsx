@@ -4,6 +4,7 @@ import { projectsApi } from "@/api/projects";
 import { RepositoryEditor } from "./RepositoryEditor";
 import { Button } from "./ui/button";
 import { useQueryView } from "./QueryView";
+import type { RepositoryProvider } from "./repository-providers";
 
 export const repositoryOptionsKey = (companyId: string) => ["project-repositories", companyId] as const;
 
@@ -11,7 +12,7 @@ export function ProjectRepositoryInput({ companyId, selected, onChange, onConnec
   companyId: string;
   selected: ProjectRepository[];
   onChange: (repos: ProjectRepository[]) => void;
-  onConnect: () => void;
+  onConnect: (provider: RepositoryProvider) => void;
   disabled?: boolean;
 }) {
   const query = useQuery({ queryKey: repositoryOptionsKey(companyId), queryFn: () => projectsApi.repositoryOptions(companyId), staleTime: 30_000 });
