@@ -4197,10 +4197,27 @@ function OAuthClientFields({
           exception it is rather than as this connector's normal path.
         */}
         <p className="mt-1 text-xs text-muted-foreground">
-          {method.oauthClientSecretRequired ? method.guidanceMd : required
+          {entry.slug === "azure-devops" ? "Register an application in Microsoft Entra ID, then enter its client details below." : method.oauthClientSecretRequired ? method.guidanceMd : required
             ? `${entry.name} does not let Paperclip register itself automatically, so this connector needs an OAuth app you create. Add the callback URL below in ${entry.name}, then paste the client details back here.`
             : `Register Paperclip's callback URI in ${entry.name}, then enter the customer-owned client details.`}
         </p>
+        {entry.slug === "azure-devops" && method.auth === "oauth" ? (
+          <details className="group mt-3 text-xs text-muted-foreground">
+            <summary className="flex cursor-pointer list-none items-center gap-1 font-medium text-foreground underline underline-offset-2">
+              <ChevronRight className="size-4 group-open:rotate-90" /> How to register the app
+            </summary>
+            <div className="mt-3 space-y-3">
+              <p>Use your organization’s Microsoft Entra tenant. You may need an administrator to register the app or approve its permissions.</p>
+              <ol className="list-decimal space-y-2 pl-5">
+                <li>Open <a href="https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade" target="_blank" rel="noreferrer" className="text-primary underline">App registrations in Microsoft Entra</a>, select <strong>New registration</strong>, and give the app a name. Choose the account types appropriate for your organization.</li>
+                <li>Under <strong>Redirect URI</strong>, select <strong>Web</strong> and paste the exact Paperclip callback URL shown below. Register the app.</li>
+                <li>Under <strong>API permissions</strong>, add the Azure DevOps delegated permission and obtain administrator consent if your organization requires it. The signed-in account must also have access to the Azure DevOps organization.</li>
+                <li>Copy the <strong>Application (client) ID</strong> from the app’s Overview into the Client ID field below. For a Web app, create a client secret under <strong>Certificates &amp; secrets</strong> and copy its <strong>Value</strong> into the Client secret field; the value is shown only when created.</li>
+              </ol>
+              <p><a href="https://learn.microsoft.com/en-us/azure/devops/integrate/get-started/authentication/entra-oauth" target="_blank" rel="noreferrer" className="text-primary underline">Microsoft’s Azure DevOps and Entra setup documentation</a></p>
+            </div>
+          </details>
+        ) : null}
         {method.consoleLinks?.register ? (
           <a
             href={method.consoleLinks.register}
