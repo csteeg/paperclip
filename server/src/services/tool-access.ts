@@ -101,6 +101,7 @@ import {
   emitConnectionUpdated,
 } from "./connector-telemetry.js";
 import { canBrowseProjectRepositoryGrant, mergeProjectRepository } from "./project-repositories.js";
+import { listAzureDevOpsProjectRepositories } from "./tool-access/azure-devops-catalog.js";
 
 import { measureRunPhase } from "./execution-preparation-timing.js";
 
@@ -2460,7 +2461,7 @@ export function toolAccessService(
                 applicationKey: `app-gallery:${galleryEntry?.slug ?? "link"}:${randomUUID()}`,
                 name: applicationName,
                 description: safeApplicationDescription,
-                type: transport === "rest_api" && (["browser-use-cloud", ...NATIVE_PROVIDER_SLUGS].includes(galleryEntry?.slug ?? "") || Boolean(restConnectorFor({ transport, config }))) ? "rest_api" : transport === "mcp_remote" ? "mcp_http" : "mcp_stdio",
+                type: transport === "rest_api" && (["browser-use-cloud", ...NATIVE_PROVIDER_SLUGS].includes(galleryEntry?.slug ?? "") || Boolean(restConnectorFor({ transport, config, authKind: genericAuthKind }))) ? "rest_api" : transport === "mcp_remote" ? "mcp_http" : "mcp_stdio",
                 status: "draft",
                 metadata: galleryEntry
                   ? {
@@ -4279,9 +4280,15 @@ export function toolAccessService(
 
     // Repository discovery uses credential audiences, not connection-management
     // visibility. An administrator cannot browse another user's private repos.
-    listProjectRepositories: async (companyId: string, userId: string | null, localTrusted = false,
-      options?: { requiredRepositoryIds: readonly string[] }) =>
-      toolAccessService(db).listGitHubRepositories(companyId, userId, localTrusted, options),
+    listProjectRepositories: async (companyId: string, userId: string | null, localTrusted = false, repositoryOptions?: { requiredRepositoryIds: readonly string[] }) => {
+      const [github, azure] = await Promise.all([
+        toolAccessService(db, options).listGitHubRepositories(companyId, userId, localTrusted, repositoryOptions),
+        listAzureDevOpsProjectRepositories(db, { resolveOAuthGrantSecret, refreshOAuthGrantCredentials, requestRemoteHttpEndpoint }, companyId, userId, localTrusted),
+      ]);
+      return { repositories: [...github.repositories, ...azure.repositories].sort((a, b) => a.fullName.localeCompare(b.fullName)),
+        connections: [...github.connections, ...azure.connections], connectionCount: github.connectionCount + azure.connectionCount,
+        failedConnectionCount: github.failedConnectionCount + azure.failedConnectionCount };
+    },
 
     // Return identifiers, never credentials, so each attempted read can recheck its grant.
     githubReadConnectionIds: async (companyId: string, userId: string | null, localTrusted = false): Promise<string[]> => {
@@ -4583,7 +4590,7 @@ export function toolAccessService(
             companyId,
             applicationKey: normalizeKey(input.applicationName ?? input.name),
             name: input.applicationName ?? input.name,
-            type: isBrowserUseConnection({ transport, config }) || nativeProviderCatalogFor({ transport, config }) || restConnectorFor({ transport, config }) ? "rest_api" : transport === "mcp_remote" ? "mcp_http" : "mcp_stdio",
+            type: isBrowserUseConnection({ transport, config }) || nativeProviderCatalogFor({ transport, config }) || restConnectorFor({ transport, config, authKind: input.authKind }) ? "rest_api" : transport === "mcp_remote" ? "mcp_http" : "mcp_stdio",
             status: "active",
             metadata: {},
           })

@@ -822,7 +822,7 @@ async function prepareHeartbeatWorkspaceLocked(db: Db, input: HeartbeatWorkspace
                 resolvedInstanceSettings.experimental
                   .enableWorkspaceDirtyQuarantineRepair,
               recorder: workspaceOperationRecorder,
-              resolveGitAuth: workspaceGitAuthProvider,
+              resolveGitAuth: (url) => workspaceGitAuthProvider(url, reusableExistingExecutionWorkspace.projectId ?? undefined),
             })
         : null,
       realizeWorkspace: () =>
@@ -855,7 +855,7 @@ async function prepareHeartbeatWorkspaceLocked(db: Db, input: HeartbeatWorkspace
             resolvedInstanceSettings.experimental
               .enableWorkspaceDirtyQuarantineRepair,
           recorder: workspaceOperationRecorder,
-          resolveGitAuth: workspaceGitAuthProvider,
+          resolveGitAuth: (url) => workspaceGitAuthProvider(url, executionWorkspaceBase.projectId ?? undefined),
         }),
     },
   ));
@@ -1234,7 +1234,7 @@ async function prepareHeartbeatWorkspaceLocked(db: Db, input: HeartbeatWorkspace
       workspaces: repositoryRows,
       restoredContents: persistedExecutionWorkspace ? readGitCacheRestoration(persistedExecutionWorkspace)?.contents : undefined,
       sharedBase: { companyId: agent.companyId, projectId: executionWorkspace.projectId! },
-      resolveGitAuth: workspaceGitAuthProvider,
+      resolveGitAuth: (url) => workspaceGitAuthProvider(url, executionWorkspace.projectId!),
       prepareLocalSource: persistedExecutionWorkspace && issueId
         ? (sourceCwd, projectWorkspaceId) => executionWorkspacesSvc.prepareConfiguredRepositoryCopy({
             companyId: agent.companyId, issueId, workspaceId: persistedExecutionWorkspace!.id,

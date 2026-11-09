@@ -12487,6 +12487,18 @@ describe("native warm session supervision", () => {
         firstBroker: true, secondBroker: true, projectless: false, local, brokerReady,
         firstMode: "managed", secondMode: "managed", managedGitHub: true,
       }))),
+      { firstBroker: true, secondBroker: true, projectless: false, local: false, brokerReady: true,
+        firstMode: "managed", secondMode: "managed", managedGitHub: true,
+        strictGitHubTransition: true, firstRequireGitHubConnection: false, secondRequireGitHubConnection: true },
+      { firstBroker: true, secondBroker: true, projectless: false, local: false, brokerReady: true,
+        firstMode: "managed", secondMode: "managed", managedGitHub: true,
+        strictGitHubTransition: true, firstRequireGitHubConnection: true, secondRequireGitHubConnection: false },
+      { firstBroker: true, secondBroker: true, projectless: false, local: false, brokerReady: true,
+        firstMode: "managed", secondMode: "managed", managedGitHub: true,
+        azureRepositoryTransition: true, firstAzureProjectRepositories: undefined, secondAzureProjectRepositories: [] },
+      { firstBroker: true, secondBroker: true, projectless: false, local: false, brokerReady: true,
+        firstMode: "managed", secondMode: "managed", managedGitHub: true,
+        azureRepositoryTransition: true, firstAzureProjectRepositories: [], secondAzureProjectRepositories: undefined },
       ...[
         { firstBroker: false, secondBroker: false },
         { firstBroker: false, secondBroker: true },
@@ -12551,6 +12563,12 @@ describe("native warm session supervision", () => {
       secondNetwork: "disabled",
       checkpointContract: "valid",
       managedGitHub: false,
+      strictGitHubTransition: false,
+      azureRepositoryTransition: false,
+      firstRequireGitHubConnection: false,
+      secondRequireGitHubConnection: false,
+      firstAzureProjectRepositories: undefined,
+      secondAzureProjectRepositories: undefined,
       brokerReady: true,
       firstDuplex: false,
       secondDuplex: false,
@@ -12559,7 +12577,7 @@ describe("native warm session supervision", () => {
       ...scenario,
     })),
   )(
-    "verifies a live warm owner before refreshing run authority (broker: $firstBroker -> $secondBroker, projectless: $projectless, local: $local, auth: $firstMode -> $secondMode, network: $firstNetwork -> $secondNetwork, checkpoint: $checkpointContract, managed access: $managedGitHub, broker ready: $brokerReady, duplex: $firstDuplex -> $secondDuplex, files: $instructionFiles, loss: $loseBridge)",
+    "verifies a live warm owner before refreshing run authority (strict GitHub transition: $strictGitHubTransition, Azure repository transition: $azureRepositoryTransition, broker: $firstBroker -> $secondBroker, projectless: $projectless, local: $local, auth: $firstMode -> $secondMode, strict GitHub: $firstRequireGitHubConnection -> $secondRequireGitHubConnection, network: $firstNetwork -> $secondNetwork, checkpoint: $checkpointContract, managed access: $managedGitHub, broker ready: $brokerReady, duplex: $firstDuplex -> $secondDuplex, files: $instructionFiles, loss: $loseBridge)",
     async ({
       firstBroker,
       secondBroker,
@@ -12571,6 +12589,10 @@ describe("native warm session supervision", () => {
       secondNetwork,
       checkpointContract,
       managedGitHub,
+      firstAzureProjectRepositories,
+      secondAzureProjectRepositories,
+      firstRequireGitHubConnection,
+      secondRequireGitHubConnection,
       brokerReady,
       firstDuplex,
       secondDuplex,
@@ -12586,6 +12608,10 @@ describe("native warm session supervision", () => {
           env: { PAPERCLIP_GITHUB_BROKER_TOKEN: "stable-session-capability" },
           get ready() { return brokerReady && (creation !== 1 || !brokerLost); },
           duplexRequested: creation === 1 ? firstDuplex : secondDuplex,
+          requireGitHubConnection: creation === 1 ? firstRequireGitHubConnection : secondRequireGitHubConnection,
+          githubProjectRepositoriesKey: JSON.stringify([]),
+          githubProjectBindingsKey: JSON.stringify(null),
+          azureProjectRepositoriesKey: JSON.stringify((creation === 1 ? firstAzureProjectRepositories : secondAzureProjectRepositories) ?? null),
           activate,
           stop,
         };
@@ -12595,6 +12621,8 @@ describe("native warm session supervision", () => {
         (!managedGitHub && (firstBroker || secondBroker)) ||
         firstMode !== secondMode ||
         firstNetwork !== secondNetwork ||
+        firstRequireGitHubConnection !== secondRequireGitHubConnection ||
+        JSON.stringify(firstAzureProjectRepositories ?? null) !== JSON.stringify(secondAzureProjectRepositories ?? null) ||
         firstDuplex !== secondDuplex || loseBridge;
       const stateBase = await mkdtemp(
         join(tmpdir(), "paperclip-runnerd-warm-authority-"),
@@ -12728,6 +12756,8 @@ describe("native warm session supervision", () => {
               ? { PAPERCLIP_GITHUB_BROKER_TOKEN: "first-run-capability" }
               : {}),
           },
+          requireGitHubConnection: firstRequireGitHubConnection,
+          azureProjectRepositories: firstAzureProjectRepositories,
           runnerInstanceId: "runner-runnerd-warm",
           useRunnerd: true,
           managedGitHub,
@@ -12834,6 +12864,8 @@ describe("native warm session supervision", () => {
               ? { PAPERCLIP_GITHUB_BROKER_TOKEN: "second-run-capability" }
               : {}),
           },
+          requireGitHubConnection: secondRequireGitHubConnection,
+          azureProjectRepositories: secondAzureProjectRepositories,
           runnerInstanceId: "runner-runnerd-warm",
           useRunnerd: true,
           managedGitHub,
@@ -12844,6 +12876,10 @@ describe("native warm session supervision", () => {
         if (managedGitHub) {
           expect(state.execute.mock.calls[1]?.[0].existingSession).toBe(replacesProvider ? undefined : firstSession);
           expect(githubAccess.create).toHaveBeenCalledTimes(replacesProvider ? 2 : 1);
+          expect(githubAccess.create.mock.calls.map(([options]) => options.requireGitHubConnection))
+            .toEqual(replacesProvider ? [firstRequireGitHubConnection, secondRequireGitHubConnection] : [firstRequireGitHubConnection]);
+          expect(githubAccess.create.mock.calls.map(([options]) => options.azureProjectRepositories))
+            .toEqual(replacesProvider ? [firstAzureProjectRepositories, secondAzureProjectRepositories] : [firstAzureProjectRepositories]);
           expect(githubAccess.activate.mock.calls.map(([binding]) => binding.runId))
             .toEqual([first.binding.runId, second.binding.runId]);
           // Replacement fixture publishes no new provider handle: both the old

@@ -71,6 +71,18 @@ afterEach(async () => {
 });
 
 describe('GitHub skill source import', () => {
+  it('identifies Azure project skill sources and directs connection repair to the project', async () => {
+    context.sourceId = '';
+    const source = { ...sourceFixture(), repositoryUrl: 'https://dev.azure.com/contoso/Platform/_git/Skills',
+      fullName: 'contoso/Platform/Skills', accessScope: 'projects' as const,
+      projects: [{ id: 'project-one', name: 'Platform', visibility: 'open' as const, active: true }],
+      lastError: 'Azure DevOps project authorization is unavailable. Reconnect or select a connection.', repairAction: 'connection' as const };
+    vi.mocked(skillSourcesApi.list).mockResolvedValue([source]);
+    await mount();
+    expect(document.body.textContent).toContain('Azure DevOps');
+    expect(document.querySelector('[aria-label="Azure DevOps"]')).not.toBeNull();
+    expect([...document.querySelectorAll('a')].some(link => link.textContent === 'Manage project connection' && link.getAttribute('href') === '/projects/project-one/configuration')).toBe(true);
+  });
   it('keeps the Skills views available while managing Sources', async () => {
     context.sourceId = '';
     await mount();

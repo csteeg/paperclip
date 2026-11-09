@@ -326,6 +326,9 @@ import {
   authorizeFailedChatRunRetryWake,
 } from "./durable-chat-wakeup.js";
 import { prepareHeartbeatGitHubLaunchers } from "./heartbeat-github-launchers.js";
+import { assertRunProjectGitHubAccess, canonicalProjectGitHubRepositories, canonicalGitHubProjectBindings, resolveBoundProjectGitHubCredentials } from "./project-run-github-access.js";
+import { isAzureDevOpsRemote } from "./git-credential-policy.js";
+import { canonicalAzureProjectBindings } from "./azure-project-repository-bindings.js";
 import {
   cleanupGitHubOperationLaunchers,
   prepareGitHubExecutionEnvironment,
@@ -365,7 +368,7 @@ import {
   projects,
   projectWorkspaces,
 } from "@paperclipai/db";
-import { conflict, HttpError, notFound } from "../errors.js";
+import { conflict, forbidden, HttpError, notFound } from "../errors.js";
 
 import { logger } from "../middleware/logger.js";
 import { publishLiveEvent } from "./live-events.js";
@@ -2759,7 +2762,7 @@ export function heartbeatService(
       }));
       if (!executionConfiguration.prepared) return;
       const {
-        mergedConfig, configSnapshot, runScopedMentionedSkillKeys, githubSelection, useHostGitHub,
+        mergedConfig, configSnapshot, runScopedMentionedSkillKeys, githubSelection, azureGitConfigured, useHostGitHub,
         resolvedConfig, configuredTaskEnvironment, secretKeys, secretManifest,
         runtimeSkillEntries, nativeRunnerPreparationSpans, agentIdentity, observability,
       } = executionConfiguration;
@@ -3046,6 +3049,26 @@ export function heartbeatService(
         delete context.managedAiRetainedHome;
         delete context.managedAiTranscriptDir;
       }
+      const projectRepositories = [{ projectId: resolvedWorkspace.projectId, repoUrl: resolvedWorkspace.repoUrl },
+        ...(resolvedWorkspace.additionalWorkspaces ?? []).map((workspace) => ({ projectId: workspace.projectId, repoUrl: workspace.repoUrl }))];
+      const repositoryProjectIds = [...new Set(projectRepositories.map(workspace => workspace.projectId).filter((id): id is string => Boolean(id)))];
+      if (repositoryProjectIds.length) {
+        const linked = await db.select({ projectId: projectWorkspaces.projectId, repoUrl: projectWorkspaces.repoUrl })
+          .from(projectWorkspaces).where(and(eq(projectWorkspaces.companyId, agent.companyId), inArray(projectWorkspaces.projectId, repositoryProjectIds)));
+        projectRepositories.push(...linked);
+      }
+      const projectRepoUrls = projectRepositories.map(workspace => workspace.projectId ? workspace.repoUrl : null)
+        .filter((url): url is string => Boolean(url));
+      const azureProjectRepositories = taskProjectContext?.id || projectRepositories.some(workspace => Boolean(workspace.projectId))
+        ? canonicalAzureProjectBindings(projectRepositories) : undefined;
+      const requireGitHubConnection = await assertRunProjectGitHubAccess(db, { companyId: agent.companyId, agentId: agent.id, runId: run.id,
+        hostGitHub: useHostGitHub, repoUrls: projectRepoUrls });
+      const githubProjectRepositories = requireGitHubConnection ? canonicalProjectGitHubRepositories(projectRepoUrls) : undefined;
+      const githubProjectBindings = requireGitHubConnection ? canonicalGitHubProjectBindings(projectRepositories) : undefined;
+      if (githubProjectBindings) await resolveBoundProjectGitHubCredentials(db, { companyId: agent.companyId,
+        agentId: agent.id, runId: run.id, bindings: githubProjectBindings });
+      if (providerApiPlacement && (requireGitHubConnection || projectRepoUrls.some(isAzureDevOpsRemote)))
+        throw forbidden("This task runtime cannot enforce the project repository connection. Choose a supported runtime.");
       const gitExecutionEnv = await timePreparation("github_environment", () => prepareGitHubExecutionEnvironment({
         target: executionTarget,
         cwd: executionWorkspace.cwd,
@@ -3064,10 +3087,12 @@ export function heartbeatService(
       runtimeConfig = { ...runtimeConfig, env: gitExecutionEnv };
       for (const key of MANAGED_GITHUB_TOKEN_KEYS) secretKeys.add(key);
       context.githubAuthenticationMode = useHostGitHub ? "host" : "managed";
-      if (!useHostGitHub && !providerApiPlacement) {
+      if ((!useHostGitHub || azureGitConfigured) && !providerApiPlacement) {
         const githubLaunchers = await timePreparation("github_launchers", () => prepareHeartbeatGitHubLaunchers({
           native: agent.adapterType === "paperclip_runner",
-          githubConfigured: githubSelection.configured,
+          githubConfigured: githubSelection.configured || azureGitConfigured,
+          hostGitHub: useHostGitHub,
+          requireGitHubConnection,
           agentId: agent.id,
           runId: run.id,
           target: executionTarget,
@@ -3079,7 +3104,11 @@ export function heartbeatService(
             companyId: agent.companyId,
             runId: run.id,
             responsibleUserId: responsibleUserId ?? "",
-            scope: "github_credentials",
+            scope: "git_credentials",
+            allowGitHub: githubSelection.configured,
+            ...(azureProjectRepositories ? { azureProjectRepositories } : {}),
+            ...(githubProjectRepositories ? { githubProjectRepositories } : {}),
+            ...(githubProjectBindings ? { githubProjectBindings } : {}),
           })?.token ?? "",
         }));
         githubLauncherLocation = githubLaunchers.cleanupLocation;
@@ -3547,7 +3576,12 @@ export function heartbeatService(
             managedAiRuntime,
             runtimeEnv,
             useHostGitHub,
+            requireGitHubConnection,
+            githubProjectRepositories,
+            githubProjectBindings,
+            azureProjectRepositories,
             githubSelection,
+            azureGitConfigured,
           },
           session: {
             runtimeSessionParamsForAdapter,
