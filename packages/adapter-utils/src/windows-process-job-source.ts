@@ -93,8 +93,11 @@ public static class PaperclipProcessJob {
           Input = GetStdHandle(-10), Output = GetStdHandle(-11), Error = GetStdHandle(-12) };
         Require(CreateProcess(args[4], command, IntPtr.Zero, IntPtr.Zero, true, 4, IntPtr.Zero, null, ref startup, out child));
         Require(AssignProcessToJobObject(job, child.Process));
-        if (ResumeThread(child.Thread) == UInt32.MaxValue) throw new Win32Exception(Marshal.GetLastWin32Error());
-        uint result = WaitForMultipleObjects(2, new[] { child.Process, stop.SafeWaitHandle.DangerousGetHandle() }, false, UInt32.MaxValue);
+        uint result = 1;
+        if (!stop.WaitOne(0)) {
+          if (ResumeThread(child.Thread) == UInt32.MaxValue) throw new Win32Exception(Marshal.GetLastWin32Error());
+          result = WaitForMultipleObjects(2, new[] { child.Process, stop.SafeWaitHandle.DangerousGetHandle() }, false, UInt32.MaxValue);
+        }
         if (result > 1) throw new Win32Exception(Marshal.GetLastWin32Error());
         uint code = 143;
         if (result == 0) Require(GetExitCodeProcess(child.Process, out code));
