@@ -475,6 +475,9 @@ describe("claude_local ACP startup fallback", () => {
     try {
       const configDir = path.join(root, "provider");
       await mkdir(configDir);
+      const transcriptDir = path.join(configDir, "projects", (process.platform === "win32" ? root : await fs.realpath(root)).replace(/[^a-zA-Z0-9-]/g, "-"));
+      await mkdir(transcriptDir, { recursive: true });
+      await writeFile(path.join(transcriptDir, "00000000-0000-4000-8000-000000000001.jsonl"), `${JSON.stringify({ type: "result", session_id: "00000000-0000-4000-8000-000000000001" })}\n`);
       const ctx = buildContext({ engine: "cli", cwd: root, managedAiConnection: true, env: { CLAUDE_CONFIG_DIR: configDir },
         paperclipRuntimeSkills: [], paperclipSkillSync: { desiredSkills: [] } });
       Object.assign(ctx.runtime, { sessionId: "00000000-0000-4000-8000-000000000001", sessionParams: {
