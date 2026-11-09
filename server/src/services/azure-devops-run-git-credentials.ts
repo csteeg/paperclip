@@ -1,5 +1,5 @@
 import { and, eq, or } from "drizzle-orm";
-import { companyMemberships, connectionGrants, issues, projectProviderAuthorizations, projectWorkspaces, toolConnectionInstalls, toolConnections, type Db } from "@paperclipai/db";
+import { companyMemberships, connectionGrantMembers, connectionGrants, issues, projectProviderAuthorizations, projectWorkspaces, toolConnectionInstalls, toolConnections, type Db } from "@paperclipai/db";
 import { forbidden } from "../errors.js";
 import { captureRunIdentity } from "./run-identity.js";
 import { allowsGitCredentialExport } from "./git-credential-export-policy.js";
@@ -10,6 +10,7 @@ import { toolAccessService } from "./tool-access.js";
 import { boundRunIssueId } from "./run-task-binding.js";
 import { projectProviderAuthorizationService } from "./project-provider-authorization.js";
 import { assertTaskWorkspaceSourceProjectAccess } from "./task-workspace-access.js";
+import { canBrowseProjectRepositoryGrant } from "./project-repositories.js";
 
 /** Resolve only the run's own connection and verify the exact remote with Azure. */
 export async function resolveAzureDevOpsRunGitCredentials(
@@ -31,6 +32,12 @@ export async function resolveAzureDevOpsRunGitCredentials(
     if (!member || member.membershipRole === "viewer") throw unavailable();
   }
   const eligibleGrants = async () => {
+    const [members, memberships] = await Promise.all([
+      db.select().from(connectionGrantMembers).where(eq(connectionGrantMembers.companyId, input.companyId)),
+      userId ? db.select().from(companyMemberships).where(and(eq(companyMemberships.companyId, input.companyId),
+        eq(companyMemberships.principalType, "user"), eq(companyMemberships.principalId, userId), eq(companyMemberships.status, "active"))) : Promise.resolve([]),
+    ]);
+    const activeMember = memberships.some((member) => member.membershipRole !== "viewer");
     const candidates = await db.select({ connection: toolConnections, grant: connectionGrants }).from(connectionGrants)
       .innerJoin(toolConnections, and(eq(toolConnections.id, connectionGrants.connectionId), eq(toolConnections.companyId, input.companyId)))
       .innerJoin(toolConnectionInstalls, and(eq(toolConnectionInstalls.companyId, input.companyId), eq(toolConnectionInstalls.connectionId, toolConnections.id),
@@ -43,7 +50,10 @@ export async function resolveAzureDevOpsRunGitCredentials(
       return connection.credentialSource === "paperclip_vault" && isAzureDevOpsConnection(connection) &&
         typeof config?.organization === "string" && config.organization.toLowerCase() === org &&
         ((grant.kind === "user" && !!userId && grant.subjectUserId === userId) ||
-          (grant.kind === "agent" && grant.subjectAgentId === input.agentId));
+          (grant.kind === "agent" && grant.subjectAgentId === input.agentId) ||
+          (grant.kind === "organization" && connection.credentialPolicy === "shared" && Boolean(userId) &&
+            canBrowseProjectRepositoryGrant({ grant, userId, activeMember,
+              audience: members.filter((member) => member.grantId === grant.id && member.subjectType === "user").map((member) => member.subjectId) })));
     });
     const dedicated = eligible.filter(({ grant }) => grant.kind === "agent");
     const selected = dedicated.length ? dedicated : eligible;

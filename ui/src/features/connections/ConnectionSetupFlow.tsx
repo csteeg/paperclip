@@ -375,6 +375,7 @@ function defaultGrantKindFor(method: ConnectionMethodDef | null, preferPersonal 
   // A Copilot PAT represents a person's paid runtime account. Sharing it must
   // be an explicit choice, independent of GitHub repository connections.
   if (method?.ai?.provider === "github") return "user";
+  if (method?.defaults?.serverUrl === "https://dev.azure.com" && method.grantKinds?.includes("user")) return "user";
   if (preferPersonal && method?.auth !== "none" && (!method?.grantKinds || method.grantKinds.includes("user"))) return "user";
   if (method?.grantKinds?.length === 1) return method.grantKinds[0]!;
   if (method?.grantKinds && !method.grantKinds.includes("organization")) return method.grantKinds[0]!;
@@ -1311,6 +1312,15 @@ function StandardConnectionSetupFlow({
       completedResumeConnectionId: completedResumeConnectionId ?? completedRouteResumeConnectionId,
     })
     : false;
+  const activeOAuthRecovery = Boolean(
+    resumeConnectionId && requestedAppKey && resumeConnection?.status === "active"
+    && (oauthCallbackOutcome === "failed" || oauthCallbackOutcome === "denied")
+    && retainedResumeMatches({ requestedAppKey, resumeConnection, resumeApplication, completedResumeConnectionId: resumeConnectionId }),
+  );
+  useEffect(() => {
+    if (!activeOAuthRecovery || !resumeConnectionId || !connectionsQuery.isFetchedAfterMount || !applicationsQuery.isFetchedAfterMount) return;
+    navigate(`/apps/${resumeConnectionId}/permissions?oauth=${oauthCallbackOutcome}`, { replace: true });
+  }, [activeOAuthRecovery, resumeConnectionId, connectionsQuery.isFetchedAfterMount, applicationsQuery.isFetchedAfterMount, navigate, oauthCallbackOutcome]);
   const identityConnection = resumeConnection ?? reconnectConnection;
   useEffect(() => {
     workspaceSelectionRef.current = null;
@@ -2043,6 +2053,10 @@ function StandardConnectionSetupFlow({
         </Button>
       </div>
     );
+  }
+
+  if (activeOAuthRecovery) {
+    return <div className="mx-auto max-w-xl space-y-4" aria-label="Loading saved connection setup"><Skeleton className="h-8 w-48" /></div>;
   }
 
   if (
@@ -4504,7 +4518,7 @@ export function AccessStepContent({
                     title: githubIdentity ? "Shared organization GitHub account (advanced)" : "Any human in the organization",
                     description: githubIdentity
                       ? "Eligible agents use one shared credential, regardless of who starts the run."
-                      : undefined,
+                      : "All organization members can use this identity initially. Limit it to selected members in the connection permissions after setup.",
                     icon: <UsersRound className="h-4 w-4" aria-hidden="true" />,
                     accessibleLabel: canCreateOrganizationGrant
                       ? githubIdentity ? "Shared organization GitHub account (advanced)" : "Any human in the organization"
