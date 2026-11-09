@@ -15,6 +15,7 @@ import {
   companies,
   companySkills,
   createDb,
+  closeRegisteredClients,
   environmentLeases,
   executionWorkspaces,
   heartbeatRunEvents,
@@ -29,6 +30,7 @@ import {
   startEmbeddedPostgresTestDatabase,
 } from "./helpers/embedded-postgres.js";
 import { drainHeartbeatRunsToQuiescence } from "./helpers/drain-heartbeat-runs.js";
+import { resolveExternalTestDatabaseUrl } from "./helpers/external-test-database.js";
 import { registerServerAdapter, unregisterServerAdapter } from "../adapters/index.ts";
 import { executionProjectionsForRuns } from "../services/execution-projection.js";
 import { createPostgresRunDispatchAdapter } from "../modules/run-dispatch/adapters/postgres.js";
@@ -71,7 +73,8 @@ import {
 
 const mockedAppendHeartbeatRunEvent = vi.mocked(appendHeartbeatRunEvent);
 
-const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
+const externalDatabaseUrl = resolveExternalTestDatabaseUrl("PAPERCLIP_TEST_DATABASE_URL");
+const embeddedPostgresSupport = externalDatabaseUrl ? { supported: true, reason: undefined } : await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
 const PROVIDER_QUOTA_TEST_ADAPTER = "provider_quota_test";
 
@@ -87,7 +90,9 @@ describeEmbeddedPostgres("heartbeat bounded retry scheduling", () => {
   let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
 
   beforeAll(async () => {
-    tempDb = await startEmbeddedPostgresTestDatabase("paperclip-heartbeat-retry-scheduling-");
+    tempDb = externalDatabaseUrl ? { connectionString: externalDatabaseUrl,
+      cleanup: () => closeRegisteredClients(externalDatabaseUrl, { scope: "database" }) }
+      : await startEmbeddedPostgresTestDatabase("paperclip-heartbeat-retry-scheduling-");
     db = createDb(tempDb.connectionString);
     heartbeat = heartbeatService(db);
     registerServerAdapter({
@@ -2149,6 +2154,30 @@ describeEmbeddedPostgres("heartbeat bounded retry scheduling", () => {
     }).where(eq(heartbeatRuns.id, predecessor));
     expect(await heartbeat.scheduleBoundedRetry(predecessor, { now, random: () => 0.5 }))
       .toMatchObject({ outcome: "retry_exhausted" });
+  });
+
+  it.each([
+    ["claude_local", 2], ["claude_local", 3], ["claude_local", 4],
+    ["codex_local", 2], ["codex_local", 3], ["codex_local", 4],
+  ] as const)("keeps the quota budget for review recovery: %s attempt %s", async (adapterType, attempt) => {
+    const runId = randomUUID(), companyId = randomUUID(), agentId = randomUUID();
+    const now = new Date("2026-11-06T08:30:00.000Z");
+    await seedRetryFixture({ runId, companyId, agentId, now, adapterType,
+      errorCode: "provider_quota", errorFamily: "provider_quota", scheduledRetryAttempt: attempt });
+    const result = await heartbeat.scheduleBoundedRetry(runId, { now, random: () => 0.5,
+      retryReason: "execution_review_participant_recovery", wakeReason: "execution_review_participant_recovery" });
+    if (attempt === 4) {
+      expect(result).toMatchObject({ outcome: "retry_exhausted" });
+      expect(await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.retryOfRunId, runId))).toEqual([]);
+      return;
+    }
+    const dueAt = new Date(now.getTime() + (attempt === 2 ? 120_000 : 60_000));
+    expect(result).toMatchObject({ outcome: "scheduled", dueAt,
+      run: { scheduledRetryAttempt: attempt + 1, scheduledRetryReason: "execution_review_participant_recovery" } });
+    if (result.outcome !== "scheduled") throw new Error("Expected a quota retry");
+    const [saved] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, result.run.id));
+    expect(saved.scheduledRetryAt).toEqual(dueAt);
+    expect(saved.contextSnapshot).toMatchObject({ errorFamily: "provider_quota" });
   });
 
   it("uses bounded backoff when Claude repeats a just-expired reset clock", async () => {
