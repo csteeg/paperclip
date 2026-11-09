@@ -2671,9 +2671,16 @@ export function createHeartbeatRecovery(db: Db, dependencies: HeartbeatRecoveryD
         run.controllerBootId !== legacyControllerBootId &&
         !revokedState.processPid &&
         !revokedState.processGroupId;
+      const retryBudgetRun = restartInterruptedBeforeDispatch
+        ? run : { ...run, errorCode: "process_lost", resultJson: null };
       const shouldRetry =
         !await pendingCaseHandoffForRun(db, run.id, run.companyId) &&
-        (run.processLossRetryCount ?? 0) < 1 &&
+        // Process loss spends the durable failure retry budget that
+        // enqueueProcessLossRetry schedules against (execution-semantics
+        // "Shutdown, process loss, and provider failure"). Checking it here
+        // keeps "retrying once" honest and lets an exhausted chain fall
+        // through to the interaction continuation path below.
+        !failedRunRetryBudgetSpent(retryBudgetRun) &&
         ((tracksLegacyLocalChild &&
           (!!run.processPid || !!run.processGroupId)) ||
           restartInterruptedBeforeDispatch ||
