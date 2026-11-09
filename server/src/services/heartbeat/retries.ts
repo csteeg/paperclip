@@ -511,7 +511,8 @@ export function createHeartbeatRetries(db: Db, dependencies: HeartbeatRetryDepen
         || retryReason === INTERACTION_CONTINUATION_INFRA_RETRY_REASON && run.errorCode === REPOSITORY_CATALOG_UNAVAILABLE_CODE)
         ? readTransientRecoveryContractFromRun(run)
         : null;
-    const quotaRetry = transientRecovery?.errorFamily === "provider_quota";
+    const quotaRetry = transientRecovery?.errorFamily === "provider_quota"
+      || interruptedPreparation && hasProviderQuotaRetryBudget(run);
     const maxAttempts = Math.max(
       0,
       Math.floor(
