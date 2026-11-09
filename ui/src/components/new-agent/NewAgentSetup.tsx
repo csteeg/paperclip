@@ -336,16 +336,18 @@ function Setup({
       describeError(cause).body;
   }
   const accountBoundCatalog = brandType === "copilot_runtime" || brandType === "antigravity_runtime";
+  const accountScopedLocalCatalog = Boolean(aiBinding && ["codex_local", "claude_local"].includes(brandType));
   const accountCatalogAvailable = brandType === "copilot_runtime" || (brandType === "antigravity_runtime" && aiBinding?.method === "subscription");
+  const canRefreshAccountModels = accountCatalogAvailable || accountScopedLocalCatalog;
   const requestAccountModels = accountCatalogAvailable && showModel && !connectionModels && Boolean(aiBinding)
     && envs.isSuccess && settings.isSuccess && experimental.isSuccess && general.isSuccess && !environmentError;
   const accountModelScope = JSON.stringify([companyId, environmentId, aiBinding]);
   const models = useQuery({
-    queryKey: queryKeys.agents.adapterModels(companyId, brandType, environmentId, accountBoundCatalog ? JSON.stringify(aiBinding ?? null) : aiBinding?.provider),
+    queryKey: queryKeys.agents.adapterModels(companyId, brandType, environmentId, accountBoundCatalog || accountScopedLocalCatalog ? JSON.stringify(aiBinding ?? null) : aiBinding?.provider),
     queryFn: () => agentsApi.adapterModels(companyId, isKimi || accountBoundCatalog ? "paperclip_runner" : brandType, isKimi
       ? { provider: "acpx", acpxAgent: "kimi", environmentId } : accountBoundCatalog
       ? { provider: "acpx", acpxAgent: runnerProvider, aiConnection: aiBinding, environmentId }
-      : { provider: aiBinding?.provider, environmentId }),
+      : { provider: aiBinding?.provider, environmentId, ...(accountScopedLocalCatalog ? { aiConnection: aiBinding } : {}) }),
     ...(accountBoundCatalog ? ACCOUNT_BOUND_MODEL_DISCOVERY_QUERY_OPTIONS : {}),
     enabled: Boolean(brandType) && showModel && !connectionModels && (!accountBoundCatalog || requestAccountModels),
     });
@@ -1195,7 +1197,7 @@ function Setup({
                         {!connectionAdapter && aiProviderForAdapter(brandType) && (
                           <AiConnectionField companyId={companyId} agentName={name} adapterType={brandType} model={model} environmentId={environmentId ?? undefined} value={aiBinding}
                             onChange={binding => { binding.mode !== "router" && setRuntimeAiBinding(binding); resetTest();
-                              if (accountCatalogAvailable && hashKey([aiBinding ?? null]) === hashKey([binding ?? null])) void refreshAccountModels();
+                              if (canRefreshAccountModels && hashKey([aiBinding ?? null]) === hashKey([binding ?? null])) void refreshAccountModels();
                             }} />
                         )}
                         {(connectionModels ? connectionModels.error : models.error) && <p role="alert" className="text-sm text-destructive">Could not load models. Retry or enter a model ID manually.</p>}
@@ -1207,8 +1209,8 @@ function Setup({
                                 presentation={brandType === "codex_local" ? "searchable" : "native"}
                                 models={connectionModels?.models ?? models.data ?? []}
                                 loadingModels={connectionModels?.isLoading ?? models.isLoading}
-                                onRefreshModels={connectionModels?.refreshModels ?? (accountCatalogAvailable ? async () => { await models.refetch(); } : undefined)}
-                                refreshingModels={connectionModels?.refreshing ?? (accountCatalogAvailable ? models.isFetching : undefined)}
+                                onRefreshModels={connectionModels?.refreshModels ?? (canRefreshAccountModels ? async () => { await models.refetch(); } : undefined)}
+                                refreshingModels={connectionModels?.refreshing ?? (canRefreshAccountModels ? models.isFetching : undefined)}
                                 value={model}
                                 onChange={(value) => {
                                   setModel(connectionModels?.resolveModel(value) ?? value);
