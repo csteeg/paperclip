@@ -68,6 +68,7 @@ const ASANA_MANAGED = {
   ownershipAvailability: { ...ASANA.ownershipAvailability, platform_shared: true },
 };
 const BOX = CONNECTABLE_APP_DEFINITIONS.find((app) => app.slug === "box")!;
+const AZURE_DEVOPS = CONNECTABLE_APP_DEFINITIONS.find((app) => app.slug === "azure-devops")!;
 const POSTHOG = CONNECTABLE_APP_DEFINITIONS.find((app) => app.slug === "posthog")!;
 const NEON = CONNECTABLE_APP_DEFINITIONS.find((app) => app.slug === "neon")!;
 const SUPERAGENT = CONNECTABLE_APP_DEFINITIONS.find((app) => app.slug === "superagent")!;
@@ -1447,6 +1448,25 @@ describe("AppsConnect — Connect with a link (M4 frame)", () => {
     await act(async () => { setInputValue(container.querySelector<HTMLInputElement>("#curated-oauth-client-id")!, "different-client"); });
     await flushReact();
     expect(buttonByText("Continue to sign in")?.disabled).toBe(true);
+  });
+
+  it("offers Azure DevOps app registration instructions beside the callback URL", async () => {
+    listGalleryMock.mockResolvedValue({
+      apps: [{ ...AZURE_DEVOPS, methods: AZURE_DEVOPS.methods.filter((method) => method.key === "entra") }],
+      oauthCallbackUrl: "https://paperclip.example.test/api/tools/oauth/callback",
+    });
+    mockParams.appKey = "azure-devops";
+    await render();
+    await passAccessStep();
+
+    const details = container.querySelector<HTMLDetailsElement>("details");
+    expect(details?.open).toBe(false);
+    expect(details?.querySelector("summary")?.textContent).toContain("How to register the app");
+    expect(details?.querySelector('a[href^="https://entra.microsoft.com/"]')).toBeTruthy();
+    await act(async () => details!.querySelector("summary")!.click());
+    expect(details?.open).toBe(true);
+    expect(details?.textContent).toContain("Application (client) ID");
+    expect(container.textContent).toContain("https://paperclip.example.test/api/tools/oauth/callback");
   });
 
   it("collects customer-owned OAuth client details for a curated manual OAuth app", async () => {
