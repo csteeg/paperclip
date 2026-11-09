@@ -399,7 +399,7 @@ describe("Codex security configuration", () => {
     expect(inside).not.toContain("generated_images");
     const outside = createIsolatedCodexAppServerArgs({ HOME: "/users/executor", CODEX_HOME: "/var/lib/codex-home", PAPERCLIP_RUNNER_HOME_MODE: "preconfigured" }).join("\n");
     expect(outside.split(filesystemRule("/var/lib/codex-home/generated_images", "read"))).toHaveLength(3);
-    expect(outside).not.toContain('"/var/lib/codex-home"=');
+    expect(outside).not.toContain(`${JSON.stringify(resolve("/var/lib/codex-home"))}=`);
   });
 
   it("N-12: the pinned Codex binary keeps built-in image generation enabled under the isolated launch", () => {
