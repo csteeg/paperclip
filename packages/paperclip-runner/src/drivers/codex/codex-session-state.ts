@@ -17,7 +17,7 @@ import {
   harnessRuntimeRequestOutcome,
 } from "../../contracts/harness-driver.js";
 import type { CodexTaskEnvelope } from "../../contracts/codex.js";
-import { NativeSessionProtocolIntegrityError } from "../../contracts/native-session-backend.js";
+import { nativeRestartContinuationInFlight, NativeSessionProtocolIntegrityError } from "../../contracts/native-session-backend.js";
 import {
   validatePrpStructuredRunResult,
   type PrpEvent,
@@ -331,6 +331,10 @@ export class CodexSessionState {
     this.dispositionOnlyRecoveryConsumed =
       dispositionOnlyRecoveryPreviouslyConsumed;
     this.dispositionOnlyRecoveryTurnId = dispositionOnlyRecoveryTurnId;
+    if (this.activeTurnId && dispositionOnlyRecoveryPreviouslyConsumed &&
+        dispositionOnlyRecoveryTurnId === this.activeTurnId && this.result === null &&
+        nativeRestartContinuationInFlight({ activeTurnId: this.activeTurnId, terminalTurns: input.terminalTurns }))
+      this.restartContinuationTurnId = this.activeTurnId;
   }
 
   requireActiveTurn(turnId: string, operation: string): void {
