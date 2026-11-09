@@ -1444,6 +1444,9 @@ describe("AppDefinition catalog", () => {
       ),
     ).sort();
     expect(required).toEqual([
+      "azure-devops:entra-write:organization",
+      "azure-devops:entra:organization",
+      "azure-devops:pat:organization",
       "clickhouse:mcp-oauth:serviceId",
       "honcho:mcp-api-key:workspaceId",
       "make:mcp-api-token:zone",
