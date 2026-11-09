@@ -895,9 +895,14 @@ async function executeWithCleanup(ctx: AdapterExecutionContext): Promise<Adapter
   const runtimeMcpServerIdentity = asString(runtimeSessionParams.mcpServerIdentity, "");
   const claudeProjectSettingsAllowed = Boolean(config.managedAiConnection) && !executionTargetIsRemote &&
     parseObject(context.paperclipWorkspace).claudeProjectSettingsAllowed === true;
+  const claudeProjectTrustIdentity = claudeProjectSettingsAllowed
+    ? asString(parseObject(context.paperclipWorkspace).claudeProjectTrustIdentity, "")
+    : "";
   let managedRoutingDir: string | null = null;
   let managedRoutingSettingsPath: string | null = null;
-  const matchingProjectTrust = (runtimeSessionParams.claudeProjectSettingsAllowed === true) === claudeProjectSettingsAllowed;
+  const matchingProjectTrust = (runtimeSessionParams.claudeProjectSettingsAllowed === true) === claudeProjectSettingsAllowed &&
+    (!claudeProjectSettingsAllowed || (claudeProjectTrustIdentity.length > 0 &&
+      runtimeSessionParams.claudeProjectTrustIdentity === claudeProjectTrustIdentity));
   const hasMatchingPromptBundle =
     runtimePromptBundleKey.length === 0 || runtimePromptBundleKey === promptBundle.bundleKey;
   const hasMatchingMcpServers =
@@ -1355,6 +1360,7 @@ async function executeWithCleanup(ctx: AdapterExecutionContext): Promise<Adapter
         promptBundleKey: promptBundle.bundleKey,
         mcpServerIdentity: runtimeMcpIdentity,
         claudeProjectSettingsAllowed,
+        ...(claudeProjectTrustIdentity ? { claudeProjectTrustIdentity } : {}),
         ...(executionTargetIsRemote
           ? {
               remoteExecution: adapterExecutionTargetSessionIdentity(runtimeExecutionTarget),
