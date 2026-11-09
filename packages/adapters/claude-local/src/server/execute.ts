@@ -682,9 +682,11 @@ async function executeWithCleanup(ctx: AdapterExecutionContext): Promise<Adapter
       await onLog("stdout", `[paperclip] Imported ${managedClaudePluginRuntime.skillCount} personal Claude skills.\n`);
     }
   }
-  if (config.managedAiConnection && !hasExplicitClaudeConfigDir && managedAiHomeOverrides.home !== true) {
+  if (config.managedAiConnection && (!executionTargetIsRemote || adapterExecutionTargetUsesManagedHome(executionTarget))
+    && !hasExplicitClaudeConfigDir && managedAiHomeOverrides.home !== true) {
     await stageManagedUserSkills(sharedClaudeConfigDir, mountableSkillEntries, onLog);
-  } else if (config.managedAiConnection && mountableSkillEntries.length) {
+  } else if (config.managedAiConnection && mountableSkillEntries.length
+    && (hasExplicitClaudeConfigDir || managedAiHomeOverrides.home === true)) {
     await onLog("stderr", "[paperclip] Selected Paperclip skills were not copied into the explicitly configured Claude home.\n");
   }
   const networkScope = parseLocalProcessNetworkScope(config.networkScope);
