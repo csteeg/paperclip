@@ -10,7 +10,7 @@ export function AttentionRecoveryResolver({ item, companyId, agentMap, onResolve
 }) {
   const queryClient = useQueryClient();
   const issueId = item.relatedIssue?.id ?? String(item.subject.metadata?.sourceIssueId ?? "");
-  const actions = useQuery({ queryKey: queryKeys.issues.allRecoveryActions(issueId),
+  const actions = useQuery({ queryKey: queryKeys.issues.recoveryActions(issueId, null, null),
     queryFn: () => issuesApi.recoveryActions(issueId), enabled: Boolean(issueId) });
   const action = actions.data?.actions.find(entry => entry.id === item.subject.id);
   const resolution = useMutation({ mutationFn: (outcome: RecoveryResolveOutcome) => issuesApi.resolveRecoveryAction(issueId, {
@@ -19,7 +19,7 @@ export function AttentionRecoveryResolver({ item, companyId, agentMap, onResolve
     sourceIssueStatus: outcome === "false_positive_done" ? "done" : outcome === "false_positive_in_review" ? "in_review" : outcome as "todo" | "done" | "in_review",
   }), onSuccess: () => {
     void queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(issueId) });
-    void queryClient.invalidateQueries({ queryKey: queryKeys.issues.allRecoveryActions(issueId) });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.issues.recoveryActions(issueId, null, null) });
     void queryClient.invalidateQueries({ queryKey: queryKeys.attention(companyId) });
     onResolved();
   } });
