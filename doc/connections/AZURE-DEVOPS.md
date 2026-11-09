@@ -49,3 +49,9 @@ The connector catalog's repository tool only reads repository metadata. Git
 operations have separate authorization and must also satisfy the selected
 identity's Azure DevOps permissions. Consult your Azure DevOps organization
 administrator if sign-in, token creation, or repository access is restricted.
+
+An organization identity is an explicit sharing choice. It initially permits all
+organization members; use the connection's Permissions page to restrict it to
+selected members. Agent Git access also requires an active responsible member
+in that audience and an installation for the agent or company. A personal
+identity remains the default when creating an Azure DevOps connection.

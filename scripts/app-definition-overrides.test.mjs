@@ -110,7 +110,7 @@ test("Azure DevOps keeps default Entra read consent separate from explicit Git w
   const entra = definition.methods.find((method) => method.key === "entra");
   const entraWrite = definition.methods.find((method) => method.key === "entra-write");
   const pat = definition.methods.find((method) => method.key === "pat");
-  for (const method of [entra, entraWrite, pat]) assert.deepEqual(method.grantKinds, ["user", "agent"]);
+  for (const method of [entra, entraWrite, pat]) assert.deepEqual(method.grantKinds, ["user", "agent", "organization"]);
   assert.deepEqual(entra.defaults.scopesHint, [
     "499b84ac-1321-427f-aa17-267ca6975798/vso.code",
     "offline_access",

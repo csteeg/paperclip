@@ -21,7 +21,8 @@ export function isAzureDevOpsConnection(connection: Connection): boolean {
   const expectedAuth = methodKey === AZURE_DEVOPS_ENTRA_METHOD || methodKey === AZURE_DEVOPS_ENTRA_WRITE_METHOD ? "oauth"
     : methodKey === AZURE_DEVOPS_PAT_METHOD ? "api_key" : undefined;
   return connection.transport === "rest_api" && config?.sourceTemplateKey === "azure-devops"
-    && config.url === AZURE_DEVOPS_API_URL && expectedAuth !== undefined && connection.authKind === expectedAuth
+    && (config.url === AZURE_DEVOPS_API_URL || config.url === `${AZURE_DEVOPS_API_URL}/`)
+    && expectedAuth !== undefined && connection.authKind === expectedAuth
     && organizationSchema.safeParse(method.organization).success;
 }
 

@@ -3,6 +3,8 @@ import { HttpError } from "../../../errors.js";
 import { descriptorHash, stableHash } from "../../tool-catalog-hash.js";
 import { restConnectorFor } from "../rest-registry.js";
 import { connectorToolPolicy } from "../tool-policy.js";
+import { getConnectableAppDefinition } from "@paperclipai/shared";
+import { normalizeConnectionMethodConfig } from "../../tool-access/connection-methods.js";
 import { azureDevOpsAuthorization } from "./repositories.js";
 import { AZURE_DEVOPS_API_URL, AZURE_DEVOPS_ENTRA_METHOD, AZURE_DEVOPS_ENTRA_WRITE_METHOD, AZURE_DEVOPS_PAT_METHOD, AZURE_DEVOPS_TOOLS, azureDevOpsClient,
   azureDevOpsRisk, isAzureDevOpsConnection, isCurrentAzureDevOpsCatalogEntry } from "./index.js";
@@ -18,9 +20,20 @@ const connection = (kind: "pat" | "entra" | "entra-write" = "pat") => ({ transpo
 const payload = { value: [{ id: "12345678-1234-1234-1234-1234567890ab", name: "repo", project: { name: "project" } }] };
 
 describe("Azure DevOps REST connector", () => {
+  it("recognizes the URL produced by the real connection setup for every supported method", () => {
+    const app = getConnectableAppDefinition("azure-devops")!;
+    for (const method of app.methods) {
+      const normalized = normalizeConnectionMethodConfig(method, { organization });
+      expect(isAzureDevOpsConnection({ transport: method.transport, authKind: method.auth, config: {
+        sourceTemplateKey: app.slug, connectionMethodKey: method.key, url: normalized.url, methodConfig: normalized.values,
+      } })).toBe(true);
+    }
+  });
   it("pins the reviewed connection shape and exposes only a read action", () => {
     expect(isAzureDevOpsConnection(connection())).toBe(true);
     expect(isAzureDevOpsConnection({ ...connection(), config: { ...connection().config, url: "https://attacker.invalid" } })).toBe(false);
+    expect(isAzureDevOpsConnection({ ...connection(), config: { ...connection().config, url: `${AZURE_DEVOPS_API_URL}/attacker` } })).toBe(false);
+    expect(isAzureDevOpsConnection({ ...connection(), config: { ...connection().config, url: `${AZURE_DEVOPS_API_URL}/?redirect=evil` } })).toBe(false);
     expect(isAzureDevOpsConnection(connection("entra"))).toBe(true);
     expect(isAzureDevOpsConnection(connection("entra-write"))).toBe(true);
     expect(isAzureDevOpsConnection({ ...connection("entra-write"), authKind: "api_key" })).toBe(false);

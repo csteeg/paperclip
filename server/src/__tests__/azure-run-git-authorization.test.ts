@@ -148,6 +148,28 @@ const support = await getEmbeddedPostgresTestSupport();
     await expect(resolve(input)).resolves.toMatchObject({ repositoryAuthority: { provider: "azure-devops", url: input.repoUrl } });
   });
 
+  it("uses a shared grant only for an included active responsible user, and rechecks the audience", async () => {
+    const input = await seed();
+    const selected = await grant(input, { kind: "organization", targetType: "company" });
+    await expect(resolve(input)).resolves.toMatchObject({ repositoryAuthority: { provider: "azure-devops", url: input.repoUrl } });
+    await db.delete(connectionGrantMembers).where(eq(connectionGrantMembers.grantId, selected.grantId));
+    await db.insert(connectionGrantMembers).values({ companyId: input.companyId, grantId: selected.grantId, subjectType: "user", subjectId: input.otherUserId });
+    await rejectsWithoutPat(resolve(input), selected.secretId);
+    await db.delete(connectionGrantMembers).where(eq(connectionGrantMembers.grantId, selected.grantId));
+    await expect(resolve(input)).resolves.toMatchObject({ repositoryAuthority: { provider: "azure-devops", url: input.repoUrl } });
+    await rejectsWithoutPat(resolve(input, provider("repo", async () => {
+      await db.insert(connectionGrantMembers).values({ companyId: input.companyId, grantId: selected.grantId, subjectType: "user", subjectId: input.otherUserId });
+    })), selected.secretId);
+  });
+
+  it("denies a shared grant when the responsible member is suspended while the provider responds", async () => {
+    const input = await seed();
+    const selected = await grant(input, { kind: "organization", targetType: "company" });
+    await rejectsWithoutPat(resolve(input, provider("repo", async () => {
+      await db.update(companyMemberships).set({ status: "suspended" }).where(eq(companyMemberships.principalId, input.responsibleUserId));
+    })), selected.secretId);
+  });
+
   it("selects the task project's saved eligible grant when multiple same-organization grants exist", async () => {
     const input = await seed();
     await grant(input, { targetType: "company" });

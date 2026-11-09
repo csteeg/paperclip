@@ -22,7 +22,8 @@
       ],
       "grantKinds": [
         "user",
-        "agent"
+        "agent",
+        "organization"
       ],
       "whenToUse": "Use delegated Microsoft Entra access for an organization backed by Microsoft Entra ID.",
       "defaults": {
@@ -64,7 +65,8 @@
       ],
       "grantKinds": [
         "user",
-        "agent"
+        "agent",
+        "organization"
       ],
       "whenToUse": "Use delegated Microsoft Entra access when agents need to push changes to repositories in this organization.",
       "defaults": {
@@ -106,7 +108,8 @@
       ],
       "grantKinds": [
         "user",
-        "agent"
+        "agent",
+        "organization"
       ],
       "whenToUse": "Use a personal access token when delegated sign-in is unavailable.",
       "defaults": {
