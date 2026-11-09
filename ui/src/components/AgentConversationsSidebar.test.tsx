@@ -292,3 +292,14 @@ it("lists every eligible agent: open chat, then conversations by recency, then t
       .toEqual(["/chats/alice", "/chats/bob", "/chats/carol", "/chats/zed"]); // the open chat (alice) is pinned first
   });
 });
+
+it("combines unread counts across separate conversations for the same contact", async () => {
+  client.setQueryData(queryKeys.agentChats.list("company-a", "user-a"), [
+    { ...chat("alice"), id: "first", title: "First", unreadMessageCount: 2 },
+    { ...chat("alice"), id: "second", title: "Second", unreadMessageCount: 3 },
+  ]);
+  await render();
+  expect(container.querySelectorAll('nav[aria-label="Agent conversations"] a[href="/chats/alice"]')).toHaveLength(1);
+  expect(container.querySelector('[aria-label="5 unread messages from alice"]')).not.toBeNull();
+  expect(container.querySelectorAll('nav[aria-label="Chat history"] a')).toHaveLength(2);
+});
