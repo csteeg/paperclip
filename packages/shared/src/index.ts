@@ -1884,6 +1884,7 @@ export {
   agentSkillSnapshotSchema,
   agentSkillSyncSchema,
   type AgentSkillSync,
+  agentAdapterRuntimePolicySchema,
   createAgentSchema,
   agentRuntimeConfigSchema,
   builtInAgentEmptyMutationSchema,

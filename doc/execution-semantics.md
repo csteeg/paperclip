@@ -2880,6 +2880,16 @@ An interrupted conversation does not permanently block its task. For local conve
 
 Shutdown, process loss, and provider failure use the existing durable failure retry counter and delay. Ordinary failure recovery permits at most two automatic retries in a failure chain. Accepted-interaction infrastructure recovery retains its existing bounded policy. Repeated scheduler visits reuse the same successor; restarting the server does not reset the counter. After exhaustion, automatic attempts stop. A new explicit user message can start a fresh run and failure budget. Productive max-turn continuation and confirmed workspace waits keep their separate existing semantics.
 
+Legacy Claude and Codex provider-quota failures allow four automatic retries.
+Their base delays are 30, 60, 120, and 60 seconds; the third retry waits the full
+120 seconds. A future provider reset time can extend the delay. A Claude reset
+clock that expired within five minutes is stale and uses the bounded delay.
+Queued and running retries retain their inherited quota budget until a current
+failure replaces it. A restart proven to precede provider dispatch preserves
+that quota family and its remaining budget. Dispatched process loss uses the
+ordinary failure budget and must not promise a retry after that budget is spent.
+
+
 If shutdown or a recorded unexpected system interruption stops Paperclip Runner
 preparation before native execution was selected, recovery verifies that no
 provider, process launch, native result or coordinator exists. The previous
@@ -4667,13 +4677,21 @@ their existing contracts.
 
 A reservation for pending tool results is temporary backpressure. Reject only the
 new call with retry guidance; do not stop admitted calls. A full durable receipt
-ledger can rotate the turn only after all admitted calls have settled.
+ledger can rotate the turn only after all admitted calls have settled. Runner
+persists a deferred capacity stop while those calls settle, then arms the
+interrupt with the last result receipt. A provider completion before the
+capacity stop is confirmed cannot substitute for the rejected operation.
 
 After a provider-confirmed internal interruption, Runner records its internal
 cause only if no tool outcome is pending, no semantic result exists, and no goal
 owns continuation. The native runtime may then continue the same conversation
 once, with the preserved workspace and instructions to reuse completed work.
 The existing durable continuation marker covers crashes during that handoff.
+Recovery restores ownership of its borrowed disposition allowance from the
+consumed marker and accepted continuation turn. A resultless completion can
+then request its one remaining disposition turn. Older Runner snapshots omit
+the deferred-stop field and decode with no deferred stop; no session reset or
+database migration is required.
 A second interruption ends the attempt; it cannot create an unbounded retry loop.
 
 Operator Stop overrides an internal interruption. Missing provider terminal

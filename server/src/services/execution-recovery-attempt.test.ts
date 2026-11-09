@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { accountingForScheduledRetry, executionFailureRetryCount, executionRetryAttemptCount } from "./execution-recovery-attempt.js";
+import { accountingForScheduledRetry, hasProviderQuotaRetryBudget, executionFailureRetryCount, executionRetryAttemptCount } from "./execution-recovery-attempt.js";
 import { RUNNER_REVISION_WAIT_RETRY_REASON } from "./runner-revision-mismatch.js";
 import { RUNNER_REVISION_WAIT_RETRY_REASON as DISPATCH_RUNNER_REVISION_WAIT_RETRY_REASON } from "../modules/run-dispatch/index.js";
 
@@ -65,5 +65,17 @@ describe("Runner update waits", () => {
       contextSnapshot: { ...ledger(1), executionRetryAccounting: accountingForScheduledRetry(failed, "runner_revision_wait", 3) } };
     expect(executionFailureRetryCount(waited)).toBe(1);
     expect(executionRetryAttemptCount(waited, "transient_failure")).toBe(1);
+  });
+});
+
+describe("quota retry budget classification", () => {
+  it.each(["scheduled_retry", "queued", "running"])("retains inherited quota for %s without a current failure", status => {
+    const run = { status, contextSnapshot: { errorFamily: "provider_quota" }, resultJson: { conversationContinuation: {} } };
+    expect(hasProviderQuotaRetryBudget(run)).toBe(true);
+    expect(hasProviderQuotaRetryBudget({ ...run, errorCode: "adapter_failed" })).toBe(false);
+    expect(hasProviderQuotaRetryBudget({ ...run, resultJson: { errorFamily: "transient_upstream" } })).toBe(false);
+  });
+  it("does not inherit quota from a completed result without classification", () => {
+    expect(hasProviderQuotaRetryBudget({ status: "failed", contextSnapshot: { errorFamily: "provider_quota" }, resultJson: {} })).toBe(false);
   });
 });

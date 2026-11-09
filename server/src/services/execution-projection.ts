@@ -13,7 +13,7 @@ import {
 } from "@paperclipai/db";
 import type { ExecutionProjection } from "@paperclipai/shared";
 import { EXECUTION_CONTROL_DEADLINE_MS } from "./execution-control-deadline.js";
-import { executionFailureRetryCount } from "./execution-recovery-attempt.js";
+import { executionFailureRetryCount, hasProviderQuotaRetryBudget, PROVIDER_QUOTA_RETRY_DELAYS_MS } from "./execution-recovery-attempt.js";
 import { retryIdempotentDatabaseOperation } from "../database-retry.js";
 import { workspaceRecoveryDisplay } from "./workspace-recovery-receipt.js";
 import { readTaskDrain } from "./task-admission.js";
@@ -26,6 +26,8 @@ const executionRunColumns = {
   agentId: heartbeatRuns.agentId,
   driverKind: heartbeatRuns.driverKind,
   errorCode: heartbeatRuns.errorCode,
+  resultJson: sql<Record<string, unknown> | null>`CASE WHEN ${heartbeatRuns.resultJson} IS NULL THEN NULL
+    ELSE jsonb_build_object('errorFamily', ${heartbeatRuns.resultJson}->'errorFamily') END`,
   executionControlDeadlineAt: heartbeatRuns.executionControlDeadlineAt,
   finishedAt: heartbeatRuns.finishedAt,
   lastOutputAt: heartbeatRuns.lastOutputAt,
@@ -298,7 +300,8 @@ export function projectExecution(
       (coordinator?.nextAttemptAt ?? run.scheduledRetryAt)?.toISOString() ??
       null,
     attempt: coordinator?.attempt ?? executionFailureRetryCount(run) + 1,
-    maxAttempts: 3,
+    maxAttempts: run.runtimeMode === "legacy" && hasProviderQuotaRetryBudget(run)
+      ? PROVIDER_QUOTA_RETRY_DELAYS_MS.length + 1 : 3,
     recoveryOwner: null,
     nextAction: text(detail.nextAction) ?? run.nextAction,
     permittedActions: ["inspect_run"],
