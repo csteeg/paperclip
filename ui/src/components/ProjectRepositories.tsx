@@ -13,8 +13,14 @@ import { Button } from "./ui/button";
 export function ProjectRepositories({ project }: { project: Project }) {
   const client = useQueryClient();
   const saved: ProjectRepository[] = project.workspaces.flatMap((workspace) => {
-    const id = workspace.metadata?.githubRepositoryId;
-    return typeof id === "string" && workspace.repoUrl ? [{ id, fullName: workspace.name, url: workspace.repoUrl, connections: [] }] : [];
+    const repositoryId = workspace.metadata?.repositoryId;
+    const githubRepositoryId = workspace.metadata?.githubRepositoryId;
+    const id = typeof repositoryId === "string" ? repositoryId : githubRepositoryId;
+    if (typeof id !== "string" || !workspace.repoUrl) return [];
+    const provider = typeof workspace.metadata?.repositoryProvider === "string"
+      ? workspace.metadata.repositoryProvider
+      : typeof repositoryId === "string" ? undefined : "github";
+    return [{ id, ...(provider ? { provider } : {}), fullName: workspace.name, url: workspace.repoUrl, connections: [] }];
   });
   const [draft, setDraft] = useState<ProjectRepository[] | null>(null);
   const [connecting, setConnecting] = useState(false);
@@ -32,7 +38,7 @@ export function ProjectRepositories({ project }: { project: Project }) {
   });
   return <section aria-label="Repositories" className="flex min-w-0 flex-col gap-4 py-4">
     <ProjectRepositoryInput companyId={project.companyId} selected={draft ?? saved} onChange={(repos) => { setDraft(repos); save.reset(); }} onConnect={() => setConnecting(true)} disabled={save.isPending} />
-    {project.workspaces.filter((workspace) => workspace.repoUrl && !workspace.metadata?.githubRepositoryId).map((workspace) => <LegacyProjectRepository key={workspace.id} workspace={workspace} projectRef={project.urlKey} />)}
+    {project.workspaces.filter((workspace) => workspace.repoUrl && typeof workspace.metadata?.repositoryId !== "string" && typeof workspace.metadata?.githubRepositoryId !== "string").map((workspace) => <LegacyProjectRepository key={workspace.id} workspace={workspace} projectRef={project.urlKey} />)}
     <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border pt-4">
       {save.status === "error" && <p role="alert" className="mr-auto text-sm text-destructive">{describeError(save.error).body}</p>}
       {save.isSuccess && <span role="status" className="mr-auto text-sm text-muted-foreground">Changes saved</span>}

@@ -4461,7 +4461,8 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
       try { recipe = readGitCacheRestoration(snapshot); }
       catch (error) { return rebuildFailed("recipe", error, true); }
       const freshStart = recipe !== null && isClosedExecutionWorkspaceStatus(snapshot.status) && gitRestorePointExpired(recipe);
-      const gitAuth = createIssueGitRemoteAuthProvider(db, snapshot.companyId, issue.id);
+      const issueGitAuth = createIssueGitRemoteAuthProvider(db, snapshot.companyId, issue.id);
+      const gitAuth: typeof issueGitAuth = (url) => issueGitAuth(url, snapshot.projectId ?? undefined);
       const [
         { ensurePersistedExecutionWorkspaceAvailable },
         { workspaceOperationService },
@@ -4517,7 +4518,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
                 });
               };
             },
-            resolveGitAuth: createIssueGitRemoteAuthProvider(db, snapshot.companyId, issue.id),
+            resolveGitAuth: gitAuth,
           });
           resolvedBaseCwd = managedWorkspace.cwd;
         } catch (error) {
