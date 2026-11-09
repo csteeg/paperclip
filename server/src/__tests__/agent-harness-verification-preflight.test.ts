@@ -159,7 +159,8 @@ describePostgres("saved harness account preflight", () => {
         model: "openrouter/anthropic/claude-sonnet-4.5",
       }],
     } }, userId);
-    const [environment] = await db.select().from(environments).where(eq(environments.driver, "local"));
+    let [environment] = await db.select().from(environments).where(eq(environments.driver, "local"));
+    if (!environment) [environment] = await db.insert(environments).values({ name: "Local harness verification fixture", driver: "local" }).returning();
     const checkEnvironment = vi.fn().mockResolvedValue(undefined);
     vi.mocked(environmentTests.agentEnvironmentTestService).mockImplementation((database, manager) => ({
       ...realEnvironmentTests(database, manager),
