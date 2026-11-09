@@ -49,39 +49,41 @@ export function agentHarnessVerificationService(db: Db, manager: PluginWorkerMan
   async function verify(snapshot: LifecycleAgent): Promise<"complete" | "pending"> {
     const [agent] = await db.select().from(agents).where(and(eq(agents.id, snapshot.id), eq(agents.lifecycleVersion, snapshot.lifecycleVersion)));
     if (!agent) return "pending";
-    if (agent.adapterType === "paperclip_runner" && ["openai_dot", "grok_bot"].includes(String(agent.adapterConfig.provider))) {
+    if (adapterType === "paperclip_runner" && ["openai_dot", "grok_bot"].includes(String(agent.adapterConfig.provider))) {
       const binding = await dotRunnerBroker(db).bindingForAgent(agent.companyId, agent.id);
       return binding?.status === "ready" && binding.wakeVerified && binding.id === agent.adapterConfig[agent.adapterConfig.provider === "grok_bot" ? "externalBindingId" : "dotBindingId"] ? "complete" : "pending";
     }
-    if (agent.adapterType === "paperclip_runner" && agent.adapterConfig.provider === "muse") {
+    if (adapterType === "paperclip_runner" && agent.adapterConfig.provider === "muse") {
       const binding = await museRunnerBroker(db).bindingForAgent(agent.companyId,agent.id);
       return binding?.status === "ready" && binding.paired && binding.receiverDetected && binding.backgroundReplyVerified && binding.id === agent.adapterConfig.museBindingId ? "complete" : "pending";
     }
-    const providerApi = resolveProviderApiPlacement({ agent });
-    if (providerApi) assertProviderApiPlacementPolicy(await instanceSettingsService(db).getGeneral());
     const [company] = await db.select().from(companies).where(eq(companies.id, agent.companyId));
     const responsibleUserId = agent.lifecycleOperation?.responsibleUserId ?? company.defaultResponsibleUserId;
     const context = { consumerType: "agent" as const, consumerId: agent.id, actorType: "system" as const,
       actorId: "agent-lifecycle", responsibleUserId };
+    let adapterType = agent.adapterType;
     let binding = aiRuntimeConnectionBindingSchema.optional().parse(effectiveAiConnectionInput(agent.runtimeConfig));
     let config = agent.adapterConfig;
     if (binding?.mode === "router") {
       const selected = await aiConnectionRouterService(db, manager).resolve({ companyId: agent.companyId,
         poolId: binding.connectionId, agentId: agent.id, userId: responsibleUserId,
-        adapterType: agent.adapterType, sourceAdapterConfig: config,
+        adapterType, sourceAdapterConfig: config,
         taskKey: `lifecycle:${agent.lifecycleOperation!.id}` });
       binding = selected.binding;
-      config = applyAiConnectionRouterTaskSettings(config, selected, agent.adapterType);
+      config = applyAiConnectionRouterTaskSettings(config, selected, adapterType);
+      adapterType = selected.adapterType ?? adapterType;
     }
+    const providerApi = resolveProviderApiPlacement({ agent: { adapterType, adapterConfig: config } });
+    if (providerApi) assertProviderApiPlacementPolicy(await instanceSettingsService(db).getGeneral());
     if (binding) config = { ...config, env: stripAiAuthBindings(config.env) };
-    config = (await secrets.resolveAdapterConfigForRuntime(agent.companyId, config, context, { adapterType: agent.adapterType })).config;
-    const environmentId = providerApi ? null : await tests.resolveAdapterTestEnvironmentId(agent.companyId, agent.defaultEnvironmentId, agent.adapterType === "paperclip_runner" && config.provider === "acpx" && config.acpxAgent === "copilot");
+    config = (await secrets.resolveAdapterConfigForRuntime(agent.companyId, config, context, { adapterType })).config;
+    const environmentId = providerApi ? null : await tests.resolveAdapterTestEnvironmentId(agent.companyId, agent.defaultEnvironmentId, adapterType === "paperclip_runner" && config.provider === "acpx" && config.acpxAgent === "copilot");
     if (environmentId) {
-      await tests.assertAdapterTestEnvironmentForCompany(agent.companyId, environmentId, agent.adapterType);
+      await tests.assertAdapterTestEnvironmentForCompany(agent.companyId, environmentId, adapterType);
       const environment = await environments.getById(environmentId);
       // Run admission refuses these agents before any lease, so verification must too.
-      const preconfiguredHome = agent.adapterType === "paperclip_runner" && config.homeMode === "preconfigured";
-      if (agent.adapterType === "paperclip_runner" && environment && (preconfiguredHome || !binding)
+      const preconfiguredHome = adapterType === "paperclip_runner" && config.homeMode === "preconfigured";
+      if (adapterType === "paperclip_runner" && environment && (preconfiguredHome || !binding)
         && await pluginEnvironmentRunnerTaskDriver(db, environment)) throw pluginRunnerAiConnectionRequiredFailure(preconfiguredHome);
       const env = Object.fromEntries(Object.entries(binding ? stripAiAuthBindings(environment?.envVars) : parseObject(environment?.envVars))
         .filter(([key]) => !isForbiddenConfigEnvKey(key)));
@@ -91,20 +93,20 @@ export function agentHarnessVerificationService(db: Db, manager: PluginWorkerMan
     }
     if (binding) await aiConnectionService(db).select({
       companyId: agent.companyId, userId: responsibleUserId, agentId: agent.id,
-      adapterType: agent.adapterType, model: config.model, runnerProvider: config.provider,
+      adapterType, model: config.model, runnerProvider: config.provider,
       acpxAgent: config.acpxAgent, binding,
     });
     const target = providerApi
       ? { executionTarget: null, environmentName: null, fallbackChecks: [], release: async (_status?: "released" | "failed") => {} }
-      : await tests.resolveAdapterTestExecutionContext({ agentId: agent.id, companyId: agent.companyId, adapterType: agent.adapterType, environmentId });
+      : await tests.resolveAdapterTestExecutionContext({ agentId: agent.id, companyId: agent.companyId, adapterType, environmentId });
     let status: "released" | "failed" = "failed";
     try {
       if (target.fallbackChecks.length) throw Object.assign(new Error("The test environment is unavailable"), { code: "test_environment_unavailable" });
-      const input = { companyId: agent.companyId, adapterType: agent.adapterType, config,
+      const input = { companyId: agent.companyId, adapterType, config,
         executionTarget: target.executionTarget, environmentName: target.environmentName };
       const result = binding ? await withManagedAiProbe(db, { ...input, agentId: agent.id, responsibleUserId, binding },
-        managed => tests.testManagedEnvironment(agent.adapterType, { ...input, config: managed.config }, binding!, managed, agent.id))
-        : await requireServerAdapter(agent.adapterType).testEnvironment(input);
+        managed => tests.testManagedEnvironment(adapterType, { ...input, config: managed.config }, binding!, managed, agent.id))
+        : await requireServerAdapter(adapterType).testEnvironment(input);
       assertHarnessTestPassed(result);
       status = "released";
       return "complete";
