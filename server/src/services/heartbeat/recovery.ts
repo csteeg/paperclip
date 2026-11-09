@@ -1,4 +1,5 @@
 import { releaseDeadControllerResultLeases } from "../native-runtime/native-dead-controller-result-lease.js";
+import { hasProviderQuotaRetryBudget } from "../execution-recovery-attempt.js";
 import { readNativeStartupCleanup, readNativeStartupContext } from "../native-runtime/native-startup-cleanup.js";
 import { legacyWorkspaceRecoveryNotMigrated } from "../legacy-workspace-recovery-migration.js";
 import { pendingFailedNativeRetryCancellationCondition } from "../native-runtime/native-cancellation-request.js";
@@ -2705,7 +2706,8 @@ export function createHeartbeatRecovery(db: Db, dependencies: HeartbeatRecoveryD
                   ...parseObject(run.resultJson),
                   processLossDiagnostic,
                   ...(restartInterruptedBeforeDispatch
-                    ? { executionRecovery: { kind: "bootstrap", providerWorkStarted: false } }
+                    ? { executionRecovery: { kind: "bootstrap", providerWorkStarted: false },
+                        ...(hasProviderQuotaRetryBudget(run) ? { errorFamily: "provider_quota" } : {}) }
                     : {}),
                 },
                 errorCode: "process_lost",

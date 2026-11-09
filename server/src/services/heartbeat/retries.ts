@@ -21,6 +21,7 @@ import {
 import { legacyExecutionNeedsReconciliationWithEvidence } from "../legacy-execution-recovery.js";
 import {
   executionFailureRetryCount,
+  hasProviderQuotaRetryBudget,
   PROVIDER_QUOTA_RETRY_DELAYS_MS,
   executionRetryAttemptCount,
   accountingForScheduledRetry,
@@ -176,10 +177,10 @@ export function evaluateQuotaFailoverEvidence(input: {
   return { allowed: true };
 }
 
-export function failedRunRetryBudgetSpent(run: Parameters<typeof executionFailureRetryCount>[0] & { errorCode?: string | null; resultJson?: Record<string, unknown> | null }): boolean {
+export function failedRunRetryBudgetSpent(run: Parameters<typeof executionFailureRetryCount>[0] & { errorCode?: string | null; resultJson?: Record<string, unknown> | null; status?: string | null }): boolean {
   return run.errorCode === RUNNER_REVISION_MISMATCH_CODE
     ? executionRetryAttemptCount(run, RUNNER_REVISION_WAIT_RETRY_REASON) >= RUNNER_REVISION_MISMATCH_RETRY.maxAttempts
-    : executionFailureRetryCount(run) >= (run.errorCode === "provider_quota" || run.resultJson?.errorFamily === "provider_quota"
+    : executionFailureRetryCount(run) >= (hasProviderQuotaRetryBudget(run)
       ? PROVIDER_QUOTA_RETRY_DELAYS_MS.length : BOUNDED_TRANSIENT_HEARTBEAT_RETRY_MAX_ATTEMPTS);
 }
 
