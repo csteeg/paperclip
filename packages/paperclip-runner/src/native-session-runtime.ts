@@ -1100,6 +1100,7 @@ async function consumeTurn(
   initialGovernedWait?: PersistedNativeSession["governedWait"],
   /** Settles a compaction-only turn, which reports no semantic result. */
   compactionResult?: PrpStructuredRunResult,
+  supersededTerminal?: (event: PrpEvent, signal: AbortSignal) => Promise<boolean>,
 ) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const appendAbort = new AbortController();
@@ -1493,6 +1494,7 @@ async function consumeTurn(
         }
       }
       if (isTurnTerminal(event)) {
+        if (await supersededTerminal?.(event, appendAbort.signal)) continue;
         if (providerFailure) throw providerFailure;
         if (compactionResult && event.eventType === "turn.completed") {
           return {
@@ -2694,6 +2696,9 @@ export async function executeNativeSession(
     };
     let restartContinuationStarted = false;
     let borrowedContinuationTurnId: string | null = null;
+    let restartContinuationTurnId: string | null = null;
+    let settleStartupDecision: () => void = () => undefined;
+    const startupDecision = new Promise<void>(resolve => { settleStartupDecision = resolve; });
     let continuationDispositionRequested = false;
     // The consumer may already be running when a continuation starts, and the
     // continuation can complete before its start checkpoint settles. A
@@ -2706,6 +2711,7 @@ export async function executeNativeSession(
         // The driver reports the borrowed marker with the accepted turn; a
         // later snapshot may already show the marker returned.
         const started = await session.startTurn(restartContinuation(internalReceiptLimit));
+        restartContinuationTurnId = started.turnId;
         if (started.borrowedDispositionMarker === true) borrowedContinuationTurnId = started.turnId;
         await checkpoint(signal);
       })();
@@ -2728,7 +2734,19 @@ export async function executeNativeSession(
       await checkpoint(signal);
       return true;
     };
-
+    const supersededByRestartContinuation = async (event: PrpEvent, signal: AbortSignal) => {
+      if (!recovered || !event.turnId ||
+          !((event.eventType === "turn.failed" && isNativeRestartInterruption(event.payload.error)) ||
+            (event.eventType === "turn.interrupted" && isNativeReceiptLimitInterruption(event.payload.error)))) return false;
+      if (checkpointedInterruption) {
+        await startupDecision;
+        signal.throwIfAborted();
+      }
+      if (!restartContinuationStarted) return false;
+      await continuationSetup?.catch(() => undefined);
+      signal.throwIfAborted();
+      return restartContinuationTurnId !== null && event.turnId !== restartContinuationTurnId;
+    };
     const resumeInterruptedTurn = async (event: PrpEvent, signal: AbortSignal) => {
       if (await requestContinuationDisposition(event, signal)) return true;
       if (!restartContinuationStarted && input.provider.kind === "codex" &&
@@ -2925,6 +2943,7 @@ export async function executeNativeSession(
               options.sessionCompaction
                 ? sessionCompactionResult(input, options.sessionCompaction.requestId)
                 : undefined,
+              supersededByRestartContinuation,
             )
           : Promise.resolve({
               event: recoveryTerminal,
@@ -3047,7 +3066,9 @@ export async function executeNativeSession(
           });
           await checkpoint();
         }
+        settleStartupDecision();
       } catch (error) {
+        settleStartupDecision();
         // Consumption starts before provider launch so eager events cannot be
         // lost. If launch or its checkpoint fails, abort any in-flight append
         // before joining cleanup so the failed turn cannot commit late or
