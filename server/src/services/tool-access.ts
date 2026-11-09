@@ -102,6 +102,7 @@ import {
 } from "./connector-telemetry.js";
 import { canBrowseProjectRepositoryGrant, mergeProjectRepository } from "./project-repositories.js";
 import { listAzureDevOpsProjectRepositories } from "./tool-access/azure-devops-catalog.js";
+import { listRegisteredRepositoryProviders } from "./tool-access/repository-provider-registry.js";
 
 import { measureRunPhase } from "./execution-preparation-timing.js";
 
@@ -4281,13 +4282,10 @@ export function toolAccessService(
     // Repository discovery uses credential audiences, not connection-management
     // visibility. An administrator cannot browse another user's private repos.
     listProjectRepositories: async (companyId: string, userId: string | null, localTrusted = false, repositoryOptions?: { requiredRepositoryIds: readonly string[] }) => {
-      const [github, azure] = await Promise.all([
-        toolAccessService(db, options).listGitHubRepositories(companyId, userId, localTrusted, repositoryOptions),
-        listAzureDevOpsProjectRepositories(db, { resolveOAuthGrantSecret, refreshOAuthGrantCredentials, requestRemoteHttpEndpoint }, companyId, userId, localTrusted),
+      return listRegisteredRepositoryProviders([
+        { id: "github", list: () => toolAccessService(db, options).listGitHubRepositories(companyId, userId, localTrusted, repositoryOptions) },
+        { id: "azure-devops", list: () => listAzureDevOpsProjectRepositories(db, { resolveOAuthGrantSecret, refreshOAuthGrantCredentials, requestRemoteHttpEndpoint }, companyId, userId, localTrusted) },
       ]);
-      return { repositories: [...github.repositories, ...azure.repositories].sort((a, b) => a.fullName.localeCompare(b.fullName)),
-        connections: [...github.connections, ...azure.connections], connectionCount: github.connectionCount + azure.connectionCount,
-        failedConnectionCount: github.failedConnectionCount + azure.failedConnectionCount };
     },
 
     // Return identifiers, never credentials, so each attempted read can recheck its grant.
