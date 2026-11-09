@@ -3169,6 +3169,9 @@ Claude Code agents default to ACPX Claude on Apple Silicon, Intel Mac, Linux x64
 and Linux ARM64 with supported glibc. New OpenCode and Pi agents default to their native
 runtimes on Apple Silicon, Intel Mac, and Linux x64 with supported glibc;
 Linux ARM64 remains Legacy until the pinned runtimes support it.
+Windows x64 Codex agents keep Legacy as their automatic default until Windows
+Runner daemons ship in public releases. Explicit native selection remains available
+for installations with a locally built daemon or `PAPERCLIP_RUNNER_BINARY`.
 Unsupported or unqualified targets retain Legacy. Claude over Darwin SSH keeps
 an automatic Legacy default; explicit native execution
 requires matching remote assets. Agent setup and configuration select the runner automatically and do not expose a runner dropdown. Ordinary Claude models default to `claude-opus-5-5`; explicit models
@@ -5202,3 +5205,13 @@ execution input. Pool management is the facade in `services/harness-pools.ts`.
 It does not add another scheduler, provider transport, idle timer or state store.
 See [central harness pools](connections/AI-CONNECTION-ROUTERS.md#central-harness-pools)
 for operator setup, conversion and continuation limits.
+
+## Windows process handoff evidence
+
+The Windows process supervisor reports settlement through a named pipe after the
+kernel job completion event and an active-process count of zero. The parent
+requires a matching supervisor exit code and a per-launch secret. The secret is
+passed only to the supervisor environment and removed before the provider is
+created. It is absent from argv and the provider environment. Writable temporary
+files and a killed supervisor cannot authorize handoff. Missing or invalid proof
+keeps handoff blocked. The pipe closes when launch fails or settlement finishes.
