@@ -507,9 +507,15 @@ describe("TaskChatComposer", () => {
     rejectSend(new CommentSubmissionUnknownError());
     await flushAsync();
     render(<div>Another task</div>);
-    render(<TaskChatComposer onAdd={onAdd} workMode="standard" draftKey={key}
+    const onWorkModeChange = vi.fn().mockResolvedValue(undefined);
+    render(<TaskChatComposer onAdd={onAdd} onWorkModeChange={onWorkModeChange} workMode="standard" draftKey={key} />);
+    await flushAsync();
+    pressKey("Tab", { shiftKey: true });
+    render(<TaskChatComposer onAdd={onAdd} onWorkModeChange={onWorkModeChange} workMode="ask" draftKey={key}
       confirmedSubmissionIds={new Set([attemptId])} />);
     await flushAsync();
+    expect(container.querySelector('[data-testid="task-chat-composer-mode"]')?.getAttribute("data-pending-work-mode")).toBe("planning");
+    expect(onWorkModeChange).not.toHaveBeenCalled();
     expect(editable().textContent).toBe("Keep this next draft");
     expect(localStorage.getItem(key)).toBe("Keep this next draft");
     expect(loadDraftSubmission(key)).toBeNull();
@@ -1281,6 +1287,50 @@ describe("TaskChatComposer", () => {
     renderComposer({ ...props, workMode: "planning" });
     await flushAsync();
     expect(container.querySelector('[data-testid="task-chat-composer-mode"]')?.getAttribute("data-pending-work-mode")).toBe("ask");
+  });
+
+  it.each([
+    { recovery: "receipt", newerChoice: false },
+    { recovery: "resend", newerChoice: false },
+    { recovery: "receipt", newerChoice: true },
+    { recovery: "resend", newerChoice: true },
+    { recovery: "receipt", newerChoice: "same" },
+    { recovery: "resend", newerChoice: "same" },
+  ])("consumes only the recovered send's mode choice: %j", async ({ recovery, newerChoice }) => {
+    let loseResponse!: (error: Error) => void;
+    const onAdd = vi.fn().mockResolvedValue(undefined).mockImplementationOnce(
+      () => new Promise<void>((_resolve, reject) => { loseResponse = reject; }),
+    );
+    const onWorkModeChange = vi.fn().mockResolvedValue(undefined);
+    const props = { onAdd, onWorkModeChange, draftKey: `recovered-mode-${recovery}-${newerChoice}` };
+    renderComposer({ ...props, workMode: "standard" });
+    pressKey("Tab", { shiftKey: true });
+    typeText("Recover this planning message");
+    pressKey("Enter", { metaKey: true });
+    await flushAsync();
+    expect(onAdd).toHaveBeenCalledOnce();
+    if (newerChoice) {
+      pressKey("Tab", { shiftKey: true });
+      pressKey("Tab", { shiftKey: true });
+      if (newerChoice === "same") pressKey("Tab", { shiftKey: true });
+    }
+    await act(async () => { loseResponse(new CommentSubmissionUnknownError()); });
+    await flushAsync();
+    expect(container.textContent).toContain("Sending when reconnected…");
+    const attemptId = onAdd.mock.calls[0]![4] as string;
+    renderComposer({ ...props, workMode: "ask", confirmedSubmissionIds: recovery === "receipt" ? new Set([attemptId]) : undefined });
+    await flushAsync();
+    if (recovery === "resend") {
+      const resend = Array.from(container.querySelectorAll("button")).find(button => button.textContent === "Resend now")!;
+      flushSync(() => resend.click());
+      await flushAsync();
+      expect(onAdd).toHaveBeenCalledTimes(2);
+      expect(onAdd.mock.calls[1]![4]).toBe(attemptId);
+    }
+    expect(container.textContent).not.toContain("Sending when reconnected…");
+    expect(editable().textContent).toBe("");
+    expect(container.querySelector('[data-testid="task-chat-composer-mode"]')?.getAttribute("data-pending-work-mode") ?? "standard")
+      .toBe(newerChoice === "same" ? "planning" : newerChoice ? "standard" : "ask");
   });
 
   it("cycles the pending mode with Shift+Tab and applies it on submit", async () => {
