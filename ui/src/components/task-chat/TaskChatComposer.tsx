@@ -451,8 +451,8 @@ export function TaskChatComposer({
     useState<HTMLElement | null>(null);
   const [takeoverControlsSlot, setTakeoverControlsSlot] =
     useState<HTMLElement | null>(null);
-  const [localPendingMode, setPendingMode] = useState<IssueWorkMode>(workMode);
-  const pendingMode = creation ? workMode : localPendingMode;
+  const [pendingModeChoice, setPendingModeChoice] = useState<{ mode: IssueWorkMode } | null>(null);
+  const pendingMode = creation ? workMode : (pendingModeChoice?.mode ?? workMode);
   const [pendingAssignee, setPendingAssignee] = useState<string | null>(null);
   const coordinator = useCoordinatorPresentation();
   const [localRunSettings, setLocalRunSettings] = useState<ComposerRunSettings | null>(null);
@@ -572,7 +572,7 @@ export function TaskChatComposer({
         bodyRef.current = backup.body;
         setBody(backup.body);
         setAttachments(backup.attachments);
-        setPendingMode(backup.pendingMode);
+        setPendingModeChoice({ mode: backup.pendingMode });
         setPendingAssignee(backup.pendingAssignee);
         if (draftKey) saveDraft(draftKey, backup.body);
       }
@@ -701,7 +701,7 @@ export function TaskChatComposer({
   }
 
   function changeMode(mode: IssueWorkMode) {
-    setPendingMode(mode);
+    setPendingModeChoice({ mode });
     if (creation) void onWorkModeChange?.(mode);
   }
 
@@ -922,6 +922,7 @@ export function TaskChatComposer({
     const submittedBody = bodyRef.current;
     const submittedAttachments = attachmentsRef.current;
     const submittedAssignee = pendingAssigneeRef.current;
+    const submittedModeChoice = pendingModeChoice;
     const trimmed = submittedBody.trim();
     const goalCommand = queuedEdit
       ? ({ matched: false } as const)
@@ -1093,6 +1094,7 @@ export function TaskChatComposer({
       if (draftKey) settleDraftSubmission(draftKey, attemptId,
         mountedTaskKey.current === draftKey ? bodyRef.current : undefined);
       if (mountedTaskKey.current !== draftKey) return;
+      setPendingModeChoice((current) => current === submittedModeChoice ? null : current);
       const submittedIds = new Set(submittedAttachments.map((item) => item.id));
       setAttachments((current) =>
         current.filter((item) => !submittedIds.has(item.id)),
