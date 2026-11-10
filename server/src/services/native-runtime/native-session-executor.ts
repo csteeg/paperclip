@@ -10854,9 +10854,11 @@ async function executePaperclipNativeSessionWithinScope(
           },
           resolveGitCredentials: async (binding, repositoryUrl) => {
             const { resolveAzureDevOpsRunGitCredentials } = await import("../azure-devops-run-git-credentials.js");
-            const { projectForAzureRepository } = await import("../azure-project-repository-bindings.js");
-            const result = await resolveAzureDevOpsRunGitCredentials(input.db, { ...binding, repoUrl: repositoryUrl,
-              projectId: projectForAzureRepository(repositoryUrl, input.azureProjectRepositories) });
+            const { projectForAzureRuntimeRepository } = await import("../azure-project-repository-bindings.js");
+            const authority = { ...binding, repositoryUrl, bindings: input.azureProjectRepositories };
+            const projectId = await projectForAzureRuntimeRepository(input.db, authority);
+            const result = await resolveAzureDevOpsRunGitCredentials(input.db, { ...binding, repoUrl: repositoryUrl, projectId });
+            if (projectId !== await projectForAzureRuntimeRepository(input.db, authority)) throw new Error("Git repository authorization is unavailable");
             return { status: "available", env: result.env };
           },
           onLog: input.onLog,
