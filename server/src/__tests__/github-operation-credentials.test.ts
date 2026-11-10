@@ -21,6 +21,7 @@ import {
   issueComments,
   issues,
   projects,
+  projectWorkspaces,
   runIdentityContexts,
   toolApplications,
   toolConnectionInstalls,
@@ -37,6 +38,7 @@ import {
   captureRunIdentity,
 } from "../services/run-identity.js";
 import { resolveGitHubOperationCredentials } from "../services/github-operation-credentials.js";
+import { authorizeProjectGitHubCheckout } from "../services/project-run-github-access.js";
 import {
   filterResolvedGitHubConnectionsForRun,
   resolveManagedGitHubIdentitySelection,
@@ -74,6 +76,23 @@ const support = external ? { supported: true } : await getEmbeddedPostgresTestSu
       vi.unstubAllEnvs();
     }, 60_000);
     const { seed, grant, switchTo } = githubCredentialsFixture(() => db);
+    it("authorizes a personal PAT for a bound project repository and denies it after revocation", async () => {
+      const input = await seed(), selected = await grant(input, "A");
+      await db.update(toolConnections).set({ authKind: "api_key", config: { sourceTemplateKey: "github", connectionMethodKey: "mcp-key" } }).where(eq(toolConnections.id, selected.connectionId));
+      await db.update(connectionGrants).set({ providerTenant: null, credentialSecretRefs: [{ secretId: selected.secretId, configPath: "credentials.authorization", versionSelector: "latest" }] }).where(eq(connectionGrants.id, selected.id));
+      const [project] = await db.insert(projects).values({ companyId: input.companyId, name: "PAT project" }).returning();
+      await db.insert(projectWorkspaces).values({ companyId: input.companyId, projectId: project.id, name: "Repo",
+        repoUrl: "https://github.com/org/repo", metadata: { githubRepositoryId: "123" } });
+      vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request) => String(url) === "https://api.github.com/user"
+        ? Response.json({ id: 42, login: "tester" })
+        : Response.json({ id: 123, full_name: "org/repo", permissions: { pull: true } })));
+      try {
+        const request = { ...input, projectId: project.id, repoUrl: "https://github.com/org/repo" };
+        expect(await authorizeProjectGitHubCheckout(db, request)).toMatchObject({ grantId: selected.id, env: { PAPERCLIP_GIT_TOKEN: "test-token-A" } });
+        await db.update(connectionGrants).set({ status: "revoked" }).where(eq(connectionGrants.id, selected.id));
+        await expect(authorizeProjectGitHubCheckout(db, request)).rejects.toThrow(/unavailable/i);
+      } finally { vi.unstubAllGlobals(); }
+    });
     it.each(["config", "transportConfig"] as const)("reads only current GitHub identity connections via %s", async location => {
       const input = await seed(), selected = await grant(input, "A");
       const [connection] = await db.select().from(toolConnections).where(eq(toolConnections.id, selected.connectionId));
