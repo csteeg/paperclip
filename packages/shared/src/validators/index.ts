@@ -425,6 +425,8 @@ export {
 } from "./document-annotation.js";
 
 export {
+  createAgentConversationSchema,
+  type CreateAgentConversation,
   createIssueSchema,
   issueSummariesQuerySchema,
   setIssueTitleSchema,

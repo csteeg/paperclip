@@ -1140,6 +1140,11 @@ export const sendChatMessageSchema = z.object({
 
 export const markIssueReadSchema = z.object({ throughCommentId: z.uuid().optional() }).strict();
 
+export const createAgentConversationSchema = z.object({
+  clientRequestId: z.string().uuid(),
+}).strict();
+export type CreateAgentConversation = z.infer<typeof createAgentConversationSchema>;
+
 export const addIssueCommentSchema = z.object({
   clientRequestId: z.string().uuid().optional(),
   body: multilineTextSchema.pipe(z.string().min(1)),
