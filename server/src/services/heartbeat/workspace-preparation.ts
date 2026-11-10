@@ -1,3 +1,4 @@
+import { readIsolatedTaskPath } from "../isolated-task-paths.js";
 import { resolveProviderApiPlacement } from "../native-runtime/provider-api-placement.js";
 import { assertEphemeralWorkspaceExecution, readRemoteWorkspaceAuthority, RemoteWorkspaceWriterActiveError, reserveRemoteWorkspace, shouldUseRemoteWorkspaces } from "../remote-workspaces.js";
 import { WORKSPACE_BUSY_HOLDER_STALE_AFTER_MS, WorkspaceBusyDeferral } from "./retries.js";
@@ -396,10 +397,10 @@ async function prepareHeartbeatWorkspaceLocked(db: Db, input: HeartbeatWorkspace
               .where(and(eq(issues.id, issueRef.id), eq(issues.companyId, agent.companyId)));
             const stored = await executionWorkspacesSvc.getStoredById(agent.companyId, reusableExistingExecutionWorkspace.id);
             // A pure path check: the reuse validation below confirms the full
-            // isolated-workspace-attempts/<company>/<issue>/<run> identity.
-            ownFreshAttempt = fresh && Boolean(stored?.cwd) && path.basename(stored!.cwd!) === run.id &&
-              path.basename(path.dirname(stored!.cwd!)) === issueRef.id &&
-              path.basename(path.dirname(path.dirname(path.dirname(stored!.cwd!)))) === "isolated-workspace-attempts";
+            // task and run identity in either supported path layout.
+            const storedIdentity = stored?.cwd ? readIsolatedTaskPath(await fs.realpath(resolvePaperclipInstanceRoot()), stored.cwd) : null;
+            ownFreshAttempt = fresh && storedIdentity?.attemptId === run.id && storedIdentity.companyId === agent.companyId &&
+              storedIdentity.issueId === issueRef.id && storedIdentity.rest.length === 0;
             if ((fresh && !ownFreshAttempt) || currentIssue?.workspaceId !== reusableExistingExecutionWorkspace.id ||
                 reusableExistingExecutionWorkspace.companyId !== agent.companyId ||
                 reusableExistingExecutionWorkspace.sourceIssueId !== issueRef.id ||
