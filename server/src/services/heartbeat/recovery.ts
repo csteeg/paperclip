@@ -1,4 +1,5 @@
 import { releaseDeadControllerResultLeases } from "../native-runtime/native-dead-controller-result-lease.js";
+import { failedRunRetryBudgetSpent } from "./retries.js";
 import { hasProviderQuotaRetryBudget } from "../execution-recovery-attempt.js";
 import { readNativeStartupCleanup, readNativeStartupContext } from "../native-runtime/native-startup-cleanup.js";
 import { legacyWorkspaceRecoveryNotMigrated } from "../legacy-workspace-recovery-migration.js";
