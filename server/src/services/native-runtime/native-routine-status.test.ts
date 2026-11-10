@@ -2,7 +2,7 @@ import { resolveExternalTestDatabaseUrl } from "../../__tests__/helpers/external
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { agents, companies, completionContracts, createDb, heartbeatRuns, issues, nativeRunFinalizations, nativeRunResults, pluginManagedResources, plugins, routineRuns, routines, workAssessments } from "@paperclipai/db";
+import { agents, companies, completionContracts, createDb, heartbeatRuns, issues, nativeRunFinalizations, nativeRunResults, pluginManagedResources, plugins, routineRuns, routines, statusDecisionEffects, workAssessments } from "@paperclipai/db";
 import type { Db } from "@paperclipai/db";
 import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from "../../__tests__/helpers/embedded-postgres.js";
 import { routineService } from "../routines.js";
@@ -17,7 +17,7 @@ if (!support.supported) console.warn(`Skipping native routine status tests: ${su
   const companyId = randomUUID(), agentId = randomUUID();
   beforeAll(async () => {
     if (!external) database = await startEmbeddedPostgresTestDatabase("native-routine-status-"); db = createDb(external ?? database.connectionString, { maxConnections: 6 });
-    await db.insert(companies).values({ id: companyId, name: "Routine status fixture", issuePrefix: "NRS" });
+    await db.insert(companies).values({ id: companyId, name: "Routine status fixture", issuePrefix: `NRS${companyId.slice(0, 8)}` });
     await db.insert(agents).values({ id: agentId, companyId, name: "Routine worker", adapterType: "paperclip_runner", status: "running" });
   }, 60_000);
   afterAll(async () => { await db?.$client.end(); await database?.cleanup(); });
@@ -65,6 +65,19 @@ if (!support.supported) console.warn(`Skipping native routine status tests: ${su
     return commitNativeStatusDecision({ db: executor, companyId, issueId: f.issueId, runId: f.runId, assessmentId: f.assessmentId,
       priorStatus: "in_progress", priorStatusVersion: f.priorStatusVersion, priorDecisionId: f.priorDecisionId, decision });
   }
+  it("retains cancellation process identity until verified settlement", async () => {
+    const f = await seed("ordinary"), startedAt = new Date();
+    await db.update(heartbeatRuns).set({ processPid: process.pid, processGroupId: null, processStartedAt: startedAt })
+      .where(eq(heartbeatRuns.id, f.runId));
+    await commitNativeStatusDecision({ db, companyId, issueId: f.issueId, runId: f.runId, assessmentId: f.assessmentId,
+      priorStatus: "in_progress", priorStatusVersion: f.priorStatusVersion, priorDecisionId: f.priorDecisionId,
+      decision: { policyVersion: NATIVE_STATUS_ARBITER_POLICY_VERSION, statusAction: "preserve", toStatus: "in_progress",
+        reasonCode: "cancellation_run_only", unblockDescriptor: null, effects: [{ kind: "release_run_resources" }] } });
+    const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, f.runId));
+    expect(run).toMatchObject({ processPid: process.pid, processGroupId: null, processStartedAt: startedAt });
+    const [effect] = await db.select().from(statusDecisionEffects).where(eq(statusDecisionEffects.issueId, f.issueId));
+    expect(effect.payload).toMatchObject({ processReleased: false });
+  });
   it.each(["done", "blocked", "cancelled", "in_progress"] as const)("projects real %s task status into the exact routine invocation", async status => {
     const f = await seed(); const first = await commit(f, status);
     const [saved] = await db.select().from(routineRuns).where(eq(routineRuns.id, f.invocationId));
