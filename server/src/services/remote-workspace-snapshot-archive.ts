@@ -22,6 +22,7 @@ async function workspaceArchive(input: {
   const os = await import("node:os");
   const crypto = await import("node:crypto");
   const child = await import("node:child_process");
+  const gitNull = process.platform === "win32" ? "NUL" : os.devNull;
   const schema = "paperclip.remote-workspace-archive.v1" as const;
   const magic = Buffer.from("PCWS1\n");
   type Entry = { path: string; type: "directory" | "file" | "symlink"; mode?: number; size?: number; sha256?: string; target?: string };
@@ -44,9 +45,9 @@ async function workspaceArchive(input: {
   };
   const git = (cwd: string, args: string[], stdin?: string) => new Promise<string>((resolve, reject) => {
     check();
-    const command = child.execFile("git", ["-c", "core.fsmonitor=false", "-c", "pack.threads=1", "-c", "protocol.allow=never", "-c", `core.hooksPath=${os.devNull}`, "-C", cwd, ...args], {
+    const command = child.execFile("git", ["-c", "core.fsmonitor=false", "-c", "pack.threads=1", "-c", "protocol.allow=never", "-c", `core.hooksPath=${gitNull}`, "-C", cwd, ...args], {
       signal: input.signal, timeout: 300_000, maxBuffer: 64 * 1024 * 1024,
-      env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: os.devNull, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0",
+      env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: gitNull, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0",
         GIT_DIR: undefined, GIT_COMMON_DIR: undefined, GIT_WORK_TREE: undefined, GIT_INDEX_FILE: undefined,
         GIT_OBJECT_DIRECTORY: undefined, GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined, GIT_CONFIG_PARAMETERS: undefined, GIT_CONFIG_COUNT: "0", GIT_TEMPLATE_DIR: undefined,
         GIT_AUTHOR_NAME: "Paperclip", GIT_COMMITTER_NAME: "Paperclip", GIT_AUTHOR_EMAIL: "workspace@paperclip.invalid", GIT_COMMITTER_EMAIL: "workspace@paperclip.invalid",
