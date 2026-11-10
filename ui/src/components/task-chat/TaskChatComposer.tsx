@@ -354,7 +354,7 @@ type ComposerAttachment = {
 type QueuedEditBackup = {
   body: string;
   attachments: ComposerAttachment[];
-  pendingMode: IssueWorkMode;
+  pendingModeChoice: { mode: IssueWorkMode } | null;
   pendingAssignee: string | null;
 };
 
@@ -554,7 +554,7 @@ export function TaskChatComposer({
         queuedEditBackupRef.current = {
           body: bodyRef.current,
           attachments: attachmentsRef.current,
-          pendingMode,
+          pendingModeChoice,
           pendingAssignee: pendingAssigneeRef.current,
         };
         if (draftKey) saveDraft(draftKey, bodyRef.current);
@@ -573,7 +573,7 @@ export function TaskChatComposer({
         bodyRef.current = backup.body;
         setBody(backup.body);
         setAttachments(backup.attachments);
-        setPendingModeChoice({ mode: backup.pendingMode });
+        setPendingModeChoice(backup.pendingModeChoice);
         setPendingAssignee(backup.pendingAssignee);
         if (draftKey) saveDraft(draftKey, backup.body);
       }
@@ -582,7 +582,7 @@ export function TaskChatComposer({
     }
 
     previousQueuedEditIdRef.current = nextId;
-  }, [draftKey, pendingMode, queuedEdit]);
+  }, [draftKey, pendingModeChoice, queuedEdit]);
 
   useEffect(() => {
     if (!draftKey || queuedEdit) return;
