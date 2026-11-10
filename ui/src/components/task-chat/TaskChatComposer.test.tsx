@@ -13,7 +13,7 @@ import { parseRunnerGoalCommand, TaskChatComposer } from "./TaskChatComposer";
 import { ComposerAddMenu } from "./ComposerAddMenu";
 import { QuestionForm } from "./QuestionForm";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { Agent, HeartbeatRun } from "@paperclipai/shared";
+import type { Agent, HeartbeatRun, IssueWorkMode } from "@paperclipai/shared";
 import { agentsApi } from "@/api/agents";
 import { instanceSettingsApi } from "@/api/instanceSettings";
 import { CoordinatorPresentation } from "@/components/coordinator/CoordinatorPresentation";
@@ -1204,6 +1204,35 @@ describe("TaskChatComposer", () => {
     pressKey("Enter");
     await flushAsync();
     expect(onAdd).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the chosen mode and message when an optimistic mode save rolls back", async () => {
+    const onAdd = vi.fn();
+    let rejectSave!: () => void;
+    function OptimisticModeHarness() {
+      const [workMode, setWorkMode] = useState<IssueWorkMode>("standard");
+      return <TaskChatComposer onAdd={onAdd} workMode={workMode} onWorkModeChange={(mode) => {
+        setWorkMode(mode);
+        return new Promise<void>((_resolve, reject) => {
+          rejectSave = () => {
+            setWorkMode("standard");
+            reject(new Error("Mode save rejected"));
+          };
+        });
+      }} />;
+    }
+    render(<OptimisticModeHarness />);
+    pressKey("Tab", { shiftKey: true });
+    typeText("Keep this planning message");
+    pressKey("Enter");
+    await flushAsync();
+    await act(async () => rejectSave());
+    await flushAsync();
+
+    expect(editable().textContent).toBe("Keep this planning message");
+    expect(container.querySelector('[data-testid="task-chat-composer-mode"]')?.getAttribute("data-pending-work-mode"))
+      .toBe("planning");
+    expect(onAdd).not.toHaveBeenCalled();
   });
 
   it("refreshes an untouched composer when the saved task mode arrives after mount", async () => {

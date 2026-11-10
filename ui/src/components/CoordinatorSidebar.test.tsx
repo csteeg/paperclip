@@ -218,7 +218,7 @@ describe("Coordinator Inbox badge", () => {
     await renderSidebar();
     expect(fixture.attention).not.toHaveBeenCalled();
     expect(client.getQueryData(coordinatorAttentionQueryKey("company"))).toBeUndefined();
-    expect(fixture.summary).toHaveBeenCalledWith("company");
+    expect(fixture.summary).toHaveBeenCalledWith("company", { actionableOnly: true });
     expect(decisionLink().querySelector('[data-slot="badge"]')?.textContent).toBe("2");
   });
 
