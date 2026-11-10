@@ -9,13 +9,14 @@ import { captureRunIdentity, type RunIdentityContext } from "./run-identity.js";
 import {
   buildGitAuthInvocation,
   resolveManagedGitHubCredential,
+  type GitHubIdentitySource,
 } from "./git-credentials.js";
 import { secretService } from "./secrets.js";
 import { allowsGitCredentialExport } from "./git-credential-export-policy.js";
 
 export type GitHubCredentialSummary = {
   status: "available" | "absent" | "unavailable";
-  source?: "personal" | "dedicated";
+  source?: GitHubIdentitySource;
   login?: string;
   reason?: string;
   connectionId?: string;
