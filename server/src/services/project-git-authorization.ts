@@ -273,8 +273,8 @@ export function projectGitAuthorizationService(db: Db) {
         if (repository.full_name?.toLowerCase() !== repo.fullName.toLowerCase() || repository.permissions?.pull !== true ||
           (input.expectedRepositoryId !== undefined && String(repository.id) !== input.expectedRepositoryId))
           throw forbidden("Project GitHub authorization does not include this repository");
-        if (repository.private === false) return null;
-        if (repository.private !== true) throw forbidden("Repository visibility is unavailable");
+        if (repository.private === false && !input.requireConnected) return null;
+        if (typeof repository.private !== "boolean") throw forbidden("Repository visibility is unavailable");
         return token;
       }
       // Project consent follows this connection's repository access, including future project sources.
