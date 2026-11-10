@@ -1,4 +1,4 @@
-import { ProjectSkillRepositoryRow } from "@/components/skill-studio/ProjectSkillRepositoryRow";
+import { ProjectSkillImportError, ProjectSkillRepositoryRow } from "@/components/skill-studio/ProjectSkillRepositoryRow";
 import { SkillSourceConnectionRepair } from "@/components/skill-studio/SkillSourceConnectionRepair";
 import { SkillSourceBranchRepair } from "@/components/skill-studio/SkillSourceBranchRepair";
 import { SkillSourceSyncControls } from "@/components/skill-studio/SkillSourceSyncControls";
@@ -109,7 +109,7 @@ export function SkillSources() {
     {projectsView.kind === 'error' && <p role="alert" className="text-sm text-destructive">{describeError(projectRepositories.error).body} <Button variant="ghost" size="sm" onClick={() => void projectRepositories.refetch()}>Try again</Button></p>}
     {adopt.error && <p role="alert" className="text-sm text-destructive">{describeError(adopt.error).body}</p>}
     {uninstalledProjects.length > 0 && <div className="divide-y divide-border" aria-label="Project repositories">
-      {uninstalledProjects.map(group => <ProjectSkillRepositoryRow key={group.key} repository={group.repository} backgroundPending={group.hasPending} disabled={adopt.isPending}
+      {uninstalledProjects.map(group => <ProjectSkillRepositoryRow key={group.key} repository={group.repository} workspaces={group.workspaces} backgroundPending={group.hasPending} disabled={adopt.isPending}
         pending={adopt.isPending && adopt.variables?.key === group.key} onImport={() => adopt.mutate(group)} />)}
     </div>}
     <div className="divide-y divide-border">
@@ -156,7 +156,7 @@ export function SkillSources() {
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
-          {projectGroup?.repository.lastError && <SourceErrorNotice message={projectGroup.repository.lastError} />}
+          {projectGroup?.repository.lastError && <ProjectSkillImportError message={projectGroup.repository.lastError} workspaces={projectGroup.workspaces} />}
           {installed.length > 0 && <ul className="ml-8 min-w-0" aria-label={`Installed skills from ${source.fullName}`}>
             {installed.map(entry => <li key={entry.id}>
               <Link to={skillRoute(entry.skillId!)} title={entry.path} className="group flex min-w-0 items-center gap-2 rounded-sm py-1 text-sm hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">

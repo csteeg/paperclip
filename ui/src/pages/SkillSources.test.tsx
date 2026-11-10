@@ -71,6 +71,19 @@ afterEach(async () => {
 });
 
 describe('GitHub skill source import', () => {
+  it('explains how to authorize each affected Azure project and links to its configuration', async () => {
+    context.sourceId = '';
+    const repository = { projectId: 'one', projectName: 'First', projectVisibility: 'open' as const,
+      workspaceId: 'workspace-one', repositoryUrl: 'https://dev.azure.com/contoso/Platform/_git/Skills', trackingRef: 'HEAD',
+      bindingId: 'binding-one', sourceId: null, status: 'error' as const,
+      lastError: 'Authorize this project’s Azure DevOps connection to import its skills.' };
+    vi.mocked(skillSourcesApi.projectRepositories).mockResolvedValue([repository, { ...repository, projectId: 'two', projectName: 'Second', workspaceId: 'workspace-two' }]);
+    await mount();
+    expect(document.body.textContent).toContain('Azure DevOps organization access');
+    expect(document.body.textContent).toContain('Save authorization');
+    expect([...document.querySelectorAll('a')].filter(link => link.textContent?.includes('Configure')).map(link => link.getAttribute('href')))
+      .toEqual(['/projects/one/configuration', '/projects/two/configuration']);
+  });
   it('identifies Azure project skill sources and directs connection repair to the project', async () => {
     context.sourceId = '';
     const source = { ...sourceFixture(), repositoryUrl: 'https://dev.azure.com/contoso/Platform/_git/Skills',
