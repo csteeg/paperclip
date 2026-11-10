@@ -1,3 +1,4 @@
+import { currentProcessSpaceHash } from "../controller-process-identity.js";
 import { readNativeStartupCleanup } from "../native-runtime/native-startup-cleanup.js";
 import { isContextCompactionRun } from "../context-compaction.js";
 import { notifyStrandedAgentStatus } from "../live-run-recovery-notifications.js";
@@ -609,6 +610,7 @@ export async function persistHeartbeatRunProcessMetadata(
       eventType: PROCESS_IDENTITY_RECORDED, stream: "system", level: "info",
       message: "Process identity recorded; prior stop evidence no longer applies.",
       payload: { targetKind: meta.targetKind ?? "local", hostname: os.hostname(),
+        processHostHash: meta.targetKind === "remote" ? "remote" : currentProcessSpaceHash(),
         processPid: meta.pid, processGroupId: meta.processGroupId,
         processStartedAt: run.processStartedAt?.toISOString() ?? null },
     });

@@ -1,3 +1,4 @@
+import { currentProcessSpaceHash, sameProcessSpace } from "./controller-process-identity.js";
 import { notifyDeferredWakesForIssue } from "./deferred-execution-notifications.js";
 import { notifyLiveRunRecovery } from "./live-run-recovery-notifications.js";
 import { and, asc, desc, eq, exists, gt, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
@@ -214,13 +215,16 @@ export function settledNativeProcessIdentityCondition(db: Db) {
 }
 
 export function clearedNativeProcessIdentityCondition() {
+  const space = currentProcessSpaceHash();
+  if (space === "unknown") return sql`false`;
   return and(isNull(heartbeatRuns.processPid), isNull(heartbeatRuns.processGroupId), isNull(heartbeatRuns.processStartedAt),
     sql`exists (select 1 from (select e.event_type, e.agent_id, e.payload from heartbeat_run_events e
       where e.company_id = ${heartbeatRuns.companyId} and e.run_id = ${heartbeatRuns.id} and e.source_event_id is null
         and e.event_type in ('native.process_start_requested', 'native.process_identity_recorded', 'native.local_process_stopped')
       order by e.seq desc limit 1) latest
       where latest.event_type = 'native.process_identity_recorded' and latest.agent_id = ${heartbeatRuns.agentId}
-        and latest.payload->>'targetKind' = 'local' and latest.payload->>'hostname' = ${os.hostname()})`);
+        and latest.payload->>'targetKind' = 'local' and latest.payload->>'hostname' = ${os.hostname()}
+        and latest.payload->>'processHostHash' = ${space})`);
 }
 
 export async function releaseSettledNativeRunProcess(db: Db, runId: string, options: { onDeferredDeadline?: (at: number) => void } = {}): Promise<SettledProcessRelease> {
@@ -266,6 +270,7 @@ export async function releaseSettledNativeRunProcess(db: Db, runId: string, opti
           proof?.targetKind !== "local" || proof.hostname !== os.hostname()) return "skipped";
       let observed = run;
       if (cleared) {
+        if (!sameProcessSpace(typeof proof.processHostHash === "string" ? proof.processHostHash : null)) return "skipped";
         // Older cancellation commits cleared the mutable fields before writing
         // a stop receipt. Recover only the latest server-owned local launch.
         const pid = proof.processPid, group = proof.processGroupId;

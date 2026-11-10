@@ -89,3 +89,11 @@ export async function controllerProcessExited(controller: ControllerProcess): Pr
   const observed = await observedProcessStartedAt(controller.pid);
   return Number.isFinite(recorded) && observed !== null && Math.abs(observed - recorded) >= 1_000;
 }
+
+export function currentProcessSpaceHash(): string {
+  return hostHash;
+}
+
+export function sameProcessSpace(recorded: string | null | undefined): boolean {
+  return typeof recorded === "string" && hostHash !== UNKNOWN_PROCESS_SPACE && recorded === hostHash;
+}
