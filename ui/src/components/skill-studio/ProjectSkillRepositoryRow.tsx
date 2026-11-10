@@ -2,9 +2,23 @@ import type { ProjectSkillRepository } from '@paperclipai/shared';
 import { GithubIcon } from '@/components/icons/github-icon';
 import { Button } from '@/components/ui/button';
 import { GitBranch, LoaderCircle } from 'lucide-react';
+import { Link } from '@/lib/router';
 
-export function ProjectSkillRepositoryRow({ repository, pending, backgroundPending, disabled, onImport }: {
+const missingAzureAuthorization = 'Authorize this project’s Azure DevOps connection to import its skills.';
+
+export function ProjectSkillImportError({ message, workspaces }: { message: string; workspaces: ProjectSkillRepository[] }) {
+  const projects = [...new Map(workspaces.filter(workspace => workspace.lastError === missingAzureAuthorization)
+    .map(workspace => [workspace.projectId, workspace.projectName])).entries()];
+  if (message !== missingAzureAuthorization || !projects.length) return <p role="alert" className="text-sm text-destructive">{message}</p>;
+  return <div role="alert" className="flex flex-col gap-2 text-sm text-destructive">
+    <p>Skill import needs a project Azure DevOps authorization. In project configuration, under Azure DevOps organization access, select a connection and choose Save authorization. Then retry the import.</p>
+    <div className="flex flex-wrap gap-3">{projects.map(([id, name]) => <Link key={id} to={`/projects/${id}/configuration`} className="font-medium underline underline-offset-2">Configure {name}</Link>)}</div>
+  </div>;
+}
+
+export function ProjectSkillRepositoryRow({ repository, workspaces, pending, backgroundPending, disabled, onImport }: {
   repository: ProjectSkillRepository;
+  workspaces: ProjectSkillRepository[];
   pending?: boolean;
   backgroundPending?: boolean;
   disabled?: boolean;
@@ -29,6 +43,6 @@ export function ProjectSkillRepositoryRow({ repository, pending, backgroundPendi
     </div>
     {importing && <p role="status" className="ml-8 text-xs text-muted-foreground">{pending ? 'Starting import…' : repository.importState === 'importing'
       ? 'Checking repository for skills… This can take a few minutes for large repositories.' : 'Import queued. Skills will appear here when ready.'}</p>}
-    {repository.lastError && <p role="alert" className="text-sm text-destructive">{repository.lastError}</p>}
+    {repository.lastError && <ProjectSkillImportError message={repository.lastError} workspaces={workspaces} />}
   </section>;
 }
