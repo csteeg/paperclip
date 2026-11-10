@@ -181,6 +181,17 @@ host file transfers retain Windows drive paths. Full workspace typechecking also
 requires Rust and Cargo for the native Runner. POSIX mode-bit assertions do not
 validate Windows ACLs.
 
+Managed repository clones on Windows pass `git -c core.longpaths=true clone` so
+long paths work during repository initialization and template copying. They also
+save `core.longpaths=true` in the clone's local Git configuration for the initial
+checkout and later branch checkouts, including when managed credentials disable
+global and system Git config.
+Their temporary clone directories use a short name under the canonical staging
+parent. This keeps Windows Git remote helpers below their metadata path limits
+without changing the published workspace or crossing filesystem boundaries.
+Nested-clone migration requires a replacement shared base to persist the same
+long-path setting; otherwise it skips migration and keeps the standalone clone.
+
 The root postinstall links the development plugin SDK with Windows directory
 junctions. This link operation does not require Developer Mode or elevation.
 Existing SDK installs are preserved, and repeated postinstalls reuse the link.
