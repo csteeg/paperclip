@@ -210,9 +210,11 @@ export function createLifecycleStore(db: Db, effects: LifecycleEffects): Lifecyc
         retry.verificationFailures = options.verificationFailures;
       }
       const rows = await db.update(agents).set({
-        lifecycleError: error,
-        lifecycleOperation: sql`(${agents.lifecycleOperation} - 'leaseOwner' - 'leaseUntil' - 'retryAt' - 'retryRequired' - 'recheckRequested')
-          || case when ${Boolean(options?.retryAt)} and coalesce(${agents.lifecycleOperation}->>'recheckRequested', 'false') = 'true'
+        lifecycleError: sql`case when coalesce(${agents.lifecycleOperation}->>'recheckRequested', 'false') = 'true' then null else ${error}::text end`,
+        lifecycleOperation: sql`((case when coalesce(${agents.lifecycleOperation}->>'recheckRequested', 'false') = 'true'
+            then ${agents.lifecycleOperation} - 'verificationFailures' else ${agents.lifecycleOperation} end)
+          - 'leaseOwner' - 'leaseUntil' - 'retryAt' - 'retryRequired' - 'recheckRequested')
+          || case when coalesce(${agents.lifecycleOperation}->>'recheckRequested', 'false') = 'true'
             then '{}'::jsonb else ${JSON.stringify(retry)}::jsonb end`,
         updatedAt: now,
       }).where(and(eq(agents.id, agent.id), eq(agents.lifecycleVersion, agent.lifecycleVersion),

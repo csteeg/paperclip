@@ -75,7 +75,7 @@ const support = external ? { supported: true } : await getEmbeddedPostgresTestSu
   it("retains an account change arriving while a pool verification is being deferred", async () => {
     const [agent] = await db.insert(agents).values({ companyId, name: "Pool race", adapterType: "paperclip_runner",
       runtimeConfig: { harnessPool: { poolId: randomUUID() } }, status: "paused", lifecycleState: "verifying", lifecycleHolds: [], lifecycleRequiredPluginIds: [],
-      lifecycleOperation: { id: randomUUID(), hostComplete: false, completedPluginIds: [], attempts: 0 },
+      lifecycleOperation: { id: randomUUID(), hostComplete: false, completedPluginIds: [], attempts: 0, verificationFailures: 1 },
     }).returning();
     let entered!: () => void, release!: () => void;
     const started = new Promise<void>(resolve => { entered = resolve; });
@@ -91,6 +91,8 @@ const support = external ? { supported: true } : await getEmbeddedPostgresTestSu
       await db.transaction(tx => reopenAiPoolWaits(tx as unknown as Db, { companyId, connectionId: randomUUID() }));
       expect((await current(agent.id)).lifecycleOperation?.recheckRequested).toBe(true);
     } finally { release(); await processing; }
+    expect((await current(agent.id)).lifecycleError).toBeNull();
+    expect((await current(agent.id)).lifecycleOperation).not.toHaveProperty("verificationFailures");
     expect((await current(agent.id)).lifecycleOperation).not.toHaveProperty("retryAt");
     expect(await createLifecycleStore(db, createAgentLifecycleEffects()).pending(100, new Date())).toContain(agent.id);
   });
