@@ -102,6 +102,7 @@ export function codexLocalReasoningEffortsForModel(
   switch (normalizedModel) {
     case "gpt-6-astra":
     case "gpt-6.1-sol":
+    case "gpt-6.1-terra":
     case "gpt-6-sol":
     case "gpt-5.6-sol":
     case "gpt-5.6-terra":
@@ -221,6 +222,7 @@ export function isCodexLocalFastModeSupported(model: string | null | undefined):
 // returns this list as written and the model dropdown keeps its order.
 export const models = [
   { id: "gpt-6.1-sol", label: "gpt-6.1-sol" },
+  { id: "gpt-6.1-terra", label: "gpt-6.1-terra" },
   { id: "gpt-6-astra", label: "gpt-6-astra" },
   { id: "gpt-6-sol", label: "gpt-6-sol" },
   { id: "gpt-6-luna", label: "gpt-6-luna" },
