@@ -76,14 +76,13 @@ import {
   Field,
   ToggleField,
   ToggleWithNumber,
-  CollapsibleSection,
   DraftInput,
   DraftNumberInput,
   help,
 } from "./agent-config-primitives";
 import { defaultCreateValues } from "./agent-config-defaults";
 import { getUIAdapter } from "../adapters";
-import { ClaudeLocalAdvancedFields } from "../adapters/claude-local/config-fields";
+import { AgentRuntimeConfigSections } from "./AgentRuntimeConfigSections";
 import { MarkdownEditor } from "./MarkdownEditor";
 import { ChoosePathButton } from "./PathInstructionsModal";
 import { ReportsToPicker } from "./ReportsToPicker";
@@ -696,7 +695,6 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
     && !hideHostPaths
     && shouldShowLegacyWorkingDirectoryField({ isCreate, adapterConfig: config });
   const uiAdapter = useMemo(() => getUIAdapter(adapterType), [adapterType]);
-  const fieldsUiAdapter = useMemo(() => getUIAdapter(fieldsAdapterType), [fieldsAdapterType]);
   const supportedEnvironmentDrivers = useMemo(
     () => new Set(supportedEnvironmentDriversForAdapter(fieldsAdapterType)),
     [fieldsAdapterType],
@@ -1118,20 +1116,13 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   };
 
   // Section toggle state — advanced always starts collapsed
-  const [runPolicyAdvancedOpen, setRunPolicyAdvancedOpen] = useState(false);
-  const [configurationAdvancedOpen, setConfigurationAdvancedOpen] = useState(false);
   const configSchema = useConfigSchema(adapterType);
   const hasLocalAdvancedFields = isLocal && (!isRunnerHarness || fieldsAdapterType !== "paperclip_runner");
   const hasConfigurationAdvancedFields = hasLocalAdvancedFields
     || adapterType === "process"
-    || (adapterType === "claude_local" && !hideHostPaths && (isCreate ? props.values.claudeEngine : eff("adapterConfig", "engine", config.engine)) === "acp")
+    || (fieldsAdapterType === "claude_local" && !hideHostPaths && (isCreate ? props.values.claudeEngine : eff("adapterConfig", "engine", config.engine)) !== "cli")
     || (fieldsAdapterType !== "paperclip_runner" && configSchema?.fields.some((field) => schemaFieldSection(field.key) === "advanced"));
-  const renderAdapterFields = (section: AdapterConfigSection) => (
-    <>
-      {adapterType === "claude_local" && <ClaudeLocalAdvancedFields {...adapterFieldProps} section={section} />}
-      <fieldsUiAdapter.ConfigFields {...adapterFieldProps} section={section} hideModel={isLocal} />
-    </>
-  );
+  const renderAdapterFields = (section: AdapterConfigSection) => <AgentRuntimeConfigSections fieldProps={{ ...adapterFieldProps, hideModel: isLocal }} section={section} />;
   // Popover states
   const [modelOpen, setModelOpen] = useState(false);
   const [thinkingEffortOpen, setThinkingEffortOpen] = useState(false);
@@ -1904,7 +1895,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
             {harnessPoolId && harnessPools.isSuccess && !harnessPools.data.some(pool => pool.id === harnessPoolId) && <p role="alert" className="text-sm text-destructive">The saved pool is unavailable. Choose another pool.</p>}
             {harnessPools.isPending && <p className="text-sm text-muted-foreground">Loading pools…</p>}
             {harnessPools.error && <p role="alert" className="text-sm text-destructive">{describeError(harnessPools.error).body}</p>}
-            <p className="text-sm text-muted-foreground">Runner: Paperclip Runner · Models and accounts come from the pool. <Link to="/company/settings/connections">Manage pools</Link></p>
+            <p className="text-sm text-muted-foreground">Runners, models and accounts come from the pool. <Link to="/company/settings/pools">Manage pools</Link></p>
           </Field>}
           {!isPoolHarness && isRunnerHarness && runnerDiscoveryView.kind === "error" && (
             <QueryErrorState size="inline" error={runnerDiscoveryView.error}
@@ -2104,15 +2095,9 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                   </div>
                 </>
               )}
-              {renderAdapterFields("configuration")}
-              {hasConfigurationAdvancedFields && (
-              <CollapsibleSection
-                title="Advanced"
-                open={configurationAdvancedOpen}
-                onToggle={() => setConfigurationAdvancedOpen(!configurationAdvancedOpen)}
-              >
-                <div className="space-y-3">
-                  {hasLocalAdvancedFields && (<>              {/*
+              <AgentRuntimeConfigSections fieldProps={{ ...adapterFieldProps, hideModel: isLocal }} section="configuration" showAdvanced={hasConfigurationAdvancedFields} advancedFields={
+                <>
+{hasLocalAdvancedFields && (<>              {/*
                 The command names a binary on the execution host, so the
                 managed-sandbox-only policy hides it: the platform-managed image
                 owns the binary. Hiding is presentation only. A stored
@@ -2177,10 +2162,8 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
               </Field>
 
                   </>)}
-                  {renderAdapterFields("advanced")}
-                </div>
-              </CollapsibleSection>
-              )}
+                </>
+              } />
 
           </div>
         </div>
@@ -2218,9 +2201,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
               numberHint={help.intervalSec}
               showNumber={val!.heartbeatEnabled}
             />
-            <CollapsibleSection title="Advanced Run Policy" open={runPolicyAdvancedOpen} onToggle={() => setRunPolicyAdvancedOpen(!runPolicyAdvancedOpen)}>
-              <div className="space-y-3">{renderAdapterFields("runPolicy")}</div>
-            </CollapsibleSection>
+            <AgentRuntimeConfigSections fieldProps={{ ...adapterFieldProps, hideModel: isLocal }} section="runPolicy" />
           </div>
         </div>
       ) : !isCreate ? (
@@ -2244,49 +2225,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                 showNumber={eff("heartbeat", "enabled", heartbeat.enabled === true)}
               />
             </div>
-            <CollapsibleSection
-              title="Advanced Run Policy"
-              bordered={cards}
-              open={runPolicyAdvancedOpen}
-              onToggle={() => setRunPolicyAdvancedOpen(!runPolicyAdvancedOpen)}
-            >
-            <div className="space-y-3">
-              {renderAdapterFields("runPolicy")}
-              {isLocal && (<>
-              {/* Edit-only: timeout + grace period */}
-              {!isCreate && (
-                <>
-                  {!configSchema?.fields.some((field) => field.key === "timeoutSec") && (
-                  <Field label="Timeout (sec)" hint={help.timeoutSec}>
-                    <DraftNumberInput
-                      value={eff(
-                        "adapterConfig",
-                        "timeoutSec",
-                        Number(config.timeoutSec ?? 0),
-                      )}
-                      onCommit={(v) => mark("adapterConfig", "timeoutSec", v)}
-                      immediate
-                      className={inputClass}
-                    />
-                  </Field>
-                  )}
-                  {!configSchema?.fields.some((field) => field.key === "graceSec") && (
-                  <Field label="Interrupt grace period (sec)" hint={help.graceSec}>
-                    <DraftNumberInput
-                      value={eff(
-                        "adapterConfig",
-                        "graceSec",
-                        Number(config.graceSec ?? 15),
-                      )}
-                      onCommit={(v) => mark("adapterConfig", "graceSec", v)}
-                      immediate
-                      className={inputClass}
-                    />
-                  </Field>
-                  )}
-                </>
-              )}
-              </>)}
+            <AgentRuntimeConfigSections fieldProps={{ ...adapterFieldProps, hideModel: isLocal }} section="runPolicy" bordered={cards} includeTimeouts={isLocal} schemaKeys={configSchema?.fields.map(field => field.key)}>
               <ToggleField
                 label="Wake on demand"
                 hint={help.wakeOnDemand}
@@ -2355,8 +2294,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                   </div>
                 ) : null}
               </div>
-            </div>
-          </CollapsibleSection>
+            </AgentRuntimeConfigSections>
           </div>
         </div>
       ) : null}
