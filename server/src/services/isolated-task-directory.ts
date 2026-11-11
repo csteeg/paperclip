@@ -5,7 +5,7 @@ import { parseObject } from "../adapters/utils.js";
 import { readIsolatedTaskPath, resolveIsolatedTaskDirectory } from "./isolated-task-paths.js";
 import { resolvePaperclipInstanceRoot } from "../home-paths.js";
 
-/** A repository-free sandbox task needs isolation, but has no Git base. */
+/** A repository-free task needs isolation, but has no Git base. */
 export function shouldUseIsolatedTaskDirectory(input: {
   trustPreset: string;
   environmentDriver: string | null;
@@ -14,8 +14,8 @@ export function shouldUseIsolatedTaskDirectory(input: {
   projectWorkspaceId: string | null;
   workspaceStrategies: unknown[];
 }): boolean {
-  return input.trustPreset === "low_trust_review"
-    && input.environmentDriver === "sandbox"
+  return ((input.trustPreset === "low_trust_review" && input.environmentDriver === "sandbox")
+    || (input.trustPreset === "standard" && (input.environmentDriver === "local" || input.environmentDriver === null)))
     && input.mode === "isolated_workspace"
     && !input.hasProjectWorkspace
     && !input.projectWorkspaceId
