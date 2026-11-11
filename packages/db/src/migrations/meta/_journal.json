@@ -3116,6 +3116,13 @@
       "when": 1794255942770,
       "tag": "0446_slimy_surge",
       "breakpoints": true
+    },
+    {
+      "idx": 447,
+      "version": "7",
+      "when": 1794411638140,
+      "tag": "0447_skill_source_security_override",
+      "breakpoints": true
     }
   ]
 }
