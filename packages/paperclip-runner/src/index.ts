@@ -134,3 +134,5 @@ export { archiveCursorCloudSessionCheckpoint } from "./drivers/cursor-cloud/chec
 
 export { readProviderFailure, type ProviderFailure } from "./contracts/provider-failure.generated.js";
 export { providerFailureFromError } from "./drivers/provider-failure.js";
+
+export * from "./drivers/codex/stopped-conversation.js";
