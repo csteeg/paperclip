@@ -10,6 +10,7 @@ import { nativeSessionProviderEvidence } from "./native-runtime/native-session-r
 import { hasRemoteTerminationReceipt } from "./remote-execution-termination.js";
 import os from "node:os";
 
+export const PRIOR_OWNER_FENCE_REFUSED = "native.prior_owner_fence_refused";
 export const PROCESS_START_REQUESTED = "native.process_start_requested";
 export const PROCESS_IDENTITY_RECORDED = "native.process_identity_recorded";
 const LOCAL_PROCESS_STOPPED = "native.local_process_stopped";
@@ -348,4 +349,31 @@ export async function discoverSettledNativeRunProcesses(db: Db, input: {
     after = candidates.length < limit ? null : candidates.at(-1)!.id;
   } while (after);
   return { released };
+}
+
+async function hasRunEvent(db: Db, run: Pick<typeof heartbeatRuns.$inferSelect, "id" | "companyId">, eventType: string) {
+  const [event] = await db.select({ id: heartbeatRunEvents.id }).from(heartbeatRunEvents).where(and(
+    eq(heartbeatRunEvents.companyId, run.companyId), eq(heartbeatRunEvents.runId, run.id),
+    isNull(heartbeatRunEvents.sourceEventId), eq(heartbeatRunEvents.eventType, eventType),
+  )).limit(1);
+  return Boolean(event);
+}
+
+export async function nativeRunNeverLaunched(db: Db, run: Pick<typeof heartbeatRuns.$inferSelect,
+  "id" | "companyId" | "runtimeMode" | "status" | "errorCode" | "processPid" | "processGroupId" |
+  "nativeSessionId" | "runnerInstanceId" | "nativeIssueId">): Promise<boolean> {
+  if (run.runtimeMode !== "native" || !SETTLED_RUN_STATUSES.includes(run.status) || run.processPid || run.processGroupId) return false;
+  const refusedBeforeLaunch = run.status === "failed" && (run.errorCode === "native_session_cleanup_quarantined" ||
+    await hasRunEvent(db, run, PRIOR_OWNER_FENCE_REFUSED));
+  if (!refusedBeforeLaunch) {
+    // A coordinator row requires the run's native issue (foreign key), so the
+    // native issue also rules out a coordinator.
+    if (run.nativeSessionId || run.runnerInstanceId || run.nativeIssueId) return false;
+  }
+  const [launch] = await db.select({ id: heartbeatRunEvents.id }).from(heartbeatRunEvents).where(and(
+    eq(heartbeatRunEvents.companyId, run.companyId), eq(heartbeatRunEvents.runId, run.id),
+    or(isNotNull(heartbeatRunEvents.sourceEventId),
+      inArray(heartbeatRunEvents.eventType, ["adapter.invoke", PROCESS_START_REQUESTED, PROCESS_IDENTITY_RECORDED])),
+  )).limit(1);
+  return !launch;
 }

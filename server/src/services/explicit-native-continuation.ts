@@ -17,7 +17,7 @@ import { appendHeartbeatRunEvent } from "./heartbeat-run-events.js";
 import { canContinueCancelledRun, userStopBoundaryAt } from "./run-cancellation.js";
 import { readQueuedInteractionResponse } from "./queued-interaction-response.js";
 import { isCancelledNativeStartup, isFailedNativePreparation, isFailedNativePreparationRetryAncestor } from "./cancelled-native-startup.js";
-import { releaseSettledNativeRunProcess, hasNativeLocalProcessStop, hasHistoricalSuspendedNativeSession, recordedLocalExecutionStopped, recordUnidentifiedLocalRunnerStop } from "./native-local-process-stop.js";
+import { nativeRunNeverLaunched, releaseSettledNativeRunProcess, hasNativeLocalProcessStop, hasHistoricalSuspendedNativeSession, recordedLocalExecutionStopped, recordUnidentifiedLocalRunnerStop } from "./native-local-process-stop.js";
 import { completeTerminatedRemoteNativeSessionCleanup, nativeSessionCleanupBlock } from "../vendor/paperclip-runner/index.js";
 import { hasRecoveredCleanupStopReceipt, hasRemoteTerminationReceipt, remoteLeaseCleanupScope } from "./remote-execution-termination.js";
 import { z } from "zod";
@@ -341,6 +341,15 @@ export async function admitExplicitNativeContinuation(input: {
     if (!lockedRun || lockedRun.status !== run.status || lockedRun.agentId !== run.agentId ||
         lockedRun.finishedAt?.getTime() !== run.finishedAt.getTime()) return null;
     run = lockedRun;
+    let continuityStopped = false;
+    if (run.errorCode === "native_session_continuity_unverified" || action.evidence.nativeContinuityRefusal === true) {
+      const { verifyUnstartedAttachmentForContinuation } = await import("./native-runtime/native-session-executor.js");
+      const proof = await verifyUnstartedAttachmentForContinuation(db, run);
+      if (!proof) return blocked("local_cleanup", "The saved session still needs verification. Your message is saved.");
+      stoppedSessions.push({ evidence: { ...proof.evidence, runId: run.id }, retire: proof.retire });
+      continuityStopped = true;
+    }
+    const continuityNeverLaunched = continuityStopped && await nativeRunNeverLaunched(db, run);
     // A user's message written after their Stop request is new direction even
     // when the stopped native run settled later.
     const stoppedAt = userStopBoundaryAt(run)!;
@@ -505,7 +514,7 @@ export async function admitExplicitNativeContinuation(input: {
       }))) return null;
     } else {
       if (leases.some(lease => !lease.releasedAt || lease.cleanupStatus === "failed")) return blocked("local_cleanup", "Waiting for the previous environment to finish cleanup. Your message will start automatically.");
-      if (!unusedAdmission && !cancelledStartup && !failedPreparation) {
+      if (!continuityNeverLaunched && !unusedAdmission && !cancelledStartup && !failedPreparation) {
         if (freshIntent && (run.processPid || run.processGroupId) && !await recordedLocalExecutionStopped(db, run))
           return blocked("process_identity_missing", "Paperclip is verifying that the previous session stopped.");
         if (!input.dryRun && run.runtimeMode === "native" && !run.processPid && !run.processGroupId &&
@@ -528,9 +537,9 @@ export async function admitExplicitNativeContinuation(input: {
     // and its release wakes deferred execution; the held input then starts.
     const retainedCleanup = !remote && run.runtimeMode === "native"
       ? nativeSessionCleanupBlock({ companyId, issueId }) : null;
-    if (retainedCleanup === "pending" && run.errorCode !== "native_session_cleanup_quarantined")
+    if (!continuityStopped && retainedCleanup === "pending" && run.errorCode !== "native_session_cleanup_quarantined")
       return blocked("local_cleanup", "Waiting for the previous provider session to finish cleanup. Your message will start automatically.");
-    if (!remote && run.runtimeMode === "native" &&
+    if (!continuityStopped && !remote && run.runtimeMode === "native" &&
         (run.errorCode === "native_session_cleanup_quarantined" || retainedCleanup === "operator_required")) {
       // Retry retains the old turn until its stopped-session proof permits continuation.
       const { verifyStoppedNativeSessionForContinuation } = await import("./native-runtime/native-session-executor.js");
