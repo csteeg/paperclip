@@ -27,13 +27,15 @@ export function buildClaudeLocalConfig(v: CreateConfigValues): Record<string, un
   if (v.claudeTranscriptRetentionEnabled !== undefined) ac.transcriptRetentionEnabled = v.claudeTranscriptRetentionEnabled;
   if (v.claudeTranscriptRetentionDays !== undefined) ac.transcriptRetentionDays = v.claudeTranscriptRetentionDays;
   if (v.claudeEngine === "cli") ac.engine = "cli";
-  if (v.claudeEngine === "acp") {
-    ac.engine = "acp";
+  if (v.claudeEngine === "acp") ac.engine = "acp";
+  if (v.claudeEngine !== "cli") {
     if (v.claudeAcpAgentCommand) ac.agentCommand = v.claudeAcpAgentCommand;
     if (v.claudeAcpMode) ac.mode = v.claudeAcpMode;
     if (v.claudeAcpNonInteractivePermissions) {
       ac.nonInteractivePermissions = v.claudeAcpNonInteractivePermissions;
     }
+    const permissionMode = v.adapterSchemaValues?.permissionMode;
+    if (["default", "approve-all", "approve-reads", "deny-all"].includes(String(permissionMode))) ac.permissionMode = permissionMode;
     if (v.claudeAcpStateDir) ac.stateDir = v.claudeAcpStateDir;
     if (typeof v.claudeAcpWarmHandleIdleMs === "number") {
       ac.warmHandleIdleMs = v.claudeAcpWarmHandleIdleMs;
