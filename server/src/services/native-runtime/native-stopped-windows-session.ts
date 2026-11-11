@@ -2,6 +2,8 @@ import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { heartbeatRunEvents, type Db } from "@paperclipai/db";
 import { hostname } from "node:os";
 import path from "node:path";
+import { realpath } from "node:fs/promises";
+import { realpathSync } from "node:fs";
 import {
   PAPERCLIP_SEMANTIC_ACTION_CATALOG, proveClosedReadOnlyCodexThread, readStoppedCodexThread,
   validatePrpEvent,
@@ -80,12 +82,14 @@ export async function proveStoppedWindowsReadOnlySession(input: {
     const durable = record(record(receipt?.payload).prpEvent), durableProvider = record(durable.payload);
     if (!validatePrpEvent(event).ok || event.sourceKind !== "runner" || event.runId !== owner.id ||
         event.normalizedSessionId !== owner.nativeSessionId || event.sourceInstanceId !== owner.runnerInstanceId ||
+        event.turnId !== identity.turnId || event.itemId !== identity.itemId ||
         !pid(payload.processId) || !receipt || !validatePrpEvent(durable).ok ||
         durable.runId !== owner.id || durable.normalizedSessionId !== owner.nativeSessionId ||
         durable.sourceInstanceId !== owner.runnerInstanceId || durable.eventType !== event.eventType ||
         durable.sourceSeq !== receipt.sourceSeq || receipt.sourcePayloadSha256 !== nativeSha256(durable) ||
         receipt.sourceEventId !== `${owner.runnerInstanceId}:${owner.id}:${durable.sourceSeq}` ||
         durable.sourceEventId !== receipt.sourceEventId ||
+        (durableProvider.processId !== undefined && durableProvider.processId !== payload.processId) ||
         (durableProvider.driverSessionId ?? durableProvider.providerSessionId) !== payload.providerSessionId ||
         payload.providerSessionId !== snapshot.provider.threadId) return null;
     pids.add(payload.processId); opened = true;
@@ -131,7 +135,14 @@ export async function proveStoppedWindowsReadOnlySession(input: {
     if (historyCache.size >= 128) historyCache.delete(historyCache.keys().next().value!);
     historyCache.set(key, history);
   }
-  const proof = proveClosedReadOnlyCodexThread(history.thread, { threadId, turnId, cwd: input.cwd }, READS);
+  // A preserved instance-home junction may give the same workspace two paths.
+  // Require filesystem identity instead of trusting a saved path rewrite.
+  const thread = record(history.thread);
+  if (typeof thread.cwd !== "string") return null;
+  let cwd: string, threadCwd: string;
+  try { [cwd, threadCwd] = await Promise.all([realpath(input.cwd), realpath(thread.cwd)]); }
+  catch { return null; }
+  const proof = proveClosedReadOnlyCodexThread({ ...thread, cwd: threadCwd }, { threadId, turnId, cwd }, READS);
   if (!proof || !input.unchanged() || !history.sourceIsCurrent()) return null;
   const live = [...pids].filter(value => !absent(value));
   if (live.length) {
@@ -147,7 +158,11 @@ export async function proveStoppedWindowsReadOnlySession(input: {
       message: "Stopped the exact orphan provider after verifying its closed read-only conversation.",
       payload: { processPid: process.processPid, stopped, threadId, providerTurnId: turnId } });
   }
-  const unchanged = () => input.unchanged() && history!.sourceIsCurrent() && [...pids].every(absent);
+  const unchanged = () => {
+    try { return input.unchanged() && history!.sourceIsCurrent() && [...pids].every(absent) &&
+      realpathSync(input.cwd) === cwd && realpathSync(thread.cwd as string) === threadCwd; }
+    catch { return false; }
+  };
   if (!unchanged()) return null;
   const [current] = await db.select({ seq: heartbeatRunEvents.seq }).from(heartbeatRunEvents).where(and(
     eq(heartbeatRunEvents.companyId, owner.companyId), eq(heartbeatRunEvents.runId, owner.id),

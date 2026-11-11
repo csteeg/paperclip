@@ -3,11 +3,11 @@ import { stopReadOnlyWindowsOrphans } from "./native-windows-orphan-stop.js";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
-import { and, eq } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { and, eq, inArray } from "drizzle-orm";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { agents, applyPendingMigrations, companies, createDb, environmentLeases, heartbeatRunEvents, heartbeatRuns,
   issueRecoveryActions, issues, nativeRunFinalizations } from "@paperclipai/db";
 import { startEmbeddedPostgresTestDatabase, getEmbeddedPostgresTestSupport } from "../../__tests__/helpers/embedded-postgres.js";
@@ -24,6 +24,10 @@ import { scopedRunnerdStateRoot, verifyStoppedNativeSessionForAutomaticReplaceme
 const external = resolveExternalTestDatabaseUrl("PAPERCLIP_WINDOWS_RECOVERY_TEST_DATABASE_URL");
 const support = external ? { supported: true } : await getEmbeddedPostgresTestSupport();
 (support.supported ? describe : describe.skip)("Windows stopped read-only native recovery", () => {
+  const createdCompanies: string[] = [];
+  afterEach(async () => {
+    if (createdCompanies.length) await db.delete(nativeRunFinalizations).where(inArray(nativeRunFinalizations.companyId, createdCompanies.splice(0)));
+  });
   let database: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>>;
   let db: ReturnType<typeof createDb>;
   beforeAll(async () => {
@@ -40,6 +44,7 @@ const support = external ? { supported: true } : await getEmbeddedPostgresTestSu
   }
   async function seed(base: string) {
     const companyId = randomUUID(), agentId = randomUUID(), issueId = randomUUID(), id = randomUUID();
+    createdCompanies.push(companyId);
     const nativeSessionId = randomUUID(), runnerInstanceId = randomUUID();
     const pid = await stoppedChild(), providerPid = await stoppedChild(), startedAt = new Date();
     const execution = runner.parseNativeExecutionInput({ schema: "paperclip.native-execution-input.v1",
@@ -97,7 +102,7 @@ const support = external ? { supported: true } : await getEmbeddedPostgresTestSu
   }
 
   it.runIf(process.platform === "win32").each(["verified", "live_provider", "new_launch", "foreign_host", "remote", "unreleased",
-    "native_tool", "mutation", "source_changed", "active_turn"])("proves the real admission boundary (%s)", async mode => {
+    "native_tool", "mutation", "source_changed", "active_turn", "workspace_junction", "foreign_workspace"])("proves the real admission boundary (%s)", async mode => {
     const base = await mkdtemp(join(tmpdir(), "pc-win-recovery-")), old = process.env.PAPERCLIP_RUNNER_STATE_DIR;
     process.env.PAPERCLIP_RUNNER_STATE_DIR = base;
     const reader = vi.spyOn(runner, "readStoppedCodexThread");
@@ -114,16 +119,22 @@ const support = external ? { supported: true } : await getEmbeddedPostgresTestSu
         eventType: "native.process_identity_recorded", payload: { ...f.launch, hostname: "other-host" } });
       if (mode === "remote" || mode === "unreleased") await db.update(environmentLeases).set(mode === "remote"
         ? { provider: "ssh" } : { releasedAt: null }).where(eq(environmentLeases.heartbeatRunId, f.id));
+      if (mode === "workspace_junction") {
+        const alias = join(base, "old-home-workspace");
+        await symlink(base, alias, "junction");
+        f.thread.cwd = alias;
+      }
+      if (mode === "foreign_workspace") { f.thread.cwd = join(base, "other"); await mkdir(f.thread.cwd); }
       if (mode === "native_tool") f.thread.turns[0].items = [{ type: "commandExecution" } as any];
       if (mode === "mutation") f.thread.turns[0].items[0].tool = "write_document";
       if (mode === "active_turn") f.thread.turns[0].status = "inProgress";
       let current = true;
       reader.mockResolvedValue({ thread: f.thread, runtimeCommand: process.execPath, sourceFiles: [], sourceIsCurrent: () => current });
       const proof = await verifyStoppedNativeSessionForContinuation(db, f.run);
-      if (["verified", "source_changed"].includes(mode)) {
+      if (["verified", "source_changed", "workspace_junction"].includes(mode)) {
         expect(proof).not.toBeNull();
         if (mode === "source_changed") current = false;
-        expect(proof!.retire()).toBe(mode === "verified");
+        expect(proof!.retire()).toBe(mode !== "source_changed");
       } else expect(proof).toBeNull();
       for (const [name, value] of Object.entries(f.files)) expect(await readFile(join(f.root, name), "utf8")).toBe(JSON.stringify(value));
       expect(await readFile(join(base, "saved-work.txt"), "utf8")).toBe("Original saved work");
