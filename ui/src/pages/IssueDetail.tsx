@@ -7586,6 +7586,8 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
     />
   );
 
+  const pinTaskChatHeader = taskChatShellEnabled && !isMobile && !issue.conversationAgentId;
+  const showSubTasksTreeInChatHeader = taskChatShellEnabled && !streamlinedTaskDetailEnabled;
   const issueHeaderBlock = issue.conversationAgentId ? null : (
     <div
       data-testid="issue-detail-header"
@@ -8040,7 +8042,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
         />
       ) : null}
 
-      {taskChatShellEnabled && !streamlinedTaskDetailEnabled
+      {showSubTasksTreeInChatHeader && !pinTaskChatHeader
         ? subTasksTree
         : null}
 
@@ -8129,14 +8131,12 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
     </>
   );
 
-  // Desktop chat shell pins the task title row (status, title, ⋯ actions)
-  // above the thread so it stays visible while the conversation scrolls.
-  const pinTaskChatHeader = taskChatShellEnabled && !isMobile && issueHeaderBlock !== null;
   const taskChatThreadHeader = taskChatShellEnabled ? (
     <>
       {ancestorsNav}
       {createdFromNote}
       {pinTaskChatHeader ? null : issueHeaderBlock}
+      {pinTaskChatHeader && showSubTasksTreeInChatHeader ? subTasksTree : null}
       <TaskDecisionRecord companyId={issue.companyId} issueId={issue.id} viewerId={currentUserId} agentMap={agentMap} />
       {pluginOutletsBlock}
     </>
