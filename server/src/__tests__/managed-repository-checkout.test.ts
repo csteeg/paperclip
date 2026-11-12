@@ -210,7 +210,7 @@ describe("atomic managed repository publication", () => {
   });
   it.skipIf(process.platform !== "win32")("checks out long Windows paths with isolated Git config and retains support for later checkouts", async () => {
     const { root, source } = await fixture();
-    const relative = path.join("long-directory-name-".repeat(2), "nested-directory-name-".repeat(2), "CareConnections.Caching.CachingFrameworkRedis.csproj");
+    const relative = path.join("long-directory-name-".repeat(2), "nested-directory-name-".repeat(2), "LongProject.Components.DistributedCaching.Redis.csproj");
     await mkdir(path.dirname(path.join(source, relative)), { recursive: true });
     await writeFile(path.join(source, relative), "main\n");
     const git = (args: string[]) => execFile("git", ["-c", "core.longpaths=true", "-C", source, ...args]);
