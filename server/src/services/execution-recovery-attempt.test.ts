@@ -121,6 +121,18 @@ describe("interrupted preparation retries", () => {
   });
 });
 
+describe("quota retry budget classification", () => {
+  it.each(["scheduled_retry", "queued", "running"])("retains inherited quota for %s without a current failure", status => {
+    const run = { status, contextSnapshot: { errorFamily: "provider_quota" }, resultJson: { conversationContinuation: {} } };
+    expect(hasProviderQuotaRetryBudget(run)).toBe(true);
+    expect(hasProviderQuotaRetryBudget({ ...run, errorCode: "adapter_failed" })).toBe(false);
+    expect(hasProviderQuotaRetryBudget({ ...run, resultJson: { errorFamily: "transient_upstream" } })).toBe(false);
+  });
+  it("does not inherit quota from a completed result without classification", () => {
+    expect(hasProviderQuotaRetryBudget({ status: "failed", contextSnapshot: { errorFamily: "provider_quota" }, resultJson: {} })).toBe(false);
+  });
+});
+
 describe("storage outage waits", () => {
   it("keep their count through an intervening workspace wait", () => {
     const afterStorage = { scheduledRetryReason: "storage_unavailable_wait", scheduledRetryAttempt: 7,

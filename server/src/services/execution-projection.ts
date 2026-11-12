@@ -51,6 +51,7 @@ const executionRunColumns = {
   contextSnapshot: sql<Record<string, unknown>>`jsonb_build_object(
     'issueId', ${heartbeatRuns.contextSnapshot}->'issueId',
     'wakeReason', ${heartbeatRuns.contextSnapshot}->'wakeReason',
+    'errorFamily', ${heartbeatRuns.contextSnapshot}->'errorFamily',
     'failureRetriesBeforeAiConnectionWait', ${heartbeatRuns.contextSnapshot}->'failureRetriesBeforeAiConnectionWait',
     'failureRetriesBeforeWorkspaceWait', ${heartbeatRuns.contextSnapshot}->'failureRetriesBeforeWorkspaceWait',
     'executionRetryAccounting', ${heartbeatRuns.contextSnapshot}->'executionRetryAccounting')`,

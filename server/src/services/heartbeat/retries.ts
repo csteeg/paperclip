@@ -190,6 +190,13 @@ export function evaluateQuotaFailoverEvidence(input: {
   return { allowed: true };
 }
 
+/** A provider quota chain waits out its reset window, so it gets the longer
+ * quota schedule's failure budget; every other failure gets the bounded one. */
+function failureRetryMaxAttempts(run: Parameters<typeof hasProviderQuotaRetryBudget>[0]): number {
+  return hasProviderQuotaRetryBudget(run)
+    ? PROVIDER_QUOTA_RETRY_DELAYS_MS.length : BOUNDED_TRANSIENT_HEARTBEAT_RETRY_MAX_ATTEMPTS;
+}
+
 type LaneRun = Parameters<typeof executionFailureRetryCount>[0] & Partial<Parameters<typeof isServerReplacementInterruption>[0]>
   & { controllerProcess?: unknown };
 
@@ -215,7 +222,7 @@ export function usesServerRestartLane(run: LaneRun, preparationLaneTakesRun?: bo
     return false;
   const preparation = parseObject(run.resultJson?.executionRecovery);
   const bootstrap = preparation.kind === "bootstrap" && preparation.providerWorkStarted === false;
-  if (!bootstrap || executionFailureRetryCount(run) >= BOUNDED_TRANSIENT_HEARTBEAT_RETRY_MAX_ATTEMPTS) return true;
+  if (!bootstrap || executionFailureRetryCount(run) >= failureRetryMaxAttempts(run)) return true;
   if (preparationLaneTakesRun ?? run.status === "interrupted") return false;
   return isReplacedPreparation({ runtimeMode: run.runtimeMode, status: run.status, errorCode: run.errorCode ?? null,
     resultJson: run.resultJson ?? null, controllerBootId: run.controllerBootId ?? null, controllerProcess: run.controllerProcess });
@@ -230,8 +237,7 @@ export function failedRunRetryBudgetSpent(run: Parameters<typeof executionFailur
     ? executionRetryAttemptCount(run, RUNNER_REVISION_WAIT_RETRY_REASON) >= RUNNER_REVISION_MISMATCH_RETRY.maxAttempts
     : run.errorCode === STORAGE_UNAVAILABLE_CODE
       ? executionRetryAttemptCount(run, STORAGE_UNAVAILABLE_WAIT_RETRY_REASON) >= STORAGE_UNAVAILABLE_RETRY.maxAttempts
-      : executionFailureRetryCount(run) >= (hasProviderQuotaRetryBudget(run)
-        ? PROVIDER_QUOTA_RETRY_DELAYS_MS.length : BOUNDED_TRANSIENT_HEARTBEAT_RETRY_MAX_ATTEMPTS)
+      : executionFailureRetryCount(run) >= failureRetryMaxAttempts(run)
         || executionRetryAttemptCount(run, INTERRUPTED_PREPARATION_RETRY_REASON) >= INTERRUPTED_PREPARATION_RETRY_MAX_ATTEMPTS;
 }
 
@@ -594,21 +600,16 @@ export function createHeartbeatRetries(db: Db, dependencies: HeartbeatRetryDepen
         || retryReason === INTERACTION_CONTINUATION_INFRA_RETRY_REASON && run.errorCode === REPOSITORY_CATALOG_UNAVAILABLE_CODE)
         ? readTransientRecoveryContractFromRun(run)
         : null;
-    const quotaRetry = transientRecovery?.errorFamily === "provider_quota"
-      || interruptedPreparation && hasProviderQuotaRetryBudget(run);
-    // Interrupted preparation spent no provider work: its own lane, bounded
-    // like the native controller-generation cap (execution-recovery-attempt).
-    // A quota chain keeps its quota delays and budget in that lane.
+    const quotaRetry = transientRecovery?.errorFamily === "provider_quota";
     const interruptedPreparationLane = retryReason === INTERRUPTED_PREPARATION_RETRY_REASON;
     const serverRestartLane = retryReason === SERVER_RESTART_RETRY_REASON;
     const maxAttempts = Math.max(
       0,
       Math.floor(
-        opts?.maxAttempts ?? (poolFailure ? Math.max(100, poolFailure === "quota" ? (run.scheduledRetryAttempt ?? 0) + 1 : 100)
+        opts?.maxAttempts ?? (interruptedPreparationLane ? INTERRUPTED_PREPARATION_RETRY_MAX_ATTEMPTS
           : serverRestartLane ? SERVER_RESTART_RETRY_MAX_ATTEMPTS
-            : quotaRetry ? PROVIDER_QUOTA_RETRY_DELAYS_MS.length
-              : interruptedPreparationLane ? INTERRUPTED_PREPARATION_RETRY_MAX_ATTEMPTS
-                : BOUNDED_TRANSIENT_HEARTBEAT_RETRY_MAX_ATTEMPTS),
+          : poolFailure ? Math.max(100, poolFailure === "quota" ? (run.scheduledRetryAttempt ?? 0) + 1 : 100)
+          : quotaRetry ? PROVIDER_QUOTA_RETRY_DELAYS_MS.length : BOUNDED_TRANSIENT_HEARTBEAT_RETRY_MAX_ATTEMPTS),
       ),
     );
     const consumedAttempts = serverRestartLane
@@ -616,8 +617,8 @@ export function createHeartbeatRetries(db: Db, dependencies: HeartbeatRetryDepen
     const nextAttempt = consumedAttempts + 1;
     // An interrupted preparation never spends failures, but it never revives
     // a chain whose real failures already spent the failure budget either.
-    const failureBudgetSpent = interruptedPreparationLane && opts?.maxAttempts == null && !poolFailure
-      && executionFailureRetryCount(run) >= (quotaRetry ? PROVIDER_QUOTA_RETRY_DELAYS_MS.length : BOUNDED_TRANSIENT_HEARTBEAT_RETRY_MAX_ATTEMPTS);
+    const failureBudgetSpent = interruptedPreparationLane && opts?.maxAttempts == null
+      && executionFailureRetryCount(run) >= failureRetryMaxAttempts(run);
     const computedBaseSchedule = failureBudgetSpent ? null
       : opts?.delayMs != null
         ? nextAttempt <= maxAttempts

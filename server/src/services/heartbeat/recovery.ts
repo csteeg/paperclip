@@ -2712,6 +2712,10 @@ export function createHeartbeatRecovery(db: Db, dependencies: HeartbeatRecoveryD
       const controllerReplaced = run.runtimeMode === "legacy" && !!run.controllerBootId
         && run.controllerBootId !== legacyControllerBootId;
       const conversationContinuationEligible = await runUsedConversationAdapter(db, run);
+      // Real process loss spends the ordinary failure budget, not the longer
+      // quota budget an earlier quota failure carried in its result.
+      const retryBudgetRun = restartInterruptedBeforeDispatch
+        ? run : { ...run, errorCode: "process_lost", resultJson: null };
       const shouldRetry =
         !await pendingCaseHandoffForRun(db, run.id, run.companyId) &&
         // Process loss spends the durable failure retry budget that

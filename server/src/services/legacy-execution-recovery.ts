@@ -98,6 +98,10 @@ export function legacyExecutionNeedsReconciliation(
   // provider action happened, so there is nothing to reconcile. Its
   // continuation is bounded by the server-restart lane, not the failure count.
   if (isReplacedPreparation({ ...run, controllerBootId: run.controllerBootId ?? null })) return false;
+  if ((run.errorCode === "provider_quota" || run.resultJson?.errorFamily === "provider_quota") &&
+      evidence?.kind === "bootstrap" && evidence.providerWorkStarted === false) {
+    return executionFailureRetryCount(run) >= PROVIDER_QUOTA_RETRY_DELAYS_MS.length;
+  }
   if (executionFailureRetryCount(run) >= 2) return true;
   return !(
     evidence?.kind === "bootstrap" && evidence.providerWorkStarted === false

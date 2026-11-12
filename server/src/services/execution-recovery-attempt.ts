@@ -34,6 +34,8 @@ const UNCHARGED_RETRY_LANES: ReadonlySet<string> = new Set([
 ]);
 export const PROVIDER_QUOTA_RETRY_DELAYS_MS = [30_000, 60_000, 120_000, 60_000] as const;
 
+export const PROVIDER_QUOTA_RETRY_DELAYS_MS = [30_000, 60_000, 120_000, 60_000] as const;
+
 type RetryRun = {
   scheduledRetryAttempt?: number | null;
   scheduledRetryReason?: string | null;
