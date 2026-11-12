@@ -12,6 +12,7 @@ export function shouldUseIsolatedTaskDirectory(input: {
   mode: string;
   hasProjectWorkspace: boolean;
   projectWorkspaceId: string | null;
+  hasSelectedExecutionWorkspace?: boolean;
   workspaceStrategies: unknown[];
 }): boolean {
   return ((input.trustPreset === "low_trust_review" && input.environmentDriver === "sandbox")
@@ -19,6 +20,7 @@ export function shouldUseIsolatedTaskDirectory(input: {
     && input.mode === "isolated_workspace"
     && !input.hasProjectWorkspace
     && !input.projectWorkspaceId
+    && !input.hasSelectedExecutionWorkspace
     // Never discard an explicit repository/branch requirement or setup hook.
     && input.workspaceStrategies.every((value) => Object.keys(parseObject(value)).length === 0);
 }
