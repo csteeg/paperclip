@@ -32,9 +32,13 @@ import {
   resolveRemoteClaudeToolShellPrefixPath,
   prepareClaudeConfigSeed,
   prepareManagedClaudePluginRuntime,
-  prepareSandboxClaudeProbeRuntime,
   resolveManagedClaudeRuntimeStateDir,
+  prepareClaudeConfigSeed,
+  prepareSandboxClaudeProbeRuntime,
+  resolveRemoteClaudeToolShellPrefixPath,
 } from "./claude-config.js";
+
+const execFileAsync = promisify(execFile);
 
 describe("managed profile skill discovery", () => {
   it("keeps every file across bounded scan batches and detects a later content change", async () => {
