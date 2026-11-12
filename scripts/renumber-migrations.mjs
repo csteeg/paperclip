@@ -85,6 +85,16 @@ function readJournal(text) {
   }
 }
 
+function sameSnapshotIgnoringId(left, right) {
+  try {
+    const a = JSON.parse(left.toString("utf8"));
+    const b = JSON.parse(right.toString("utf8"));
+    return JSON.stringify({ ...a, id: null }) === JSON.stringify({ ...b, id: null });
+  } catch {
+    return false;
+  }
+}
+
 // The id git gives these bytes as a blob (SHA-1), comparable with ls-tree output.
 const blobId = (bytes) => createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
 
@@ -199,6 +209,11 @@ function main() {
   writeJournal(entries);
 
   // 4. Snapshots: exactly the base's, then one regenerated snapshot for the newest own migration.
+  // A snapshot that only differs from the current one by its random id keeps the current bytes.
+  const previousSnapshots = new Map();
+  for (const name of readdirSync(META).filter((file) => file.endsWith("_snapshot.json"))) {
+    previousSnapshots.set(name, readFileSync(path.join(META, name)));
+  }
   for (const name of readdirSync(META).filter((file) => file.endsWith("_snapshot.json"))) {
     rmSync(path.join(META, name));
   }
@@ -220,6 +235,10 @@ function main() {
       rmSync(path.join(MIGRATIONS, `${tag}.sql`));
       const newest = plan.at(-1).tag.slice(0, 4);
       renameSync(path.join(META, `${tag.slice(0, 4)}_snapshot.json`), path.join(META, `${newest}_snapshot.json`));
+      const previous = previousSnapshots.get(`${newest}_snapshot.json`);
+      if (previous && sameSnapshotIgnoringId(previous, readFileSync(path.join(META, `${newest}_snapshot.json`)))) {
+        writeFileSync(path.join(META, `${newest}_snapshot.json`), previous);
+      }
       writeJournal(entries);
     }
     run("prune snapshots", "node scripts/prune-snapshots.mjs", db);
