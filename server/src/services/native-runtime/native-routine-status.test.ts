@@ -8,8 +8,8 @@ import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } fro
 import { routineService } from "../routines.js";
 import { commitNativeStatusDecision } from "./status-decision-committer.js";
 import { NATIVE_STATUS_ARBITER_POLICY_VERSION, type NativeStatusDecision } from "./status-arbiter.js";
-import { hasPendingNativeReviewSiblings } from "./native-review-renewal.js";
 import { INTERACTION_DELIVERY_DENIED } from "../agent-interaction-delivery.js";
+import { hasPendingNativeReviewSiblings } from "./native-review-renewal.js";
 
 const external = resolveExternalTestDatabaseUrl("PAPERCLIP_NATIVE_ROUTINE_STATUS_TEST_DATABASE_URL");
 const support = external ? { supported: true, reason: undefined } : await getEmbeddedPostgresTestSupport();
