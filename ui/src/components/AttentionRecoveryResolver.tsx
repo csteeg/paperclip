@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef } from "react";
 import type { Agent, AttentionItem } from "@paperclipai/shared";
+import { describeError } from "@/api/errors";
 import { issuesApi } from "@/api/issues";
 import { queryKeys } from "@/lib/queryKeys";
 import { IssueRecoveryActionCard, type RecoveryResolveOutcome } from "./IssueRecoveryActionCard";
@@ -12,7 +13,7 @@ export function AttentionRecoveryResolver({ item, companyId, agentMap, onResolve
   const queryClient = useQueryClient();
   const resolving = useRef(false);
   const issueId = item.relatedIssue?.id ?? String(item.subject.metadata?.sourceIssueId ?? "");
-  const actions = useQuery({ queryKey: queryKeys.issues.recoveryActions(issueId, null, null),
+  const actions = useQuery({ queryKey: queryKeys.issues.allRecoveryActions(issueId),
     queryFn: () => issuesApi.recoveryActions(issueId), enabled: Boolean(issueId) });
   const action = actions.data?.actions.find(entry => entry.id === item.subject.id);
   const resolution = useMutation({ mutationFn: (outcome: RecoveryResolveOutcome) => issuesApi.resolveRecoveryAction(issueId, {
@@ -21,7 +22,7 @@ export function AttentionRecoveryResolver({ item, companyId, agentMap, onResolve
     sourceIssueStatus: outcome === "false_positive_done" ? "done" : outcome === "false_positive_in_review" ? "in_review" : outcome as "todo" | "done" | "in_review",
   }), onSuccess: () => {
     void queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(issueId) });
-    void queryClient.invalidateQueries({ queryKey: queryKeys.issues.recoveryActions(issueId, null, null) });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.issues.allRecoveryActions(issueId) });
     void queryClient.invalidateQueries({ queryKey: queryKeys.attention(companyId) });
     onResolved();
   }, onSettled: () => { resolving.current = false; } });
@@ -34,7 +35,7 @@ export function AttentionRecoveryResolver({ item, companyId, agentMap, onResolve
   if (actions.isPending) return <p role="status">Loading recovery actions…</p>;
   if (!action || !["active", "escalated"].includes(action.status)) return <p role="status">This recovery is no longer awaiting an action.</p>;
   return <>
-    {resolution.error ? <p role="alert">{resolution.error.message}</p> : null}
+    {resolution.error ? <p role="alert" className="text-sm text-destructive">{describeError(resolution.error, { action: "resolve this recovery" }).body}</p> : null}
     <fieldset disabled={resolution.isPending} aria-busy={resolution.isPending}>
       <IssueRecoveryActionCard action={action} agentMap={agentMap} onResolve={resolve} resolvePending={resolution.isPending} />
     </fieldset>
