@@ -3768,7 +3768,6 @@ export async function verifyStoppedNativeSessionForAutomaticReplacement(
   run: typeof heartbeatRuns.$inferSelect,
 ): Promise<{ evidence: Record<string, unknown>; retire: () => boolean } | null> {
   const replacement = await verifyStoppedNativeSessionForReplacement(db, run);
-  // Windows: a closed read-only session can be replaced once its stop is proven (develop 2822d0f777).
   if (replacement || process.platform !== "win32" && run.errorCode !== "native_session_cleanup_quarantined") return replacement;
   return verifyStoppedNativeSessionForContinuation(db, run, { cleanup: true });
 }

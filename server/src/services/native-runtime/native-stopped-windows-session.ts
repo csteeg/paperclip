@@ -158,9 +158,11 @@ export async function proveStoppedWindowsReadOnlySession(input: {
       message: "Stopped the exact orphan provider after verifying its closed read-only conversation.",
       payload: { processPid: process.processPid, stopped, threadId, providerTurnId: turnId } });
   }
+  // Match fs.promises.realpath, which expands 8.3 short names; the JS
+  // realpathSync keeps them, so a short TEMP path never compared equal.
   const unchanged = () => {
     try { return input.unchanged() && history!.sourceIsCurrent() && [...pids].every(absent) &&
-      realpathSync(input.cwd) === cwd && realpathSync(thread.cwd as string) === threadCwd; }
+      realpathSync.native(input.cwd) === cwd && realpathSync.native(thread.cwd as string) === threadCwd; }
     catch { return false; }
   };
   if (!unchanged()) return null;
@@ -172,5 +174,6 @@ export async function proveStoppedWindowsReadOnlySession(input: {
   return { evidence: { schema: "paperclip.stopped_windows_read_only_conversation.v1", runId: owner.id,
     runnerInstanceId: owner.runnerInstanceId, nativeSessionId: owner.nativeSessionId, processPid: process.processPid,
     processStartedAt: process.processStartedAt, providerPids: [...pids].filter(pid => pid !== process.processPid),
-    threadId, providerTurnId: turnId, readOperations: proof.readOperations, stateFingerprint: snapshot.fingerprint }, unchanged };
+    threadId, providerTurnId: turnId, readOperations: proof.readOperations,
+    readToolCalls: proof.readCalls.map(call => ({ executionId: call.id, name: call.tool })), stateFingerprint: snapshot.fingerprint }, unchanged };
 }
