@@ -27,7 +27,6 @@ import { BudgetAlertActions, FailedRunActions } from "@/components/AttentionInli
 import { AttentionInteractionResolver } from "@/components/AttentionInteractionResolver";
 import { ApprovalResolver, JoinRequestResolver } from "@/components/AttentionQueueRow";
 import { AttentionObligationEvidence } from "@/components/AttentionObligationEvidence";
-import { AttentionRecoveryResolver } from "@/components/AttentionRecoveryResolver";
 import { DecisionHistoryPanel } from "@/components/DecisionHistoryPanel";
 import { DecisionResolver } from "@/components/DecisionResolver";
 import { DecisionCardFooter } from "@/components/DecisionCardFooter";
