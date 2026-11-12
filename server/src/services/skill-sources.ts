@@ -11,7 +11,7 @@ import { folderService } from './folders.js';
 import { and, eq, isNull, lt, or, sql } from 'drizzle-orm';
 import { companySkillSources as sources, companySkillSourceEntries as entries, companySkills, companySkillRepositorySnapshots, projectSkillSources, projectProviderAuthorizations, connectionGrants, projects, type Db, type SkillPackageRestoreRecipe, authUsers } from '@paperclipai/db';
 import type { CompanySkill, SkillSource, SkillSourceCreateRequest, SkillSourceDiscoveryRequest, SkillSourceSelectionRequest, SkillSourceRefreshResult, SkillSourcePreviewRequest, SkillSourceSettingsRequest, SkillSourceDisconnectRequest, SkillSourceDisconnectResult, SkillSourceBranchesQuery } from '@paperclipai/shared';
-import { normalizeAgentUrlKey } from '@paperclipai/shared';
+import { normalizeAgentUrlKey, parseGitHubSkillRepositoryUrl } from '@paperclipai/shared';
 import { conflict, forbidden, notFound, unprocessable } from '../errors.js';
 import { companySkillService, parseSkillImportSourceInput } from './company-skills.js';
 import { scanGitHubSkillsWithPackageFallback as scanGitHubSkills, previewGitHubSkillFile, type GitHubRead, type ScannedSkillSource, type SkillScanOptions } from './github-skill-source.js';
@@ -153,9 +153,17 @@ export function skillSourceService(db: Db) {
       files: files.map(file => ({ path: file.path, code: file.code, sha256: file.sha256 })),
     });
   }
-  async function preview(input: SkillSourcePreviewRequest, context: SkillSourceContext) {
+  async function preview(companyId: string, input: SkillSourcePreviewRequest, context: SkillSourceContext) {
     await context.authorize('skills.import', { sourceType: 'git', sourceLocator: input.repositoryUrl });
-    return previewGitHubSkillFile(input, context.read(input.connectionId ?? null));
+    return previewGitHubSkillFile(input, context.read(input.connectionId ?? null), await recordedSecurityOverrides(companyId, input.repositoryUrl));
+  }
+  /** Approvals saved on this company's sources for a repository, so approved files stay viewable. */
+  async function recordedSecurityOverrides(companyId: string, repositoryUrl: string) {
+    const repository = parseGitHubSkillRepositoryUrl(repositoryUrl)?.repositoryUrl.toLowerCase();
+    if (!repository) return [];
+    const rows = await db.select({ repositoryUrl: sources.repositoryUrl, securityOverride: sources.securityOverride }).from(sources)
+      .where(and(eq(sources.companyId, companyId), isNull(sources.removedAt), sql`${sources.securityOverride} is not null`));
+    return rows.filter(row => parseGitHubSkillRepositoryUrl(row.repositoryUrl)?.repositoryUrl.toLowerCase() === repository).map(row => row.securityOverride);
   }
   async function authorizeScan(source: SourceRow, scan: ScannedSkillSource, selectedPaths: string[], context: SkillSourceContext) {
     const previous = await db.select().from(entries).where(and(eq(entries.companyId, source.companyId), eq(entries.sourceId, source.id)));
@@ -431,7 +439,8 @@ export function skillSourceService(db: Db) {
       let azureGrantId: string | null = null;
       if (azure && staged) throw unprocessable('Azure DevOps sources must be refreshed against the current project authorization.');
       if (azure && override) throw unprocessable('Security overrides are only available for GitHub skill sources.');
-      // A new approval pins the scan to the reviewed commit; a recorded one applies on its own terms.
+      // A new approval pins the scan to the reviewed commit and replaces the recorded one, so the
+      // published files always match the approval that is saved. A recorded one applies on its own terms.
       let scan = override ? undefined : staged;
       if (!scan && azure) {
         for (const { binding } of authorizedBindings) {
@@ -444,7 +453,7 @@ export function skillSourceService(db: Db) {
         if (!scan) throw unprocessable('Azure DevOps project authorization is unavailable. Reconnect or select a connection.');
       }
       scan ??= await scanGitHubSkills({ repositoryUrl: source.repositoryUrl, trackingRef: source.trackingRef, packageMode, ...(override ? { commitSha: override.commitSha } : {}) },
-        reader, { signal: options.signal, securityOverrides: [override, source.securityOverride] });
+        reader, { signal: options.signal, securityOverrides: [override ?? source.securityOverride] });
       if (azure && selection?.connectionId !== undefined && selection.connectionId !== scan.connectionId)
         throw unprocessable('Change the Azure DevOps authorization in the project before selecting another connection.');
       if (override) verifySecurityOverride(override, scan);
