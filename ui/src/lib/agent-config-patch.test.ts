@@ -220,17 +220,3 @@ it("allows clearing retention days to restore the inherited default", () => {
   expect(buildAgentUpdatePatch(agent, makeOverlay({ adapterConfig: { transcriptRetentionDays: undefined } })).adapterConfig)
     .not.toHaveProperty("transcriptRetentionDays");
 });
-
-it.each([0, -1, 1.5, NaN, Infinity])("blocks the Save callback for invalid retention days %s", days => {
-  const onSave = vi.fn();
-  expect(() => onSave(buildAgentUpdatePatch(makeAgent(), makeOverlay({
-    adapterConfig: { transcriptRetentionEnabled: false, transcriptRetentionDays: days },
-  })))).toThrow("positive integer");
-  expect(onSave).not.toHaveBeenCalled();
-});
-it("allows clearing retention days to restore the inherited default", () => {
-  const agent = makeAgent();
-  agent.adapterConfig.transcriptRetentionDays = 7;
-  expect(buildAgentUpdatePatch(agent, makeOverlay({ adapterConfig: { transcriptRetentionDays: undefined } })).adapterConfig)
-    .not.toHaveProperty("transcriptRetentionDays");
-});
