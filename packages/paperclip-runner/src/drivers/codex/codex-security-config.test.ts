@@ -20,6 +20,7 @@ import {
 const filesystemRule = (path: string, mode: string) => `${JSON.stringify(resolve(path))}=${JSON.stringify(mode)}`;
 
 describe("Codex security configuration", () => {
+  beforeAll(() => { if (process.platform === "win32") resolvePinnedCodexCommand(); }, 120_000);
   it("enables the update_plan checklist tool before policy overrides and the app-server subcommand", () => {
     for (const disableWebSearch of [false, true]) {
       const args = createIsolatedCodexAppServerArgs({ HOME: "/host/home" }, [], undefined, [], disableWebSearch);
@@ -31,7 +32,6 @@ describe("Codex security configuration", () => {
     }
   });
 
-  beforeAll(() => { if (process.platform === "win32") resolvePinnedCodexCommand(); }, 120_000);
   it("uses the same actual pinned executable for native defaults and direct evals without a global Codex PATH", () => {
     const command = resolvePinnedCodexCommand();
     expect(evalProviderTransportOptions("codex").codexCommand).toBe(command);

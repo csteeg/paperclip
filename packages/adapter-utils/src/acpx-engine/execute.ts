@@ -4583,8 +4583,8 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
         const runtimeStore = createEphemeralSessionEnvironmentStore(persistedRuntimeStore, prepared.env);
         const launchSink = processIdentitySink;
         const runtimeOptions: PaperclipAcpRuntimeOptions = {
-          // Windows providers run inside an owned process job so Stop and
-          // teardown settle the whole tree; the relay lane keeps stock spawn.
+          // Native Windows launches the agent inside a supervised kernel job so
+          // teardown reaches every descendant; remote process sessions never do.
           spawnAgent: process.platform === "win32" && !prepared.processSessionBridge
             ? (input) => spawnWindowsProcessJob(input.command, [...input.args], input.options)
             : undefined,
