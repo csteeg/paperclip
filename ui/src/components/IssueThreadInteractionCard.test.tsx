@@ -356,13 +356,15 @@ describe("IssueThreadInteractionCard", () => {
     ]);
   });
 
-  it("shows the decision title above distinct questions without duplicating a matching prompt", () => {
+  it("shows one decision ask above the questions, never a duplicated heading", () => {
     const interaction = { ...pendingAskUserQuestionsInteraction, title: "Which approach should we use?" };
     const host = renderCard({ presentationVariant: "coordinator-decision", interaction });
-    expect(host.querySelector("[data-decision-prompt]")?.textContent).toBe(interaction.title);
+    expect(host.querySelectorAll("[data-decision-prompt]")).toHaveLength(1);
+    // Upstream's compact ask prefers the question set's own title over the record title.
+    expect(host.querySelector("[data-decision-prompt]")?.textContent).toBe(interaction.payload.title);
     const prompt = interaction.payload.questions[0]!.prompt;
     const repeated = renderCard({ presentationVariant: "coordinator-decision", interaction: { ...interaction, title: prompt } });
-    expect(repeated.querySelector("[data-decision-prompt]")).toBeNull();
+    expect(repeated.querySelectorAll("[data-decision-prompt]")).toHaveLength(1);
   });
 
   it("shows a Coordinator card's responder clause when it is addressed elsewhere", () => {

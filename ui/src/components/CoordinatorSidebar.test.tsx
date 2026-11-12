@@ -121,7 +121,7 @@ describe("Coordinator pinned pages", () => {
 
     await renderSidebar();
 
-    const avatars = [...container.querySelectorAll<HTMLImageElement>('a[href="/chats/cto"] [data-slot="agent-avatar"] img')];
+    const avatars = [...container.querySelectorAll<HTMLImageElement>('a[href^="/chats/cto"] [data-slot="agent-avatar"] img')];
     const taskIcon = container.querySelector('a[href="/issues/TASK-1"] [data-slot="sidebar-nav-icon"] svg');
     expect(avatars).toHaveLength(2);
     expect(taskIcon).not.toBeNull();

@@ -4518,8 +4518,6 @@ export function IssueThreadInteractionCard({
         : `Connect ${interaction.payload.serviceName}`
       : fallbackTitle);
   const summaryIsRepeated = [...bodyContext, ...(compactDecision ? [compactTitle] : [])].some(text => text?.trim() === interaction.summary?.trim());
-  // A distinct decision title stays above its questions.
-  const titleIsRepeated = bodyContext.some(text => text?.trim() === interaction.title?.trim());
   const addressedElsewhere = Boolean(interaction.addresseeAgentId
     || (interaction.addresseeUserId && interaction.addresseeUserId !== currentUserId));
 
@@ -4530,7 +4528,7 @@ export function IssueThreadInteractionCard({
       <CompactArtifactRowContext.Provider value={compactDecision ? artifactRow : null}>
       <div data-presentation={presentationVariant} className={compactDecision ? "coordinator-decision-content space-y-4" : cn("rounded-lg border p-5 shadow-none", styles.shell)}>
         {compactDecision ? <>
-          {!bodyNamesDecision || (interaction.kind === "ask_user_questions" && interaction.title && !titleIsRepeated) ? <CompactDecisionAsk><PromptText>{compactTitle}</PromptText></CompactDecisionAsk> : null}
+          {!bodyNamesDecision ? <CompactDecisionAsk><PromptText>{compactTitle}</PromptText></CompactDecisionAsk> : null}
           {/* Questions and confirmations put the note under their ask (UI1). */}
           {interaction.summary && !summaryIsRepeated && !bodyNamesDecision && !connectionAuthorization && interaction.kind !== "connection_intent" ? <p className="text-sm text-muted-foreground">{interaction.summary}</p> : null}
           {interaction.status === "pending" ? <div className={addressedElsewhere && !audienceStated ? undefined : "sr-only"}><InteractionAudienceLine audience={audience} variant="compact" /></div> : null}
