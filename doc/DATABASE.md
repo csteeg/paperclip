@@ -1429,6 +1429,28 @@ connection, before enabling the new server and UI.
 - The repo keeps only the newest 5 snapshots. `generate` runs `prune:snapshots` afterwards to delete older ones. Drizzle only reads the newest snapshot, and each snapshot is a full copy of the schema (over 1 MB each). Older snapshots are still in git history.
 - `packages/db/src/migration-snapshot-drift.test.ts` is the enforcement backstop. It repeats the diff that `generate` performs and fails when the newest snapshot no longer matches `packages/db/src/schema/`.
 
+## Fork-local migrations
+
+This fork's `develop` branch carries migrations that upstream does not have yet. They use a reserved range that starts at `8801`, so upstream's `04xx` numbers never collide with them.
+
+- A migration that exists only on `develop` gets the next free `88xx` number.
+- A migration from an upstream pull request keeps its upstream number in the pull request branch, and gets an `88xx` number in `develop`. The SQL stays byte-identical in both places. The migrator recognizes an applied migration by the SHA-256 of its file content, not by its name. When upstream lands the pull request, a database that already ran the `88xx` copy therefore skips the upstream file.
+- `scripts/renumber-migrations.mjs` does the renumbering. It keeps the SQL bytes unchanged, drops files whose bytes match a base migration or another fork-local file, rebuilds `meta/_journal.json` from the base journal, regenerates the newest snapshot, and runs the numbering, safety and compatibility checks. It never text-merges `meta/`, so it also resolves a conflicted journal or snapshot in the middle of a merge.
+
+Run it as follows:
+
+```sh
+# In a pull request branch, after merging upstream master: move the branch's
+# migrations behind master's newest migration.
+node scripts/renumber-migrations.mjs
+
+# On develop, after merging upstream master or a pull request branch: fold every
+# migration that upstream master does not have into the 88xx range.
+node scripts/renumber-migrations.mjs --start 8801
+```
+
+Both commands accept `--dry-run` to print the plan and `--base <ref>` to compare with a ref other than `upstream/master`. Stage the result with `git add -A packages/db/src/migrations`.
+
 ## Managed adapter settings
 
 Cloud-managed instances keep adapter selection preferences in the private
