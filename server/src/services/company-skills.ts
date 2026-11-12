@@ -3611,9 +3611,17 @@ export function companySkillService(db: Db, options: { actor?: AuthorizationActo
     if (!sourceId || !entrypoint || !skill.sourceRef) return undefined;
     const [source] = await db.select({ securityOverride: companySkillSources.securityOverride }).from(companySkillSources)
       .where(and(eq(companySkillSources.companyId, skill.companyId), eq(companySkillSources.id, sourceId)));
-    const toRepositoryPath = skillRelativeToRepositoryPath(path.posix.dirname(entrypoint));
-    return securityOverrideAcceptor([source?.securityOverride], skill.sourceRef,
-      filePath => filePath === "SKILL.md" ? entrypoint : toRepositoryPath(filePath));
+    // A repository package installs the original files under REPOSITORY_CONTENT_DIR at their repository paths;
+    // a skill package installs them relative to the skill directory.
+    const repositoryPrefix = `${REPOSITORY_CONTENT_DIR}/`;
+    const fromSkillDirectory = skillRelativeToRepositoryPath(path.posix.dirname(entrypoint));
+    // The generated agents/openai.yaml is a copy of the skill directory's policy file; the generated SKILL.md is not an original.
+    const policyCopy = path.posix.join(path.posix.dirname(entrypoint), "agents/openai.yaml");
+    const toRepositoryPath = skill.metadata?.packageMode === "repository"
+      ? (filePath: string) => filePath.startsWith(repositoryPrefix) ? filePath.slice(repositoryPrefix.length)
+        : filePath === "agents/openai.yaml" ? policyCopy : `${repositoryPrefix}${filePath}`
+      : (filePath: string) => filePath === "SKILL.md" ? entrypoint : fromSkillDirectory(filePath);
+    return securityOverrideAcceptor([source?.securityOverride], skill.sourceRef, toRepositoryPath);
   }
 
   async function auditSkillContents(skill: CompanySkill): Promise<CompanySkillAuditResult> {
