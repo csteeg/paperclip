@@ -30,7 +30,7 @@ function runner(store: ReturnType<typeof createRuntimeStore>, cwd: string) {
       agentRegistry: createAgentRegistry({ overrides: { custom: `${JSON.stringify(process.execPath.replaceAll("\\", "/"))} ${JSON.stringify(fixture.replaceAll("\\", "/"))}` } }),
       permissionMode: "approve-all",
       nonInteractivePermissions: "deny",
-      inheritProcessEnv: false,
+      agentProcessEnvAllow: [],
     });
     const handle = await runtime.ensureSession({
       sessionKey, agent: "custom", mode: "persistent", cwd, resumeSessionId, sessionOptions: { env: {} },

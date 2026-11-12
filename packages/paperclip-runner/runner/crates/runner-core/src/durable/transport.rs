@@ -1764,6 +1764,7 @@ mod tests {
     #[cfg(unix)]
     include!("tests/hosted_retention.rs");
     include!("tests/ack_release_poll.rs");
+    include!("tests/indeterminate_terminal_ack.rs");
 
     use std::net::{IpAddr, Ipv4Addr, TcpListener};
     use std::path::PathBuf;
@@ -1798,6 +1799,7 @@ mod tests {
             reconnect_delay: Duration::from_millis(1),
             reconnect_grace: None,
             max_runtime: Duration::from_secs(1),
+            turn_scoped: false,
         }
     }
 

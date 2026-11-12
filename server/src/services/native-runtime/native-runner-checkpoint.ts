@@ -1,8 +1,9 @@
 import { readNativeCheckpointRetirement } from "./native-runner-checkpoint-retirement.js";
+import { NATIVE_PREPARATION_FENCING_VERSION } from "./native-active-runs.js";
 import { notifyLiveRunRecovery } from "../live-run-recovery-notifications.js";
 import { and, eq, exists, gt, isNull, lte, inArray, notExists, or, sql } from "drizzle-orm";
 import { checkpointDb, heartbeatRuns, issues, nativeRunFinalizations, nativeRunnerCheckpoints, type Db } from "@paperclipai/db";
-import { inspectDurablePrpCheckpointHeader, inspectUnclaimedBootstrapCheckpoint, decodeDurablePrpCheckpoint, type DurablePrpCheckpoint, type DurablePrpControlPlane, type DurableRecoveryIdentity } from "../../vendor/paperclip-runner/index.js";
+import { inspectDurablePrpCheckpointHeader, inspectUnauthenticatedBootstrapCheckpoint, inspectUnclaimedBootstrapCheckpoint, decodeDurablePrpCheckpoint, type DurablePrpCheckpoint, type DurablePrpControlPlane, type DurableRecoveryIdentity } from "../../vendor/paperclip-runner/index.js";
 import { createLocalEncryptedCipher } from "../../secrets/local-encrypted-provider.js";
 import { legacyControllerBootId } from "../legacy-controller-lease.js";
 import { assertNativeSourceCheckpointConsumer, lockSourceRecoveryCoordinators } from "./native-source-recovery-ownership.js";
@@ -260,7 +261,26 @@ export async function loadNativeUnclaimedBootstrapCheckpoint(
   } catch { return null; }
 }
 
-const BOOTSTRAP_CHECKPOINT_PARTS = new Set(["header", "cursor", "command:1", "command:2"]);
+export async function nativeRunnerNeverAuthenticated(
+  db: Pick<Db, "select">, binding: Binding,
+  identity: Pick<DurableRecoveryIdentity, "runId" | "normalizedSessionId" | "runnerInstanceId">,
+): Promise<boolean> {
+  try {
+    if (binding.runId !== identity.runId) return false;
+    const rows = await db.select().from(nativeRunnerCheckpoints).where(and(
+      eq(nativeRunnerCheckpoints.companyId, binding.companyId), eq(nativeRunnerCheckpoints.issueId, binding.issueId),
+      eq(nativeRunnerCheckpoints.runId, binding.runId))).limit(MAX_BOOTSTRAP_CHECKPOINT_COMMANDS + 3);
+    if (rows.length < 4 || rows.length > MAX_BOOTSTRAP_CHECKPOINT_COMMANDS + 2
+      || rows.reduce((bytes, row) => bytes + Buffer.byteLength(JSON.stringify(row.material)), 0)
+        > 2 * NATIVE_CHECKPOINT_INSPECTION_TOTAL_MAX_BYTES) return false;
+    const cipher = createLocalEncryptedCipher("read");
+    const records = new Map(rows.map(row => [row.part, decryptPart(cipher, binding, row.part, row.material)] as const));
+    return inspectUnauthenticatedBootstrapCheckpoint(records, identity);
+  } catch { return false; }
+}
+
+const BOOTSTRAP_CHECKPOINT_PARTS = new Set(["header", "cursor"]);
+const MAX_BOOTSTRAP_CHECKPOINT_COMMANDS = 8;
 /** Session-open events are few; a longer journal is never a bootstrap. */
 const MAX_BOOTSTRAP_CHECKPOINT_EVENTS = 16;
 
@@ -282,13 +302,15 @@ export async function nativeRunnerCheckpointRemoteBootstrapProof(
   db: Pick<Db, "select">, binding: Binding, expected: { runnerInstanceId: string; normalizedSessionId: string },
 ): Promise<NativeRemoteBootstrapProof | null> {
   try {
-    const limit = BOOTSTRAP_CHECKPOINT_PARTS.size + MAX_BOOTSTRAP_CHECKPOINT_EVENTS;
+    const limit = BOOTSTRAP_CHECKPOINT_PARTS.size + MAX_BOOTSTRAP_CHECKPOINT_COMMANDS + MAX_BOOTSTRAP_CHECKPOINT_EVENTS;
     const parts = await db.select({ part: nativeRunnerCheckpoints.part }).from(nativeRunnerCheckpoints).where(and(
       eq(nativeRunnerCheckpoints.companyId, binding.companyId), eq(nativeRunnerCheckpoints.issueId, binding.issueId),
       eq(nativeRunnerCheckpoints.runId, binding.runId))).limit(limit + 1);
     const eventParts = parts.map(row => row.part).filter(part => /^event:\d+$/.test(part));
-    if (!parts.length || parts.length > limit
-      || parts.some(row => !BOOTSTRAP_CHECKPOINT_PARTS.has(row.part) && !/^event:\d+$/.test(row.part))) return null;
+    const commandParts = parts.map(row => row.part).filter(part => /^command:\d+$/.test(part));
+    if (!parts.length || parts.length > limit || eventParts.length > MAX_BOOTSTRAP_CHECKPOINT_EVENTS
+      || commandParts.length > MAX_BOOTSTRAP_CHECKPOINT_COMMANDS
+      || parts.some(row => !BOOTSTRAP_CHECKPOINT_PARTS.has(row.part) && !/^(?:event|command):\d+$/.test(row.part))) return null;
     const checkpoint = await loadNativeRunnerCheckpoint(db, binding);
     if (!checkpoint || checkpoint.predecessor !== null
       || checkpoint.recoveryEvidence.runnerInstanceId !== expected.runnerInstanceId
@@ -301,11 +323,13 @@ export async function nativeRunnerCheckpointRemoteBootstrapProof(
     };
     const header = read("header");
     const cursor = read("cursor");
-    if (header?.schema !== "paperclip.runner.controller-checkpoint.v2" || !cursor) return null;
+    if (header?.schema !== "paperclip.runner.controller-checkpoint.v2" || !cursor
+      || cursor.commandCount !== commandParts.length) return null;
     const state: Record<string, unknown> = {
       ...(header.state as Record<string, unknown>),
       ackedSourceSeq: cursor.ackedSourceSeq,
-      commands: ["command:1", "command:2"].map(read).filter(command => command !== undefined),
+      commands: commandParts.map(part => Number(part.slice("command:".length))).sort((a, b) => a - b)
+        .map(seq => read(`command:${seq}`)),
       committedEvents: eventParts.map(part => Number(part.slice("event:".length))).sort((a, b) => a - b)
         .map(seq => read(`event:${seq}`)),
     };
@@ -344,10 +368,12 @@ export async function listExpiredNativeRunnerAuthorities(db: Db, now: Date, runI
       eq(heartbeatRuns.status, "running"), eq(nativeRunFinalizations.phase, "observed"),
       isNull(nativeRunFinalizations.resultId),
       or(isNull(nativeRunFinalizations.leaseExpiresAt), lte(nativeRunFinalizations.leaseExpiresAt, now)),
-      exists(db.select({ runId: nativeRunnerCheckpoints.runId }).from(nativeRunnerCheckpoints).where(and(
+      or(exists(db.select({ runId: nativeRunnerCheckpoints.runId }).from(nativeRunnerCheckpoints).where(and(
         eq(nativeRunnerCheckpoints.runId, nativeRunFinalizations.runId),
         eq(nativeRunnerCheckpoints.issueId, nativeRunFinalizations.issueId),
-        eq(nativeRunnerCheckpoints.companyId, nativeRunFinalizations.companyId))))));
+        eq(nativeRunnerCheckpoints.companyId, nativeRunFinalizations.companyId)))),
+        and(sql`${heartbeatRuns.runnerProfileJson}->'nativePreparationFencingVersion' = ${JSON.stringify(NATIVE_PREPARATION_FENCING_VERSION)}::jsonb`,
+          isNull(heartbeatRuns.processPid), isNull(heartbeatRuns.processGroupId), isNull(heartbeatRuns.processStartedAt)))));
   return rows.map(row => row.runId);
 }
 

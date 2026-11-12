@@ -218,7 +218,7 @@ describe("durable, authorized connection routing", () => {
       const { harnessPoolService } = await import("../services/harness-pools.js");
       const local = await environmentService(db).ensureLocalEnvironment(companyId);
       const environment = driver === "local" ? local : await environmentService(db).create(companyId, {
-        name: randomUUID(), driver: "ssh", config: { host: "pool-fixture.invalid", username: "fixture" },
+        name: randomUUID(), driver: "ssh", status: "active", envVars: {}, config: { host: "pool-fixture.invalid", username: "fixture" },
       });
       const claude = members[1]!, codex = members[0]!;
       const backupId = randomUUID();
@@ -473,8 +473,8 @@ describe("durable, authorized connection routing", () => {
     const { poolRunnerCooldownIdentity } = await import("../services/ai-connection-pool-cooldown.js");
     const envs = environmentService(db);
     const environmentA = (await envs.ensureLocalEnvironment(companyId)).id;
-    const environmentB = (await envs.create(companyId, { name: randomUUID(), driver: "ssh", config: { host: "pool-b.invalid", username: "fixture" } })).id;
-    const environmentC = (await envs.create(companyId, { name: randomUUID(), driver: "ssh", config: { host: "pool-c.invalid", username: "fixture" } })).id;
+    const environmentB = (await envs.create(companyId, { name: randomUUID(), driver: "ssh", status: "active", envVars: {}, config: { host: "pool-b.invalid", username: "fixture" } })).id;
+    const environmentC = (await envs.create(companyId, { name: randomUUID(), driver: "ssh", status: "active", envVars: {}, config: { host: "pool-c.invalid", username: "fixture" } })).id;
     const account = await aiConnectionService(db).save(companyId, "alice", { provider: "openai", method: "api_key", ownership: "personal", name: "Scoped pool fixture", apiKey: "scoped-pool-fixture", agentIds: [], allAgents: true }, randomUUID());
     const connection = { mode: "delegated" as const, provider: "openai" as const, method: "api_key" as const, ...account };
     const pool = await harnessPoolService(db).save(companyId, { config: { schemaVersion: 2, kind: "harness_pool", name: "Five models", enabled: true, mode: "failover", members: Array.from({ length: 5 }, (_, index) => ({ id: randomUUID(), harness: { type: "codex" as const }, connection, model: ["gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol"][index]! })) } }, "alice");

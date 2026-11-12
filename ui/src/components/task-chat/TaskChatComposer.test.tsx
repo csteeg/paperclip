@@ -17,13 +17,16 @@ import type { Agent, HeartbeatRun, IssueWorkMode } from "@paperclipai/shared";
 import { agentsApi } from "@/api/agents";
 import { instanceSettingsApi } from "@/api/instanceSettings";
 import { CoordinatorPresentation } from "@/components/coordinator/CoordinatorPresentation";
+import { ThemeProvider } from "@/context/ThemeContext";
 import { DRAFT_DEBOUNCE_MS } from "../../lib/composer-draft";
 import {
+  loadDraftAttachments,
   loadDraftSubmission,
   saveDraft,
   saveDraftSubmission,
 } from "../../lib/composer-draft";
 import { CommentSubmissionUnknownError } from "../../lib/comment-submit-result";
+import { ApiError } from "../../api/api-error";
 import { queryKeys } from "../../lib/queryKeys";
 import { useAccountBoundMutation } from "../../hooks/useAccountBoundMutation";
 import { waitForStoppedRuns } from "../../lib/wait-for-stopped-runs";
@@ -213,7 +216,7 @@ afterEach(() => {
 });
 
 function render(ui: ReactElement) {
-  flushSync(() => root!.render(ui));
+  flushSync(() => root!.render(<ThemeProvider>{ui}</ThemeProvider>));
 }
 
 async function flushAsync() {
@@ -794,9 +797,9 @@ describe("TaskChatComposer", () => {
     flushSync(() => sendButton().click());
     await flushAsync();
     expect(editable().textContent).toBe("Keep this draft");
-    expect(container.querySelector('[data-testid="task-chat-composer-error"]')?.textContent).toBeTruthy();
+    expect(container.querySelector('[data-testid="task-chat-goal-error"]')?.textContent).toBeTruthy();
     typeText(" changed");
-    expect(container.querySelector('[data-testid="task-chat-composer-error"]')).toBeNull();
+    expect(container.querySelector('[data-testid="task-chat-goal-error"]')).toBeNull();
   });
 
   it("retains explicit upload receipt IDs across a failed send without uploading again", async () => {
@@ -1219,6 +1222,38 @@ describe("TaskChatComposer", () => {
     expect(onAdd).toHaveBeenCalledTimes(2);
   });
 
+  it("reflects an externally updated task mode after mounting", async () => {
+    const onAdd = vi.fn();
+    const onWorkModeChange = vi.fn();
+    renderComposer({ onAdd, onWorkModeChange, workMode: "standard" });
+    expect(container.querySelector('[data-testid="task-chat-composer-mode"]')).toBeNull();
+
+    renderComposer({ onAdd, onWorkModeChange, workMode: "planning" });
+    await flushAsync();
+    expect(container.querySelector('[data-testid="task-chat-composer-mode"]')?.getAttribute("data-pending-work-mode"))
+      .toBe("planning");
+  });
+
+  it("keeps a local draft mode while persisted task data refreshes", async () => {
+    const onAdd = vi.fn();
+    const onWorkModeChange = vi.fn();
+    renderComposer({ onAdd, onWorkModeChange, workMode: "standard" });
+    pressKey("Tab", { shiftKey: true });
+
+    renderComposer({ onAdd, onWorkModeChange, workMode: "ask" });
+    await flushAsync();
+    expect(container.querySelector('[data-testid="task-chat-composer-mode"]')?.getAttribute("data-pending-work-mode"))
+      .toBe("planning");
+    expect(onWorkModeChange).not.toHaveBeenCalled();
+
+    // Matching task data does not acknowledge an unsent local choice.
+    renderComposer({ onAdd, onWorkModeChange, workMode: "planning" });
+    renderComposer({ onAdd, onWorkModeChange, workMode: "standard" });
+    await flushAsync();
+    expect(container.querySelector('[data-testid="task-chat-composer-mode"]')?.getAttribute("data-pending-work-mode"))
+      .toBe("planning");
+  });
+
   it("keeps the chosen mode and message when an optimistic mode save rolls back", async () => {
     const onAdd = vi.fn();
     let rejectSave!: () => void;
@@ -1248,131 +1283,80 @@ describe("TaskChatComposer", () => {
     expect(onAdd).not.toHaveBeenCalled();
   });
 
-  it("refreshes an untouched composer when the saved task mode arrives after mount", async () => {
-    const onAdd = vi.fn().mockResolvedValue(undefined);
-    const onWorkModeChange = vi.fn().mockResolvedValue(undefined);
-    renderComposer({ onAdd, onWorkModeChange, workMode: "standard", draftKey: "late-planning-mode" });
-    renderComposer({ onAdd, onWorkModeChange, workMode: "planning", draftKey: "late-planning-mode" });
+  it.each([
+    ["standard", "planning", "standard"],
+    ["ask", "standard", "ask"],
+  ] as const)("keeps next draft mode %s → %s → %s through successful send", async (savedMode, sentMode, nextMode) => {
+    let resolveSend!: () => void;
+    const onAdd = vi.fn().mockReturnValue(new Promise<void>((resolve) => { resolveSend = resolve; }));
+    function PendingSendHarness() {
+      const [workMode, setWorkMode] = useState<IssueWorkMode>(savedMode);
+      return <TaskChatComposer onAdd={onAdd} workMode={workMode}
+        onWorkModeChange={async (mode) => { setWorkMode(mode); }} />;
+    }
+    const selectedMode = () => container.querySelector('[data-testid="task-chat-composer-mode"]')
+      ?.getAttribute("data-pending-work-mode") ?? "standard";
+    render(<PendingSendHarness />);
+    pressKey("Tab", { shiftKey: true });
+    expect(selectedMode()).toBe(sentMode);
+    typeText("First message");
+    pressKey("Enter");
     await flushAsync();
-    expect(container.querySelector('[data-testid="task-chat-composer-mode"]')?.getAttribute("data-pending-work-mode")).toBe("planning");
-    typeText("Use the saved planning mode");
-    pressKey("Enter", { metaKey: true });
-    await flushAsync();
-    expect(onAdd).toHaveBeenCalledOnce();
-    expect(onWorkModeChange).not.toHaveBeenCalled();
-  });
+    expect(onAdd).toHaveBeenCalledTimes(1);
 
-  it("preserves an explicitly selected pending mode when the saved task mode refreshes", async () => {
-    const onAdd = vi.fn().mockResolvedValue(undefined);
-    const onWorkModeChange = vi.fn().mockResolvedValue(undefined);
-    renderComposer({ onAdd, onWorkModeChange, workMode: "standard", draftKey: "selected-planning-mode" });
-    pressKey("Tab", { shiftKey: true });
-    renderComposer({ onAdd, onWorkModeChange, workMode: "ask", draftKey: "selected-planning-mode" });
+    if (nextMode === "standard") {
+      flushSync(() => container.querySelector<HTMLButtonElement>('[data-testid="task-chat-composer-mode"]')!.click());
+    } else {
+      pressKey("Tab", { shiftKey: true });
+      pressKey("Tab", { shiftKey: true });
+    }
+    expect(selectedMode()).toBe(nextMode);
+    typeText("Next message");
+    await act(async () => resolveSend());
     await flushAsync();
-    expect(container.querySelector('[data-testid="task-chat-composer-mode"]')?.getAttribute("data-pending-work-mode")).toBe("planning");
-    typeText("Keep my selected planning mode");
-    pressKey("Enter", { metaKey: true });
-    await flushAsync();
-    expect(onWorkModeChange).toHaveBeenCalledWith("planning");
-    expect(onAdd).toHaveBeenCalledOnce();
-  });
-
-  it("follows later saved task modes after a selected mode has been submitted", async () => {
-    const onAdd = vi.fn().mockResolvedValue(undefined);
-    const onWorkModeChange = vi.fn().mockResolvedValue(undefined);
-    const props = { onAdd, onWorkModeChange, draftKey: "consumed-planning-mode" };
-    renderComposer({ ...props, workMode: "standard" });
-    pressKey("Tab", { shiftKey: true });
-    typeText("Submit the selected planning mode");
-    pressKey("Enter", { metaKey: true });
-    await flushAsync();
-    expect(onAdd).toHaveBeenCalledOnce();
-    renderComposer({ ...props, workMode: "planning" });
-    await flushAsync();
-    renderComposer({ ...props, workMode: "ask" });
-    await flushAsync();
-    expect(container.querySelector('[data-testid="task-chat-composer-mode"]')?.getAttribute("data-pending-work-mode")).toBe("ask");
-  });
-
-  it("uses the latest saved task mode when it changes before the send is acknowledged", async () => {
-    let completeSend!: () => void;
-    const onAdd = vi.fn(() => new Promise<void>(resolve => { completeSend = resolve; }));
-    const onWorkModeChange = vi.fn().mockResolvedValue(undefined);
-    const props = { onAdd, onWorkModeChange, draftKey: "canonical-mode-before-receipt" };
-    renderComposer({ ...props, workMode: "standard" });
-    pressKey("Tab", { shiftKey: true });
-    typeText("Submit the planning choice");
-    pressKey("Enter", { metaKey: true });
-    await flushAsync();
-    expect(onAdd).toHaveBeenCalledOnce();
-    renderComposer({ ...props, workMode: "ask" });
-    await flushAsync();
-    expect(container.querySelector('[data-testid="task-chat-composer-mode"]')?.getAttribute("data-pending-work-mode")).toBe("planning");
-    await act(async () => { completeSend(); });
-    await flushAsync();
-    expect(container.querySelector('[data-testid="task-chat-composer-mode"]')?.getAttribute("data-pending-work-mode")).toBe("ask");
-  });
-
-  it("does not consume a new pending mode choice when an earlier send completes", async () => {
-    let completeSend!: () => void;
-    const onAdd = vi.fn(() => new Promise<void>(resolve => { completeSend = resolve; }));
-    const onWorkModeChange = vi.fn().mockResolvedValue(undefined);
-    const props = { onAdd, onWorkModeChange, draftKey: "next-mode-while-sending" };
-    renderComposer({ ...props, workMode: "standard" });
-    pressKey("Tab", { shiftKey: true });
-    typeText("Send the planning message");
-    pressKey("Enter", { metaKey: true });
-    await flushAsync();
-    expect(onAdd).toHaveBeenCalledOnce();
-    pressKey("Tab", { shiftKey: true });
-    await act(async () => { completeSend(); });
-    renderComposer({ ...props, workMode: "planning" });
-    await flushAsync();
-    expect(container.querySelector('[data-testid="task-chat-composer-mode"]')?.getAttribute("data-pending-work-mode")).toBe("ask");
+    expect(selectedMode()).toBe(nextMode);
+    expect(editable().textContent).toBe("Next message");
   });
 
   it.each([
-    { recovery: "receipt", newerChoice: false },
-    { recovery: "resend", newerChoice: false },
-    { recovery: "receipt", newerChoice: true },
-    { recovery: "resend", newerChoice: true },
-    { recovery: "receipt", newerChoice: "same" },
-    { recovery: "resend", newerChoice: "same" },
-  ])("consumes only the recovered send's mode choice: %j", async ({ recovery, newerChoice }) => {
-    let loseResponse!: (error: Error) => void;
-    const onAdd = vi.fn().mockResolvedValue(undefined).mockImplementationOnce(
-      () => new Promise<void>((_resolve, reject) => { loseResponse = reject; }),
-    );
+    ["receipt", false], ["receipt", true],
+    ["resend", false], ["resend", true],
+  ] as const)("settles the sent mode through %s without clearing a newer choice (%s)", async (method, newerChoice) => {
+    const key = `mode-settlement-${method}-${newerChoice}`;
+    const onAdd = vi.fn().mockRejectedValueOnce(new CommentSubmissionUnknownError()).mockResolvedValue(undefined);
     const onWorkModeChange = vi.fn().mockResolvedValue(undefined);
-    const props = { onAdd, onWorkModeChange, draftKey: `recovered-mode-${recovery}-${newerChoice}` };
-    renderComposer({ ...props, workMode: "standard" });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(queryKeys.auth.session, { user: { id: "user-1" } });
+    const show = (workMode: IssueWorkMode, confirmedSubmissionIds = new Set<string>()) => render(
+      <QueryClientProvider client={client}><TaskChatComposer onAdd={onAdd} workMode={workMode}
+        onWorkModeChange={onWorkModeChange} draftKey={key} confirmedSubmissionIds={confirmedSubmissionIds} /></QueryClientProvider>,
+    );
+    show("standard");
+    await flushAsync();
     pressKey("Tab", { shiftKey: true });
-    typeText("Recover this planning message");
+    typeText("First message");
     pressKey("Enter", { metaKey: true });
     await flushAsync();
-    expect(onAdd).toHaveBeenCalledOnce();
-    if (newerChoice) {
-      pressKey("Tab", { shiftKey: true });
-      pressKey("Tab", { shiftKey: true });
-      if (newerChoice === "same") pressKey("Tab", { shiftKey: true });
-    }
-    await act(async () => { loseResponse(new CommentSubmissionUnknownError()); });
-    await flushAsync();
-    expect(container.textContent).toContain("Sending when reconnected…");
-    const attemptId = onAdd.mock.calls[0]![4] as string;
-    renderComposer({ ...props, workMode: "ask", confirmedSubmissionIds: recovery === "receipt" ? new Set([attemptId]) : undefined });
-    await flushAsync();
-    if (recovery === "resend") {
+    expect(onAdd).toHaveBeenCalledTimes(1);
+    const intent = loadDraftSubmission(key)!;
+    expect(intent).not.toBeNull();
+    show("planning");
+    if (newerChoice) pressKey("Tab", { shiftKey: true });
+
+    if (method === "receipt") show("planning", new Set([intent.attemptId]));
+    else {
       const resend = Array.from(container.querySelectorAll("button")).find(button => button.textContent === "Resend now")!;
       flushSync(() => resend.click());
-      await flushAsync();
-      expect(onAdd).toHaveBeenCalledTimes(2);
-      expect(onAdd.mock.calls[1]![4]).toBe(attemptId);
     }
-    expect(container.textContent).not.toContain("Sending when reconnected…");
-    expect(editable().textContent).toBe("");
+    await flushAsync();
+    expect(loadDraftSubmission(key)).toBeNull();
+    show("standard");
+    await flushAsync();
     expect(container.querySelector('[data-testid="task-chat-composer-mode"]')?.getAttribute("data-pending-work-mode") ?? "standard")
-      .toBe(newerChoice === "same" ? "planning" : newerChoice ? "standard" : "ask");
+      .toBe(newerChoice ? "ask" : "standard");
+    expect(onAdd).toHaveBeenCalledTimes(method === "receipt" ? 1 : 2);
+    if (method === "resend") expect(onAdd.mock.calls[1]?.[4]).toBe(intent.attemptId);
+    client.clear();
   });
 
   it("cycles the pending mode with Shift+Tab and applies it on submit", async () => {
@@ -1400,6 +1384,11 @@ describe("TaskChatComposer", () => {
 
     expect(onWorkModeChange).toHaveBeenCalledWith("planning");
     expect(onAdd).toHaveBeenCalledWith("do the plan", undefined, undefined, undefined, expect.any(String));
+
+    renderComposer({ onAdd, onWorkModeChange, workMode: "ask" });
+    await flushAsync();
+    expect(container.querySelector('[data-testid="task-chat-composer-mode"]')?.getAttribute("data-pending-work-mode"))
+      .toBe("ask");
   });
 
   it("cycles Auto, Plan, and Ask modes with Cmd+Period while focused", () => {
@@ -1606,6 +1595,55 @@ describe("TaskChatComposer", () => {
     flushSync(() => sendButton().click());
     await flushAsync();
     expect(onAdd.mock.calls[0]?.[0]).toBe("Review this image\n\n![shot.png](/attachments/shot.png)");
+  });
+
+  it.each(["saved", "rejected", "unknown"] as const)("moves submitted screenshots out of the composer before the request is %s", async (outcome) => {
+    let resolveSend!: () => void;
+    let rejectSend!: (error: Error) => void;
+    const onAdd = vi.fn().mockReturnValue(new Promise<void>((resolve, reject) => {
+      resolveSend = resolve;
+      rejectSend = reject;
+    }));
+    const draftKey = `screenshots-${outcome}`;
+    const onAttachImage = vi.fn().mockResolvedValueOnce({
+      id: "8c365a89-5545-40f7-8cc0-ec6b20567827", contentPath: "/api/attachments/8c365a89-5545-40f7-8cc0-ec6b20567827/content", originalFilename: "shot.png", contentType: "image/png",
+    }).mockResolvedValue({
+      id: "266ff1d0-6be9-47cb-b2ed-300fce5fbcd3", contentPath: "/api/attachments/266ff1d0-6be9-47cb-b2ed-300fce5fbcd3/content", originalFilename: "next.png", contentType: "image/png",
+    });
+    renderComposer({ onAdd, workMode: "standard", draftKey, onAttachImage });
+    typeText("Check **this** screenshot");
+    pasteFiles([new File(["png"], "shot.png", { type: "image/png" })]);
+    await flushAsync();
+    expect(container.querySelector('[data-testid="task-chat-composer-images"]')).not.toBeNull();
+
+    flushSync(() => sendButton().click());
+    await flushAsync();
+    expect(onAdd.mock.calls[0]?.[0]).toBe("Check **this** screenshot\n\n![shot.png](/api/attachments/8c365a89-5545-40f7-8cc0-ec6b20567827/content)");
+    expect(onAdd.mock.calls[0]?.[3]).toEqual(["8c365a89-5545-40f7-8cc0-ec6b20567827"]);
+    expect(editable().textContent).toBe("");
+    expect(container.querySelector('[data-testid="task-chat-composer-images"]')).toBeNull();
+    // Hiding the submitted preview must not discard its reload/retry receipt.
+    expect(loadDraftAttachments(draftKey).map(item => item.attachmentId)).toEqual(["8c365a89-5545-40f7-8cc0-ec6b20567827"]);
+    typeText("Next draft");
+    pasteFiles([new File(["next"], "next.png", { type: "image/png" })]);
+    await flushAsync();
+    expect(container.querySelector('img[alt="next.png"]')).not.toBeNull();
+    expect(container.querySelector('img[alt="shot.png"]')).toBeNull();
+    if (outcome === "saved") resolveSend();
+    else rejectSend(outcome === "unknown" ? new CommentSubmissionUnknownError() : new Error("Rejected"));
+    await flushAsync();
+    await flushAsync();
+    if (outcome === "saved") {
+      expect(container.querySelector('img[alt="shot.png"]')).toBeNull();
+      expect(editable().textContent).toBe("Next draft");
+      expect(loadDraftAttachments(draftKey).map(item => item.attachmentId)).toEqual(["266ff1d0-6be9-47cb-b2ed-300fce5fbcd3"]);
+    } else {
+      expect(container.querySelectorAll('img[alt="shot.png"]')).toHaveLength(1);
+      expect(editable().textContent).toBe("Check **this** screenshot\n\nNext draft");
+      expect(loadDraftAttachments(draftKey).map(item => item.attachmentId)).toEqual(["8c365a89-5545-40f7-8cc0-ec6b20567827", "266ff1d0-6be9-47cb-b2ed-300fce5fbcd3"]);
+      if (outcome === "unknown") expect(loadDraftSubmission(draftKey)?.request?.attachmentIds).toEqual(["8c365a89-5545-40f7-8cc0-ec6b20567827"]);
+    }
+    expect(container.querySelectorAll('img[alt="next.png"]')).toHaveLength(1);
   });
 
   it("keeps failed image uploads in the preview row for retry without changing the text", async () => {
@@ -2669,6 +2707,37 @@ describe("TaskChatComposer", () => {
         expect(editable().textContent).toBe("Keep this replacement text");
         expect(container.textContent).toContain("Editing queued message");
       });
+    });
+
+    it("shows why a concurrent queue change rejected the save and keeps the edit", async () => {
+      const onSave = vi.fn().mockRejectedValue(new ApiError(
+        "The queued messages changed in another session",
+        409,
+        { error: "The queued messages changed in another session", details: { code: "queued_comment_revision_conflict" } },
+      ));
+      render(<Harness onSave={onSave} />);
+      await flushAsync();
+      typeText("Make the website blue");
+
+      pressKey("Enter", { metaKey: true });
+      await flushAsync();
+
+      await vi.waitFor(() => {
+        const alert = container.querySelector('[data-testid="task-chat-queued-edit-error"]');
+        expect(alert?.getAttribute("role")).toBe("alert");
+        expect(alert?.textContent).toBe(
+          "The queue changed in another session. Your edit is still here; save again to apply it to the latest queue.",
+        );
+        expect(editable().textContent).toBe("Make the website blue");
+        expect(container.textContent).toContain("Editing queued message");
+      });
+
+      onSave.mockResolvedValueOnce(undefined);
+      pressKey("Enter", { metaKey: true });
+      await flushAsync();
+      await flushAsync();
+      expect(onSave).toHaveBeenLastCalledWith("queued-1", "Make the website blue");
+      expect(container.querySelector('[data-testid="task-chat-queued-edit-error"]')).toBeNull();
     });
 
     it("offers a stale edit as a new queued message and preserves its Markdown source", async () => {
