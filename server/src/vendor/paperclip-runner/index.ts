@@ -245,7 +245,3 @@ export const parseNativeCursorCloudConfig = runner.parseNativeCursorCloudConfig;
 
 export const archiveCursorCloudSessionCheckpoint = runner.archiveCursorCloudSessionCheckpoint;
 
-export const readStoppedCodexThread = runner.readStoppedCodexThread;
-export const stoppedCodexSourceUnchanged = runner.stoppedCodexSourceUnchanged;
-export const proveClosedReadOnlyCodexThread = runner.proveClosedReadOnlyCodexThread;
-export const PAPERCLIP_SEMANTIC_ACTION_CATALOG = runner.PAPERCLIP_SEMANTIC_ACTION_CATALOG;

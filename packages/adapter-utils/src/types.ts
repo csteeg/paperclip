@@ -778,10 +778,6 @@ export interface CreateConfigValues {
   claudeTranscriptRetentionEnabled?: boolean;
   claudeTranscriptRetentionDays?: number;
   claudeEngine?: "auto" | "cli" | "acp";
-  claudeProfileImportMode?: "off" | "copy" | "cache";
-  claudeProfileSourceDir?: string;
-  claudeTranscriptRetentionEnabled?: boolean;
-  claudeTranscriptRetentionDays?: number;
   claudeAcpAgentCommand?: string;
   claudeAcpMode?: "persistent" | "oneshot";
   claudeAcpNonInteractivePermissions?: "deny" | "fail";

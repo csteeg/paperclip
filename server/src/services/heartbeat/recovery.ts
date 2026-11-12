@@ -2732,8 +2732,6 @@ export function createHeartbeatRecovery(db: Db, dependencies: HeartbeatRecoveryD
         !!run.controllerBootId &&
         !revokedState.processPid &&
         !revokedState.processGroupId;
-      const retryBudgetRun = restartInterruptedBeforeDispatch
-        ? run : { ...run, errorCode: "process_lost", resultJson: null };
       // The run's owner was another server boot: a restart or replacement
       // ended it, not the agent's work. Its continuation uses the
       // server-restart lane (scheduleBoundedRetryForRun), never the failure

@@ -8,7 +8,6 @@ import { deliveredQueuedCommentIds } from "../queued-comment-delivery.js";
 import { hasAutomaticInteractionDeliveryHold, INTERACTION_DELIVERY_DENIED, recheckQueuedRunInteractions, withInteractionDeliveryOrigin } from "../agent-interaction-delivery.js";
 import { deferredWorkIntentWait } from "../work-intent-outbox.js";
 import { notifyIssueRecovery } from "../issue-recovery-notifications.js";
-import { hasPendingNativeReviewSiblings } from "../native-runtime/native-review-renewal.js";
 import { createHeartbeatTimerPolicy } from "./timer-policy.js";
 import { preparePoolAdapterClaim } from "./effective-run-adapter.js";
 import { legacyQuotaFenceForFirstClaim } from "./quota-prestart-fence.js";

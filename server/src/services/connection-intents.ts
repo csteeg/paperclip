@@ -16,7 +16,6 @@ import { logActivity } from "./activity-log.js";
 import { aiConnectionService } from "./ai-connections.js";
 import { aiConnectionBindingSchema, aiConnectionRouterBindingSchema, effectiveAiConnectionInput } from "@paperclipai/shared";
 import { aiBindingForAuthRecovery, isAiAuthenticationFailure, isAiAuthenticationRepairable } from "./ai-auth-failure.js";
-import { classifyRunLiveness } from "./run-liveness.js";
 import { and, eq, desc, isNull, notInArray, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
