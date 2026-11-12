@@ -115,7 +115,7 @@
       "defaults": {
         "serverUrl": "https://dev.azure.com"
       },
-      "guidanceMd": "Create a short-lived Azure DevOps personal access token with Code (Read) permission, enter it below, and provide the organization name. This connection action only lists repository metadata. Git push is a separate capability and requires Code (Read & Write) permission through the supported Git credential path. Prefer Microsoft Entra sign-in when your organization supports it.",
+      "guidanceMd": "Create a short-lived Azure DevOps personal access token with Code (Read) permission, enter it below, and provide the organization name. This connection action only lists repository metadata. Prefer Microsoft Entra sign-in when your organization supports it.",
       "riskTier": "S2",
       "credentialFields": [
         {

@@ -347,7 +347,7 @@ import {
   authorizeFailedChatRunRetryWake,
 } from "./durable-chat-wakeup.js";
 import { prepareHeartbeatGitHubLaunchers } from "./heartbeat-github-launchers.js";
-import { canonicalProjectGitHubRepositories, canonicalGitHubProjectBindings, isGitHubProjectRemote, resolveBoundProjectGitHubCredentials } from "./project-run-github-access.js";
+import { assertRunProjectGitHubAccess, canonicalProjectGitHubRepositories, canonicalGitHubProjectBindings, resolveBoundProjectGitHubCredentials } from "./project-run-github-access.js";
 import { isAzureDevOpsRemote } from "./git-credential-policy.js";
 import { canonicalAzureProjectBindings } from "./azure-project-repository-bindings.js";
 import {
@@ -3180,13 +3180,10 @@ export function heartbeatService(
         .filter((url): url is string => Boolean(url));
       const azureProjectRepositories = taskProjectContext?.id || projectRepositories.some(workspace => Boolean(workspace.projectId))
         ? canonicalAzureProjectBindings(projectRepositories) : undefined;
-      const pendingGitHubBindings = canonicalGitHubProjectBindings(projectRepositories);
-      if (projectRepoUrls.some(url => isGitHubProjectRemote(url) && !canonicalProjectGitHubRepositories([url]).length) ||
-          (useHostGitHub && pendingGitHubBindings.length > 0))
-        throw forbidden("Project GitHub authorization is unavailable. Reconnect an authorized connection.");
-      const requireGitHubConnection = pendingGitHubBindings.length > 0;
+      const requireGitHubConnection = await assertRunProjectGitHubAccess(db, { companyId: agent.companyId, agentId: agent.id, runId: run.id,
+        hostGitHub: useHostGitHub, repoUrls: projectRepoUrls });
       const githubProjectRepositories = requireGitHubConnection ? canonicalProjectGitHubRepositories(projectRepoUrls) : undefined;
-      const githubProjectBindings = requireGitHubConnection ? pendingGitHubBindings : undefined;
+      const githubProjectBindings = requireGitHubConnection ? canonicalGitHubProjectBindings(projectRepositories) : undefined;
       if (githubProjectBindings) await resolveBoundProjectGitHubCredentials(db, { companyId: agent.companyId,
         agentId: agent.id, runId: run.id, bindings: githubProjectBindings });
       if (providerApiPlacement && (requireGitHubConnection || projectRepoUrls.some(isAzureDevOpsRemote)))

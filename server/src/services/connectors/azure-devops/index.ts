@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { HttpError } from "../../../errors.js";
-import { azureDevOpsAuthorization, loadAzureDevOpsRepositories } from "./repositories.js";
+import { AzureDevOpsResponseError, azureDevOpsAuthorization, loadAzureDevOpsRepositories } from "./repositories.js";
 import { AZURE_DEVOPS_API_URL, AZURE_DEVOPS_ENTRA_METHOD, AZURE_DEVOPS_ENTRA_WRITE_METHOD, AZURE_DEVOPS_PAT_METHOD, AZURE_DEVOPS_TOOLS } from "./catalog.js";
 
 export { AZURE_DEVOPS_API_URL, AZURE_DEVOPS_ENTRA_METHOD, AZURE_DEVOPS_ENTRA_WRITE_METHOD, AZURE_DEVOPS_PAT_METHOD, AZURE_DEVOPS_TOOLS, azureDevOpsRisk, isCurrentAzureDevOpsCatalogEntry } from "./catalog.js";
@@ -65,6 +65,10 @@ export function azureDevOpsClient(connection: Connection, headers: Record<string
     };
     try { return await loadAzureDevOpsRepositories(organization, { Authorization: authorization }, loaderRequest, requestSignal); }
     catch (error) {
+      if (error instanceof AzureDevOpsResponseError && error.kind === "denied")
+        throw new HttpError(403, "Azure DevOps denied access. Reconnect and check repository permissions.", { code: "azure_devops_access_denied" });
+      if (error instanceof AzureDevOpsResponseError && error.kind === "rate_limited")
+        throw new HttpError(429, "Azure DevOps rate limit reached. Try again later.", { code: "azure_devops_rate_limited" });
       throw new HttpError(502, "Azure DevOps could not complete the repository request.", { code: "azure_devops_request_failed" });
     }
   }

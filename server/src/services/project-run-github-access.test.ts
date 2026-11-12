@@ -1,11 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Db } from "@paperclipai/db";
-import { assertRunProjectGitHubAccess, authorizeProjectGitHubCheckout } from "./project-run-github-access.js";
+import { assertRunProjectGitHubAccess } from "./project-run-github-access.js";
 
 function grantDb(fullNames: string[] = ["org/repo"]) {
   const rows = [{
     tenant: { github: { repositories: fullNames.map(fullName => ({ id: "123", fullName })) } },
-    refs: [] as Array<{ configPath: string }>,
   }];
   const where = vi.fn().mockResolvedValue(rows);
   const from = vi.fn().mockReturnValue({ where });
@@ -17,10 +16,6 @@ function grantDb(fullNames: string[] = ["org/repo"]) {
     where,
     setRepositoryId(id: string) {
       rows[0]!.tenant.github.repositories.forEach(repository => { repository.id = id; });
-    },
-    usePat() {
-      rows[0]!.tenant.github.repositories = [];
-      rows[0]!.refs = [{ configPath: "credentials.authorization" }];
     },
   };
 }
@@ -41,41 +36,6 @@ const available = () => ({
 const liveRepositoryResponse = (id: number) => ({ ok: true, status: 200, json: vi.fn().mockResolvedValue({ id }) });
 
 describe("run project GitHub access policy", () => {
-  it("allows a PAT only for a repository with a bound ID and live access", async () => {
-    const catalog = grantDb();
-    catalog.usePat();
-    const resolve = vi.fn().mockResolvedValue(available());
-    const request = vi.fn().mockResolvedValue({ ...liveRepositoryResponse(123), json: vi.fn().mockResolvedValue({ id: 123, full_name: "org/repo", permissions: { pull: true } }) }) as unknown as typeof fetch;
-    const input = { ...run, repoUrls: ["https://github.com/org/repo"], expectedRepositoryIds: { "org/repo": "123" } };
-    await expect(assertRunProjectGitHubAccess(catalog.db, input, resolve, request)).resolves.toBe(true);
-    await expect(assertRunProjectGitHubAccess(catalog.db, { ...run, repoUrls: input.repoUrls }, resolve, request)).rejects.toThrow(/unavailable/i);
-    await expect(assertRunProjectGitHubAccess(catalog.db, { ...input, expectedRepositoryIds: { "org/repo": "456" } }, resolve, request)).rejects.toThrow(/unavailable/i);
-  });
-  it.each([
-    { id: 123, full_name: "org/repo", permissions: { pull: false } },
-    { id: 123, full_name: "other/repo", permissions: { pull: true } },
-    { id: 456, full_name: "org/repo", permissions: { pull: true } },
-  ])("rejects a PAT when GitHub returns an unauthorized repository", async payload => {
-    const catalog = grantDb(); catalog.usePat();
-    const resolve = vi.fn().mockResolvedValue(available());
-    const request = vi.fn().mockResolvedValue({ ok: true, json: vi.fn().mockResolvedValue(payload) }) as unknown as typeof fetch;
-    await expect(assertRunProjectGitHubAccess(catalog.db, { ...run, repoUrls: ["https://github.com/org/repo"],
-      expectedRepositoryIds: { "org/repo": "123" } }, resolve, request)).rejects.toThrow(/unavailable/i);
-  });
-  it("rechecks the project repository ID after a PAT lookup", async () => {
-    let workspaceId = "123";
-    const db = { select: (fields: Record<string, unknown>) => ({ from: () => ({ where: async () =>
-      "refs" in fields ? [{ tenant: null, refs: [{ configPath: "credentials.authorization" }] }]
-        : [{ repoUrl: "https://github.com/org/repo", metadata: { githubRepositoryId: workspaceId } }],
-    }) }) } as unknown as Db;
-    const resolve = vi.fn().mockResolvedValue(available());
-    const request = vi.fn().mockImplementation(async () => {
-      workspaceId = "456";
-      return { ok: true, json: async () => ({ id: 123, full_name: "org/repo", permissions: { pull: true } }) };
-    }) as unknown as typeof fetch;
-    await expect(authorizeProjectGitHubCheckout(db, { ...run, projectId: "project", repoUrl: "https://github.com/org/repo" }, resolve, request))
-      .rejects.toThrow(/unavailable/i);
-  });
   it.each([
     "https://github.com/org/repo.git",
     "https://www.github.com/org/repo.git",

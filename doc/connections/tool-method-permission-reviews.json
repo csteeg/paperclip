@@ -2969,7 +2969,7 @@
         "offline_access"
       ],
       "capability": "read",
-      "supportedActions": "List Git repositories and their metadata in the configured Azure DevOps organization (read). No source contents, repository writes, project administration, work items, pipelines, or other operations are exposed. Git push is a separate capability and requires Code (Read & Write) permission through the supported Git credential path.",
+      "supportedActions": "List Git repositories and their metadata in the configured Azure DevOps organization (read). No source contents, repository writes, project administration, work items, pipelines, or other operations are exposed.",
       "providerRestrictions": "Delegated Microsoft Entra access follows the signed-in user's Azure DevOps organization membership and permissions. The Azure DevOps resource must have the Code (Read) delegated permission consented for the Entra application. Microsoft account (MSA) users are not supported by the Entra flow.",
       "evidence": [
         "https://learn.microsoft.com/en-us/rest/api/azure/devops/git/repositories/list?view=azure-devops-rest-7.1",
@@ -3008,7 +3008,7 @@
       "policy": "provider-key",
       "requestedScopes": [],
       "capability": "read",
-      "supportedActions": "List Git repositories and their metadata in the configured Azure DevOps organization (read). No source contents, repository writes, project administration, work items, pipelines, or other operations are exposed. Git push is a separate capability and requires Code (Read & Write) permission through the supported Git credential path.",
+      "supportedActions": "List Git repositories and their metadata in the configured Azure DevOps organization (read). No source contents, repository writes, project administration, work items, pipelines, or other operations are exposed.",
       "keyPermissions": "Create a short-lived personal access token with Code (Read) only. Azure DevOps organization policies may restrict PAT creation, permissions, or lifetime; Paperclip cannot increase an existing token's permissions.",
       "providerRestrictions": "The token owner must belong to the configured organization and have permission to list its repositories. PATs are bearer credentials and inherit organization policy and user access.",
       "evidence": [

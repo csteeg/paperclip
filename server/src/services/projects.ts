@@ -1242,6 +1242,7 @@ export function projectService(db: Db, options: { captureWorkspaceUpdates?: bool
       projectId: string,
       workspaceId: string,
       data: UpdateWorkspaceInput,
+      updateOptions?: { mergeRepositoryMetadata?: boolean; clearRepositoryMetadata?: boolean },
     ): Promise<ProjectWorkspace | null> => db.transaction(async tx => {
       const db = tx as unknown as Db;
       if (!await lockProjectRootMutation(tx, projectId)) return null;
@@ -1302,16 +1303,28 @@ export function projectService(db: Db, options: { captureWorkspaceUpdates?: bool
         key in patch && patch[key as keyof typeof patch] !== existing[key as keyof typeof existing])) {
         patch.claudeProjectTrust = null;
       }
-      if (data.metadata !== undefined || data.runtimeConfig !== undefined) {
+      const clearRepositoryMetadata = updateOptions?.clearRepositoryMetadata && data.repoUrl !== undefined && data.repoUrl !== existing.repoUrl;
+      if (data.metadata !== undefined || data.runtimeConfig !== undefined || clearRepositoryMetadata) {
+        const { githubRepositoryId: _githubId, githubRepositoryUrl: _githubUrl, githubRepositoryPrivate: _githubPrivate,
+          repositoryProvider: _provider, repositoryId: _id, repositoryUrl: _url, repositoryPrivate: _private,
+          ...retainedMetadata } = (existing.metadata as Record<string, unknown> | null) ?? {};
+        const { githubRepositoryId: _inputGithubId, githubRepositoryUrl: _inputGithubUrl, githubRepositoryPrivate: _inputGithubPrivate,
+          repositoryProvider: _inputProvider, repositoryId: _inputId, repositoryUrl: _inputUrl, repositoryPrivate: _inputPrivate,
+          ...inputMetadata } = (data.metadata as Record<string, unknown> | null) ?? {};
+        const metadata = clearRepositoryMetadata
+          ? { ...retainedMetadata, ...inputMetadata }
+          : updateOptions?.mergeRepositoryMetadata
+          ? { ...retainedMetadata, ...(data.metadata ?? {}) }
+          : data.metadata;
         patch.metadata =
           data.runtimeConfig !== undefined
             ? mergeProjectWorkspaceRuntimeConfig(
-                data.metadata !== undefined
-                  ? (data.metadata as Record<string, unknown> | null | undefined)
+                data.metadata !== undefined || clearRepositoryMetadata
+                  ? (metadata as Record<string, unknown> | null | undefined)
                   : ((existing.metadata as Record<string, unknown> | null | undefined) ?? null),
                 data.runtimeConfig ?? null,
               )
-            : data.metadata;
+            : metadata;
       }
 
       if (["repoUrl", "repoRef", "defaultRef", "sourceType", "remoteProvider", "remoteWorkspaceRef"].some(key =>

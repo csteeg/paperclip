@@ -59,23 +59,15 @@ export async function resolveRunProjectGitHubCredentials(db: Db, input: {
   const token = status.env?.PAPERCLIP_GIT_TOKEN;
   if (status.status !== 'available' || !token || !status.grantId || !status.connectionId) throw unavailable();
   const assertCatalog = async () => {
-    const [grant] = await db.select({ tenant: connectionGrants.providerTenant, refs: connectionGrants.credentialSecretRefs }).from(connectionGrants).where(and(
-      eq(connectionGrants.companyId, input.companyId), eq(connectionGrants.id, status.grantId!),
-      eq(connectionGrants.connectionId, status.connectionId!), eq(connectionGrants.status, 'active')));
-    const pat = grant?.refs?.some(ref => ref.configPath === 'credentials.authorization') &&
-      !grant.refs.some(ref => ref.configPath === 'oauth.access_token');
+    const [grant] = await db.select({ tenant: connectionGrants.providerTenant }).from(connectionGrants).where(and(
+      eq(connectionGrants.companyId, input.companyId), eq(connectionGrants.id, status.grantId!), eq(connectionGrants.status, 'active')));
     const allowed = grant?.tenant?.github?.repositories ?? [];
     return repositories.map(repo => {
-      if (pat) {
-        const id = input.expectedRepositoryIds?.[repo.toLowerCase()];
-        if (!id || !/^\d+$/.test(id)) throw unavailable();
-        return { id, pat: true };
-      }
       const matches = allowed.filter(entry => entry.fullName.toLowerCase() === decodeURIComponent(repo).toLowerCase());
       const ids = [...new Set(matches.map(entry => entry.id))];
       if (ids.length !== 1 || !/^\d+$/.test(ids[0]!)) throw unavailable();
       if (input.expectedRepositoryIds && input.expectedRepositoryIds[repo.toLowerCase()] !== ids[0]) throw unavailable();
-      return { id: ids[0]!, pat: false };
+      return ids[0]!;
     });
   };
   let validated: Awaited<ReturnType<typeof resolveGitHubOperationCredentials>>;
@@ -90,11 +82,9 @@ export async function resolveRunProjectGitHubCredentials(db: Db, input: {
           redirect: 'error', signal: input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(8_000)]) : AbortSignal.timeout(8_000),
         });
         if (!response.ok) { await response.body?.cancel(); throw unavailable(); }
-        const payload = await response.json() as { id?: unknown; full_name?: unknown; permissions?: { pull?: unknown } };
+        const payload = await response.json() as { id?: unknown };
         const index = repositories.indexOf(repository);
-        if ((typeof payload?.id !== 'number' && typeof payload?.id !== 'string') || String(payload.id) !== repositoryIds[index]!.id ||
-            (repositoryIds[index]!.pat && (typeof payload.full_name !== 'string' ||
-              payload.full_name.toLowerCase() !== decodeURIComponent(repository).toLowerCase() || payload.permissions?.pull !== true)))
+        if ((typeof payload?.id !== 'number' && typeof payload?.id !== 'string') || String(payload.id) !== repositoryIds[index])
           throw unavailable();
       }
     }));
