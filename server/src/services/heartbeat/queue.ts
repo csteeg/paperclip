@@ -1,4 +1,5 @@
 import { CONTEXT_COMPACTION_WAKE_REASON, ContextCompactionError, isContextCompactionRun, readContextCompactionRequest } from "../context-compaction.js";
+import { hasPendingNativeReviewSiblings } from "../native-runtime/native-review-renewal.js";
 import { createHeartbeatTimerPolicy } from "./timer-policy.js";
 import { preparePoolAdapterClaim } from "./effective-run-adapter.js";
 import { legacyQuotaFenceForFirstClaim } from "./quota-prestart-fence.js";
@@ -2590,6 +2591,10 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
       }
       issueId = readNonEmptyString(enrichedContextSnapshot.issueId) ?? issueId;
     }
+    const resolvedReviewId = readNonEmptyString(enrichedContextSnapshot.interactionId) ?? readNonEmptyString(payload?.interactionId);
+    if (issueId && resolvedReviewId && await hasPendingNativeReviewSiblings(db, {
+      companyId: agent.companyId, issueId, agentId: agent.id, interactionId: resolvedReviewId,
+    })) return null;
     const effectiveTaskKey =
       readNonEmptyString(enrichedContextSnapshot.taskKey) ?? taskKey;
     const genericTimerWake =
