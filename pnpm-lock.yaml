@@ -40,7 +40,7 @@ patchedDependencies:
     hash: vbylpnnxt5av2zdnuqmf6hjyjy
     path: patches/@discordjs__ws@1.2.3.patch
   acpx@0.22.0:
-    hash: ozdlp7kjnskmuikatu7vigg7la
+    hash: gz2hqsswils6tbuug53v4v3rne
     path: patches/acpx@0.22.0.patch
   embedded-postgres@18.1.0-beta.16:
     hash: kdcv7jktfkjeobz3aaelnxgkqa
@@ -167,7 +167,7 @@ importers:
         version: link:../shared
       acpx:
         specifier: 0.22.0
-        version: 0.22.0(patch_hash=ozdlp7kjnskmuikatu7vigg7la)
+        version: 0.22.0(patch_hash=gz2hqsswils6tbuug53v4v3rne)
       picocolors:
         specifier: ^1.1.1
         version: 1.1.1
@@ -526,7 +526,7 @@ importers:
         version: '@openai/codex@0.166.0'
       acpx:
         specifier: 0.22.0
-        version: 0.22.0(patch_hash=ozdlp7kjnskmuikatu7vigg7la)
+        version: 0.22.0(patch_hash=gz2hqsswils6tbuug53v4v3rne)
       ajv:
         specifier: ^8.20.0
         version: 8.20.0
@@ -1027,7 +1027,7 @@ importers:
         version: 8.18.0
       acpx:
         specifier: 0.22.0
-        version: 0.22.0(patch_hash=ozdlp7kjnskmuikatu7vigg7la)
+        version: 0.22.0(patch_hash=gz2hqsswils6tbuug53v4v3rne)
       ai:
         specifier: 7.0.130
         version: 7.0.130(zod@4.6.7)
@@ -14096,7 +14096,7 @@ snapshots:
 
   acorn@8.18.0: {}
 
-  acpx@0.22.0(patch_hash=ozdlp7kjnskmuikatu7vigg7la):
+  acpx@0.22.0(patch_hash=gz2hqsswils6tbuug53v4v3rne):
     dependencies:
       '@agentclientprotocol/sdk': 1.9.0(zod@4.6.7)
       '@openclaw/fs-safe': 0.27.2
