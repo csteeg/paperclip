@@ -797,9 +797,9 @@ describe("TaskChatComposer", () => {
     flushSync(() => sendButton().click());
     await flushAsync();
     expect(editable().textContent).toBe("Keep this draft");
-    expect(container.querySelector('[data-testid="task-chat-goal-error"]')?.textContent).toBeTruthy();
+    expect(container.querySelector('[data-testid="task-chat-composer-error"]')?.textContent).toBeTruthy();
     typeText(" changed");
-    expect(container.querySelector('[data-testid="task-chat-goal-error"]')).toBeNull();
+    expect(container.querySelector('[data-testid="task-chat-composer-error"]')).toBeNull();
   });
 
   it("retains explicit upload receipt IDs across a failed send without uploading again", async () => {
@@ -1220,6 +1220,133 @@ describe("TaskChatComposer", () => {
     pressKey("Enter");
     await flushAsync();
     expect(onAdd).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes an untouched composer when the saved task mode arrives after mount", async () => {
+    const onAdd = vi.fn().mockResolvedValue(undefined);
+    const onWorkModeChange = vi.fn().mockResolvedValue(undefined);
+    renderComposer({ onAdd, onWorkModeChange, workMode: "standard", draftKey: "late-planning-mode" });
+    renderComposer({ onAdd, onWorkModeChange, workMode: "planning", draftKey: "late-planning-mode" });
+    await flushAsync();
+    expect(container.querySelector('[data-testid="task-chat-composer-mode"]')?.getAttribute("data-pending-work-mode")).toBe("planning");
+    typeText("Use the saved planning mode");
+    pressKey("Enter", { metaKey: true });
+    await flushAsync();
+    expect(onAdd).toHaveBeenCalledOnce();
+    expect(onWorkModeChange).not.toHaveBeenCalled();
+  });
+
+  it("preserves an explicitly selected pending mode when the saved task mode refreshes", async () => {
+    const onAdd = vi.fn().mockResolvedValue(undefined);
+    const onWorkModeChange = vi.fn().mockResolvedValue(undefined);
+    renderComposer({ onAdd, onWorkModeChange, workMode: "standard", draftKey: "selected-planning-mode" });
+    pressKey("Tab", { shiftKey: true });
+    renderComposer({ onAdd, onWorkModeChange, workMode: "ask", draftKey: "selected-planning-mode" });
+    await flushAsync();
+    expect(container.querySelector('[data-testid="task-chat-composer-mode"]')?.getAttribute("data-pending-work-mode")).toBe("planning");
+    typeText("Keep my selected planning mode");
+    pressKey("Enter", { metaKey: true });
+    await flushAsync();
+    expect(onWorkModeChange).toHaveBeenCalledWith("planning");
+    expect(onAdd).toHaveBeenCalledOnce();
+  });
+
+  it("follows later saved task modes after a selected mode has been submitted", async () => {
+    const onAdd = vi.fn().mockResolvedValue(undefined);
+    const onWorkModeChange = vi.fn().mockResolvedValue(undefined);
+    const props = { onAdd, onWorkModeChange, draftKey: "consumed-planning-mode" };
+    renderComposer({ ...props, workMode: "standard" });
+    pressKey("Tab", { shiftKey: true });
+    typeText("Submit the selected planning mode");
+    pressKey("Enter", { metaKey: true });
+    await flushAsync();
+    expect(onAdd).toHaveBeenCalledOnce();
+    renderComposer({ ...props, workMode: "planning" });
+    await flushAsync();
+    renderComposer({ ...props, workMode: "ask" });
+    await flushAsync();
+    expect(container.querySelector('[data-testid="task-chat-composer-mode"]')?.getAttribute("data-pending-work-mode")).toBe("ask");
+  });
+
+  it("uses the latest saved task mode when it changes before the send is acknowledged", async () => {
+    let completeSend!: () => void;
+    const onAdd = vi.fn(() => new Promise<void>(resolve => { completeSend = resolve; }));
+    const onWorkModeChange = vi.fn().mockResolvedValue(undefined);
+    const props = { onAdd, onWorkModeChange, draftKey: "canonical-mode-before-receipt" };
+    renderComposer({ ...props, workMode: "standard" });
+    pressKey("Tab", { shiftKey: true });
+    typeText("Submit the planning choice");
+    pressKey("Enter", { metaKey: true });
+    await flushAsync();
+    expect(onAdd).toHaveBeenCalledOnce();
+    renderComposer({ ...props, workMode: "ask" });
+    await flushAsync();
+    expect(container.querySelector('[data-testid="task-chat-composer-mode"]')?.getAttribute("data-pending-work-mode")).toBe("planning");
+    await act(async () => { completeSend(); });
+    await flushAsync();
+    expect(container.querySelector('[data-testid="task-chat-composer-mode"]')?.getAttribute("data-pending-work-mode")).toBe("ask");
+  });
+
+  it("does not consume a new pending mode choice when an earlier send completes", async () => {
+    let completeSend!: () => void;
+    const onAdd = vi.fn(() => new Promise<void>(resolve => { completeSend = resolve; }));
+    const onWorkModeChange = vi.fn().mockResolvedValue(undefined);
+    const props = { onAdd, onWorkModeChange, draftKey: "next-mode-while-sending" };
+    renderComposer({ ...props, workMode: "standard" });
+    pressKey("Tab", { shiftKey: true });
+    typeText("Send the planning message");
+    pressKey("Enter", { metaKey: true });
+    await flushAsync();
+    expect(onAdd).toHaveBeenCalledOnce();
+    pressKey("Tab", { shiftKey: true });
+    await act(async () => { completeSend(); });
+    renderComposer({ ...props, workMode: "planning" });
+    await flushAsync();
+    expect(container.querySelector('[data-testid="task-chat-composer-mode"]')?.getAttribute("data-pending-work-mode")).toBe("ask");
+  });
+
+  it.each([
+    { recovery: "receipt", newerChoice: false },
+    { recovery: "resend", newerChoice: false },
+    { recovery: "receipt", newerChoice: true },
+    { recovery: "resend", newerChoice: true },
+    { recovery: "receipt", newerChoice: "same" },
+    { recovery: "resend", newerChoice: "same" },
+  ])("consumes only the recovered send's mode choice: %j", async ({ recovery, newerChoice }) => {
+    let loseResponse!: (error: Error) => void;
+    const onAdd = vi.fn().mockResolvedValue(undefined).mockImplementationOnce(
+      () => new Promise<void>((_resolve, reject) => { loseResponse = reject; }),
+    );
+    const onWorkModeChange = vi.fn().mockResolvedValue(undefined);
+    const props = { onAdd, onWorkModeChange, draftKey: `recovered-mode-${recovery}-${newerChoice}` };
+    renderComposer({ ...props, workMode: "standard" });
+    pressKey("Tab", { shiftKey: true });
+    typeText("Recover this planning message");
+    pressKey("Enter", { metaKey: true });
+    await flushAsync();
+    expect(onAdd).toHaveBeenCalledOnce();
+    if (newerChoice) {
+      pressKey("Tab", { shiftKey: true });
+      pressKey("Tab", { shiftKey: true });
+      if (newerChoice === "same") pressKey("Tab", { shiftKey: true });
+    }
+    await act(async () => { loseResponse(new CommentSubmissionUnknownError()); });
+    await flushAsync();
+    expect(container.textContent).toContain("Sending when reconnected…");
+    const attemptId = onAdd.mock.calls[0]![4] as string;
+    renderComposer({ ...props, workMode: "ask", confirmedSubmissionIds: recovery === "receipt" ? new Set([attemptId]) : undefined });
+    await flushAsync();
+    if (recovery === "resend") {
+      const resend = Array.from(container.querySelectorAll("button")).find(button => button.textContent === "Resend now")!;
+      flushSync(() => resend.click());
+      await flushAsync();
+      expect(onAdd).toHaveBeenCalledTimes(2);
+      expect(onAdd.mock.calls[1]![4]).toBe(attemptId);
+    }
+    expect(container.textContent).not.toContain("Sending when reconnected…");
+    expect(editable().textContent).toBe("");
+    expect(container.querySelector('[data-testid="task-chat-composer-mode"]')?.getAttribute("data-pending-work-mode") ?? "standard")
+      .toBe(newerChoice === "same" ? "planning" : newerChoice ? "standard" : "ask");
   });
 
   it("reflects an externally updated task mode after mounting", async () => {

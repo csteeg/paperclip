@@ -44,10 +44,9 @@ export function AgentChat() {
   const chat = useQuery({
     queryKey: chatKey,
     queryFn: async () => chatId ? (await agentChatsApi.list(selectedCompanyId!)).find(item => item.id === chatId && item.conversationAgentId === agent!.id) ?? null : agentChatsApi.get(selectedCompanyId!, agent!.id),
-    initialData: () => enabled && agent && session.isSuccess && chatId
+    initialData: () => enabled && agent && session.isSuccess
       ? client.getQueryData<Issue[]>(queryKeys.agentChats.list(selectedCompanyId, userId))
-        ?.find(issue => issue.companyId === selectedCompanyId && issue.conversationAgentId === agent?.id
-          && issue.id === chatId)
+        ?.find(issue => issue.companyId === selectedCompanyId && issue.conversationAgentId === agent?.id && (chatId ? issue.id === chatId : issue.conversationDefault === true))
       : undefined,
     initialDataUpdatedAt: () => {
       const state = client.getQueryState(queryKeys.agentChats.list(selectedCompanyId, userId));

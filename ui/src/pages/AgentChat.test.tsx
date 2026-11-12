@@ -119,7 +119,7 @@ it("opens a stale navigation conversation immediately while revalidating in the 
   client.setDefaultOptions({ queries: { retry: false, staleTime: 30_000, gcTime: Infinity } });
   client.setQueryData(queryKeys.agents.list("company-a"), [{ id: agentId, companyId: "company-a", name: "Helper" }]);
   client.setQueryData(queryKeys.agentChats.list("company-a", "viewer-a"), [{
-    id: "existing-chat", companyId: "company-a", conversationAgentId: agentId,
+    id: "existing-chat", companyId: "company-a", conversationAgentId: agentId, conversationDefault: true,
   } as Issue], { updatedAt: Date.now() - 60_000 });
   api.getChat.mockImplementation(() => new Promise(() => {}));
   render();

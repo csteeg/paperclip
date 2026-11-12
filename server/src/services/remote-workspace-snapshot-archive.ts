@@ -63,6 +63,7 @@ export async function workspaceArchive(input: {
     const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(relative), target));
     return resolved !== ".." && !resolved.startsWith("../");
   };
+  const gitNull = process.platform === "win32" ? "NUL" : os.devNull;
   const git = (cwd: string, args: string[], stdin?: string) => new Promise<string>((resolve, reject) => {
     check();
     const command = child.execFile("git", ["-c", "core.fsmonitor=false", "-c", "pack.threads=1", "-c", "protocol.allow=never", "-c", `core.hooksPath=${gitNull}`, "-C", cwd, ...args], {

@@ -328,6 +328,19 @@ missing successor. The acknowledgement keeps its contiguous-prefix rule without
 returning every historical sequence number. All events stay stored. Counting the
 index entries still grows with the stream length.
 
+A native source event commits in one transaction of two statements. The first
+statement locks the run row. The second statement finds a replayed event, or
+reserves the next sequence and inserts the event, and reads the count and
+maximum for the acknowledgement. The lock stays a separate statement: a
+statement that waits for the lock keeps the snapshot it took before the wait,
+and would miss an event that the lock holder committed. An event that wakes a
+queue looks for its replay in a statement of its own first, because a wake is
+registered before its write and a replayed event registers none. An ordinary
+event without a source identity commits in one statement. Each event commits
+before its append returns; no event waits for another. Measure the cost of one
+event with
+`TSX_DISABLE_CACHE=1 pnpm --filter @paperclipai/server exec tsx scripts/benchmark-run-event-append.ts`.
+
 Conversation recovery reads only the saved run fields used to settle a turn.
 Settlement locks and reads current conversation state without loading the task
 description or comment bodies. It still checks the durable reply or pending
@@ -1853,7 +1866,7 @@ current plugin records and enforce their existing readiness and worker checks.
 
 ### Persistent agent conversations
 
-Migration `0433` keeps the existing conversation as the default for its company, agent and user and permits additional conversations. The partial unique index still protects concurrent creation of the default conversation.
+Migration `0471` keeps the existing conversation as the default for its company, agent and user and permits additional conversations. The partial unique index still protects concurrent creation of the default conversation.
 
 Migration `0274_agent_chat.sql` adds conversation identity/state and session generation/boundary columns to `issues`, plus idempotent client request IDs and processed session-boundary generations to `issue_comments`. The company/agent/user unique index resolves concurrent first writes to one issue. A check constraint preserves the assigned-agent identity and prevents terminal conversation status. Comment request IDs are unique per issue and user. There is no separate chat/message store. Provider sessions continue to use `agent_task_sessions`; `/new` removes only the matching conversation session, and session writers fence stale generations against the issue row.
 

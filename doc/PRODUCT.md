@@ -421,7 +421,7 @@ and completing work are separate actions; sending never starts or interrupts a
 chat turn. Delivery obeys membership, run authority and task privacy. This version delivers
 in-app only.
 
-Coordinator is the standard workspace for everyone. Settings → Experimental offers a personal **Classic workspace** opt-in, off by default. Historical Coordinator experiment settings do not enable Classic. Agent Chat is available to everyone on new and existing instances. The retired `enableAgentChat` key remains accepted for compatibility; stored and managed off values are ignored. Each person can have multiple persistent task-backed conversations per agent and company, with ordinary company task visibility. Existing default conversations remain available for agent-initiated messages. The shared task composer, transcript, tools, files, and document panel remain the interaction surface. Agents clarify goals and hand substantial execution to linked, assigned tasks; a reply ends a turn without completing the conversation. `/new` starts fresh provider context in the same conversation while preserving visible history and artifacts. Healthy idle conversations wait for a message and do not count as unfinished execution work. See `doc/plans/2026-09-10-agent-chat.md` for the implementation contract.
+Coordinator is the standard workspace for everyone. Settings → Experimental offers a personal **Classic workspace** opt-in, off by default. Historical Coordinator experiment settings do not enable Classic. Agent Chat is available to everyone on new and existing instances. The retired `enableAgentChat` key remains accepted for compatibility; stored and managed off values are ignored. Each person can have multiple persistent task-backed conversations per agent and company. Agent-initiated messages use the default conversation. Conversations retain ordinary company task visibility. The shared task composer, transcript, tools, files, and document panel remain the interaction surface. Agents clarify goals and hand substantial execution to linked, assigned tasks; a reply ends a turn without completing the conversation. `/new` starts fresh provider context in the same conversation while preserving visible history and artifacts. Healthy idle conversations wait for a message and do not count as unfinished execution work. See `doc/plans/2026-09-10-agent-chat.md` for the implementation contract.
 
 ### Agent chat project handoff (2026-09-11)
 
@@ -444,9 +444,12 @@ telemetry. See [Announcements](ANNOUNCEMENTS.md).
 
 With Agent Chat enabled, Chat is the first row of the Work section and opens a
 secondary sidebar beside the primary nav. It lists every agent you can chat
-with: the open conversation first, then your other conversations by recent
-activity, then the rest of the roster alphabetically. Terminated agents and
-agents you have left are omitted unless you have history with them. Search
+with: pinned agents first in their saved order, then your conversations by recent
+activity, then the rest of the roster alphabetically. Pin controls appear on hover
+or keyboard focus. Drag a pinned agent's handle to change the order, or use Space,
+the arrow keys, and Space again. Pin order stays personal to the signed-in user
+in the current browser. Search filters the list without changing hidden pins.
+Terminated agents and agents you have left are omitted unless you have history with them. Search
 filters by name, title, or role; **+** starts or reopens a conversation.
 Selecting an agent opens their persistent conversation; it does not reset history
 or create a task until the existing first-write flow requires one.

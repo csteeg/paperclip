@@ -1463,7 +1463,7 @@ export function TaskChatComposer({
             <p
               className="px-1 text-xs text-destructive"
               role="alert"
-              data-testid={creation ? "task-chat-create-error" : queuedEdit ? "task-chat-queued-edit-error" : "task-chat-goal-error"}
+              data-testid={creation ? "task-chat-create-error" : queuedEdit ? "task-chat-queued-edit-error" : "task-chat-composer-error"}
             >
               {actionError}
             </p>
