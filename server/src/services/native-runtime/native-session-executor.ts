@@ -2422,7 +2422,8 @@ function runnerdStateBase(): string {
  * when the caller passes `launchRequestedAt` because every earlier runner of
  * the run was proven stopped, when that state's command journal and lineage
  * files all predate the launch request: a provider starts only from a command
- * the runner journals first.
+ * the runner journals first. A saved state whose session failed before any
+ * provider turn, with its processes proven gone, also leaves the run free.
  */
 export async function unidentifiedLocalRunnerProvenAbsent(input: {
   runId: string; execution: unknown; launchRequestedAt?: number | null;
@@ -2451,12 +2452,12 @@ export async function unidentifiedLocalRunnerProvenAbsent(input: {
     if (!existsSync(resolve(candidate, "control-plane", "control-plane-state.json"))) continue;
     try {
       const state = readRunnerdControlPlaneState(candidate);
-      // Either proof suffices: the saved state is a session that failed before
-      // its first turn, or it predates this launch request.
-      if (record(state.identity).runId === input.runId && !runnerdStateIsFailedSessionBeforeTurn(
-        state, readRunnerdBootstrapJournal(candidate), { localProcesses: process.platform !== "win32",
-          processGone: (id, group) => localProcessDefinitelyGone(id, group) })
-          && !runnerStateUnchangedSince(candidate, input.launchRequestedAt)) return false;
+      if (record(state.identity).runId === input.runId &&
+          !runnerStateUnchangedSince(candidate, input.launchRequestedAt) &&
+          !runnerdStateIsFailedSessionBeforeTurn(state, readRunnerdBootstrapJournal(candidate), {
+            localProcesses: process.platform !== "win32",
+            processGone: (id, group) => localProcessDefinitelyGone(id, group),
+          })) return false;
     } catch {
       return false;
     }
