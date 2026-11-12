@@ -539,6 +539,17 @@ describe("durable, authorized connection routing", () => {
     const codex = { ...grok, runtimeConfig: { provider: "codex", model: "gpt-5.6-sol" } };
     expect(() => applyAiConnectionRouterTaskSettings(source, codex, "paperclip_runner")).toThrow("preserve");
   });
+  it("keeps the agent's disabled search while clearing other search tuning", () => {
+    const codex = { adapterType: "paperclip_runner", poolId: randomUUID(), memberId: randomUUID(), binding: members[1]!.binding,
+      runtimeConfig: { provider: "codex", model: "gpt-5.6-sol" }, notes: [] };
+    expect(applyAiConnectionRouterTaskSettings({ provider: "codex", model: "old", search: false }, codex, "paperclip_runner"))
+      .toEqual({ provider: "codex", model: "gpt-5.6-sol", search: false });
+    expect(applyAiConnectionRouterTaskSettings({ provider: "codex", model: "old", search: true }, codex, "paperclip_runner"))
+      .toEqual({ provider: "codex", model: "gpt-5.6-sol" });
+    const legacySearch = { ...codex, adapterType: "codex_local", runtimeConfig: { engine: "cli", model: "gpt-5.6-sol", search: true } };
+    expect(() => applyAiConnectionRouterTaskSettings({ engine: "cli", search: false }, legacySearch, "codex_local"))
+      .toThrow("cannot enable search");
+  });
   it("preserves the explicit CLI engine for Claude to Codex in-place workspace execution", async () => {
     const target = { poolId: randomUUID(), memberId: members[0]!.id, binding: members[0]!.binding,
       adapterType: "codex_local", runtimeConfig: poolMemberRuntimeConfig(members[0]!, "claude_local").config, notes: [] };
@@ -572,6 +583,27 @@ describe("durable, authorized connection routing", () => {
     await expect(resolve(pool.id, randomUUID(), { adapterType: "codex_local", sourceAdapterConfig: { engine: "cli", extraArgs: ["--sandbox", "read-only"] } }))
       .rejects.toThrow("preserve");
     expect(await db.select().from(aiConnectionTaskPins).where(eq(aiConnectionTaskPins.poolId, pool.id))).toHaveLength(0);
+  });
+  it("does not move a frozen Legacy pin to a backup with wider permissions", async () => {
+    await db.delete(aiConnectionQuotaCooldowns).where(eq(aiConnectionQuotaCooldowns.companyId, companyId));
+    const { harnessPoolService } = await import("../services/harness-pools.js");
+    const backup = await aiConnectionService(db).save(companyId, "alice", { provider: "anthropic", method: "api_key", ownership: "personal", name: "Restricted backup", apiKey: "fixture", agentIds: [], allAgents: true }, randomUUID());
+    const pool = await harnessPoolService(db).save(companyId, { config: {
+      schemaVersion: 2, kind: "harness_pool", name: randomUUID(), enabled: true, mode: "failover", members: [
+        { id: randomUUID(), harness: { type: "claude_code" }, runner: "legacy", connection: members[1]!.binding, model: members[1]!.profile.model, adapterConfig: { engine: "acp", permissionMode: "deny-all" } },
+        { id: randomUUID(), harness: { type: "claude_code" }, runner: "legacy", connection: { mode: "delegated", provider: "anthropic", method: "api_key", ...backup }, model: members[1]!.profile.model, adapterConfig: { engine: "acp", permissionMode: "approve-all" } },
+      ],
+    } }, "alice");
+    const taskKey = randomUUID();
+    const selected = await resolve(pool.id, taskKey, { adapterType: "paperclip_runner", skipUsageProbe: true });
+    expect(selected.runtimeConfig.permissionMode).toBe("deny-all");
+    if (selected.binding.mode === "responsible_user") throw new Error("Expected explicit account");
+    await service().recordQuotaCooldown(companyId, selected.binding.connectionId, await identityFor(selected.binding.grantId), new Date(Date.now() + 60_000));
+    const result = await db.transaction(tx => aiConnectionRouterService(tx as unknown as typeof db).transitionQuotaPin({ companyId, poolId: pool.id,
+      agentId, taskKey, expectedSelection: selected, userId: "alice", adapterType: "paperclip_runner", attemptedMemberIds: [], sourceAdapterConfig: {} }));
+    expect(result.kind).not.toBe("selected");
+    const [pin] = await db.select().from(aiConnectionTaskPins).where(and(eq(aiConnectionTaskPins.poolId, pool.id), eq(aiConnectionTaskPins.taskKey, taskKey)));
+    expect(pin?.selection).toEqual(selected);
   });
   it("does not move a failed pin to an account with an incompatible permission policy", async () => {
     await db.delete(aiConnectionQuotaCooldowns).where(eq(aiConnectionQuotaCooldowns.companyId, companyId));

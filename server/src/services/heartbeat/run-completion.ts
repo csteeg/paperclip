@@ -12,12 +12,12 @@ import { releaseUnchangedFallbackWorkspace } from "./predecessor-retirement-fall
 import { hasNativeExecutionStartEvidence } from "../native-runtime/native-restart-recovery.js";
 import { withoutSqlStatementText } from "@paperclipai/shared";
 import { nativeTaskSessionPublicationHandled } from "../native-runtime/native-task-session-publication.js";
+import { poolFailureKind, POOL_ACCOUNT_DEFAULT_COOLDOWN_MS, hasCompanyPoolAffinity } from "./pool-failover.js";
+import { effectiveRunAgent } from "./effective-run-adapter.js";
 import { boundOriginalMessage, describeRefusedExactResume, interruptedExactResumeCause } from "../native-runtime/native-exact-resume-failure.js";
 import { nativeSessionFailureSourceCode } from "../native-runtime/native-session-executor.js";
 import { createHash } from "node:crypto";
 import { extractClaudeRetryNotBefore, isClaudeProviderQuotaError } from "@paperclipai/adapter-claude-local/server";
-import { poolFailureKind, POOL_ACCOUNT_DEFAULT_COOLDOWN_MS, hasCompanyPoolAffinity } from "./pool-failover.js";
-import { effectiveRunAgent } from "./effective-run-adapter.js";
 import { settledResponsePublicationSql } from "../native-runtime/native-response-publication-receipt.js";
 import { notifyChatRunMilestones } from "../chat-run-milestone-notifications.js";
 import { measureRunPhase } from "../execution-preparation-timing.js";
@@ -498,9 +498,9 @@ export function isConfigurationIncompleteFailedRun(
 }
 
 /**
- * Failure signatures from sandbox→host git workspace reconciliation. These
+ * Failure signatures from sandboxâ†’host git workspace reconciliation. These
  * describe the state of the SHARED workspace (divergent histories written by
- * different runs), not a defect in the agent that happened to run last —
+ * different runs), not a defect in the agent that happened to run last â€”
  * putting the agent into a sticky `error` state over them removes a healthy
  * agent from rotation while leaving the actual problem (the workspace)
  * untouched. The run still fails and carries the full message.

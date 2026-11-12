@@ -738,6 +738,7 @@ describe("Codex creation runner contract", () => {
       expect(paperclipRunnerSupportsPlatform("codex_local", "linux", architecture, "musl")).toBe(false);
       expect(paperclipRunnerSupportsPlatform("codex_local", "linux", architecture, "unknown")).toBe(false);
     }
+    expect(paperclipRunnerSupportsPlatform("codex_local", "win32", "x64")).toBe(true);
     for (const [platform, architecture] of [["darwin", "ia32"], ["linux", "arm"], ["win32", "arm64"], ["freebsd", "x64"]]) expect(paperclipRunnerSupportsPlatform("codex_local", platform, architecture)).toBe(false);
     expect(paperclipRunnerSupportsPlatform("claude_local", "darwin", "arm64")).toBe(true);
   });

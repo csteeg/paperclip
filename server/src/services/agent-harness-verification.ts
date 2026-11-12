@@ -77,12 +77,11 @@ export function agentHarnessVerificationService(db: Db, manager: PluginWorkerMan
   async function verify(snapshot: LifecycleAgent): Promise<"complete" | "pending" | "waiting"> {
     const [agent] = await db.select().from(agents).where(and(eq(agents.id, snapshot.id), eq(agents.lifecycleVersion, snapshot.lifecycleVersion)));
     if (!agent) return "pending";
-    let adapterType = agent.adapterType;
-    if (adapterType === "paperclip_runner" && ["openai_dot", "grok_bot"].includes(String(agent.adapterConfig.provider))) {
+    if (agent.adapterType === "paperclip_runner" && ["openai_dot", "grok_bot"].includes(String(agent.adapterConfig.provider))) {
       const binding = await dotRunnerBroker(db).bindingForAgent(agent.companyId, agent.id);
       return binding?.status === "ready" && binding.wakeVerified && binding.id === agent.adapterConfig[agent.adapterConfig.provider === "grok_bot" ? "externalBindingId" : "dotBindingId"] ? "complete" : "pending";
     }
-    if (adapterType === "paperclip_runner" && agent.adapterConfig.provider === "muse") {
+    if (agent.adapterType === "paperclip_runner" && agent.adapterConfig.provider === "muse") {
       const binding = await museRunnerBroker(db).bindingForAgent(agent.companyId,agent.id);
       // A successful read of these external facts has no retry deadline. The
       // real confirmation/configuration producer rechecks this phase durably.
@@ -92,6 +91,7 @@ export function agentHarnessVerificationService(db: Db, manager: PluginWorkerMan
     const responsibleUserId = agent.lifecycleOperation?.responsibleUserId ?? company.defaultResponsibleUserId;
     const context = { consumerType: "agent" as const, consumerId: agent.id, actorType: "system" as const,
       actorId: "agent-lifecycle", responsibleUserId };
+    let adapterType = agent.adapterType;
     let binding = aiRuntimeConnectionBindingSchema.optional().parse(effectiveAiConnectionInput(agent.runtimeConfig));
     let config = agent.adapterConfig;
     let poolEnvironmentId: string | null | undefined;
@@ -163,7 +163,7 @@ export function agentHarnessVerificationService(db: Db, manager: PluginWorkerMan
     // credentials (environment variables, a CLI login) that no saved
     // configuration names, so such a pass is never reused.
     if (runner?.kind === "local" && !binding) runner = null;
-    const digest = harnessVerificationDigest({ adapterType: agent.adapterType, config, account: accountWith(credentialVersions), environmentId, runner });
+    const digest = harnessVerificationDigest({ adapterType, config, account: accountWith(credentialVersions), environmentId, runner });
     if (digest && agent.harnessVerifiedDigest === digest) return "complete";
     const target = providerApi
       ? { executionTarget: null, environmentName: null, fallbackChecks: [], release: async (_status?: "released" | "failed") => {} }
@@ -196,7 +196,7 @@ export function agentHarnessVerificationService(db: Db, manager: PluginWorkerMan
       const sameAccount = !selected || (probed.account?.connectionId === selected.attribution.connectionId
         && probed.account?.grantId === selected.attribution.grantId);
       const verifiedDigest = digest && sameEpochs && sameAccount
-        ? harnessVerificationDigest({ adapterType: agent.adapterType, config, account: accountWith(verifiedVersions), environmentId, runner })
+        ? harnessVerificationDigest({ adapterType, config, account: accountWith(verifiedVersions), environmentId, runner })
         : null;
       // Record the pass before the lifecycle step completes, so a restart in
       // between reuses it instead of testing again.

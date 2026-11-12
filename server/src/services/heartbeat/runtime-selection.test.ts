@@ -4,7 +4,7 @@ import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { aiConnectionPools, aiConnectionTaskPins, toolApplications, toolConnections, activityLog, agents, authUsers, companyMemberships, principalPermissionGrants, environments, environmentLeases, companies, completionContracts, createDb, applyPendingMigrations, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS, executionWorkspaces, heartbeatRuns, issues, nativeRunFinalizations, workspaceOperations, type Db, companySkillRepositorySnapshots, costEvents } from "@paperclipai/db";
+import { aiConnectionPools, aiConnectionTaskPins, toolApplications, toolConnections, activityLog, agents, authUsers, companyMemberships, principalPermissionGrants, environments, environmentLeases, companies, completionContracts, costEvents, createDb, applyPendingMigrations, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS, executionWorkspaces, heartbeatRuns, issues, nativeRunFinalizations, workspaceOperations, type Db, companySkillRepositorySnapshots } from "@paperclipai/db";
 import { accountRunCost } from "../run-cost-accounting.js";
 import { eq, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";

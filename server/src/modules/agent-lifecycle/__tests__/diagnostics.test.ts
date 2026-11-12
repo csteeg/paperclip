@@ -39,7 +39,6 @@ describe("lifecycle readiness handoff", () => {
     expect(store.defer.mock.calls[0][2]).not.toContain("private provider detail");
     await worker.stop();
   });
-
   it("defers event-owned host verification without marking host or readiness complete", async () => {
     const { store, driver, worker } = fixture();
     driver.runHost.mockResolvedValue("waiting");

@@ -16,7 +16,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { appendHeartbeatRunEvent } from "../heartbeat-run-events.js";
 import { createNativeRunLogCoverageVerifier, formatNativeRunLogEvent } from "../native-runtime/native-run-log-export.js";
 import type { Db } from "@paperclipai/db";
-import { activityLog, agents, agentWakeupRequests, aiConnectionPools, aiConnectionTaskPins, aiConnectionQuotaCooldowns, toolApplications, toolConnections, budgetReservations, caseHandoffs, cases, companies, completionContracts, costEvents, createDb, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS, heartbeatRuns, heartbeatRunEvents, issueRecoveryActions, issues, nativeRunFinalizations, issueComments, issueQuestionResponseDeliveries, approvals, issueApprovals, issueThreadInteractions } from "@paperclipai/db";
+import { EMBEDDED_POSTGRES_TEST_TIMEOUT_MS, activityLog, agentWakeupRequests, agents, aiConnectionPools, aiConnectionQuotaCooldowns, aiConnectionTaskPins, approvals, budgetReservations, caseHandoffs, cases, companies, completionContracts, costEvents, createDb, heartbeatRunEvents, heartbeatRuns, issueApprovals, issueComments, issueQuestionResponseDeliveries, issueRecoveryActions, issueThreadInteractions, issues, nativeRunFinalizations, toolApplications, toolConnections } from "@paperclipai/db";
 import { and, eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from "../../__tests__/helpers/embedded-postgres.js";

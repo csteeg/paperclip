@@ -631,7 +631,7 @@ export function createHeartbeatRetries(db: Db, dependencies: HeartbeatRetryDepen
               maxAttempts,
             }
           : null
-        : poolFailure && nextAttempt <= maxAttempts
+        : poolFailure && !interruptedPreparationLane && nextAttempt <= maxAttempts
           ? { attempt: nextAttempt, baseDelayMs: 0, delayMs: 0, dueAt: now, maxAttempts }
         : nextAttempt <= maxAttempts && quotaRetry
           ? (() => {

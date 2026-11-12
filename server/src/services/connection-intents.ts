@@ -1,4 +1,5 @@
 import { legacyPoolAccountEvidenceMatches } from "./heartbeat/legacy-pool-account-proof.js";
+import { classifyRunLiveness } from "./run-liveness.js";
 import { canActorReadIssuePrivacy } from "./authorization.js";
 import { isAgentAwaitingSetup } from "../modules/agent-lifecycle/index.js";
 import { readAiConnectionConfigurationFailure } from "./ai-connection-configuration-failure.js";
@@ -298,9 +299,9 @@ export function connectionIntentService(db: Db) {
   // Reuse host verification's durable lifecycle allocation. This read must not
   // allocate a task route, advance a pool cursor, or replace the agent's pool.
   async function queuedSetupManagedAgent(agent: typeof agents.$inferSelect, client = db) {
-    const saved = aiConnectionBindingSchema.safeParse(agent.runtimeConfig.aiConnection).data;
+    const saved = aiConnectionBindingSchema.safeParse(effectiveAiConnectionInput(agent.runtimeConfig)).data;
     if (saved) return { agent, binding: saved, adapterConfig: agent.adapterConfig, requiresAdoption: false };
-    const router = aiConnectionRouterBindingSchema.safeParse(agent.runtimeConfig.aiConnection).data;
+    const router = aiConnectionRouterBindingSchema.safeParse(effectiveAiConnectionInput(agent.runtimeConfig)).data;
     const operationId = text(agent.lifecycleOperation?.id);
     if (!router || !operationId) return null;
     const [pin] = await client.select().from(aiConnectionTaskPins).where(and(

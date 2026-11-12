@@ -2968,5 +2968,3 @@ export {
   issueActivityChangesTaskIdentity,
 } from "./issue-activity-identity.js";
 export { recognizeLinkPreview, type LinkPreviewTarget, type LinkPreviewState, type LinkPreview, type LinkPreviewResult } from "./link-preview.js";
-
-export { isActionableAttention, supportsAttentionRecoveryResolution } from "./types/attention.js";

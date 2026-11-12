@@ -346,6 +346,16 @@ function ConfigSections({ order, hidden, className, children }: {
 
 /* ---- Form ---- */
 
+/** Pool runs this agent through Paperclip Runner, which cannot keep a Legacy
+ * harness's local permission rules; refuse instead of silently dropping them. */
+function poolConversionRestrictedPolicy(adapterType: string, config: Record<string, unknown>): string | null {
+  if (!["claude_local", "opencode_local"].includes(adapterType)) return null;
+  const permissionMode = config.permissionMode ?? config.acpPermissionMode;
+  if (config.dangerouslySkipPermissions === false || (adapterType === "claude_local" && typeof permissionMode === "string" && permissionMode.trim()))
+    return "Pool cannot keep this harness's local permission rules. Remove the permission restriction first, or keep the current harness.";
+  return null;
+}
+
 export function AgentConfigForm(props: AgentConfigFormProps) {
   const { mode, adapterModels: externalModels } = props;
   const isCreate = mode === "create";
@@ -482,6 +492,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
     aiConnection: unknown; harnessPool: unknown;
   }>());
   const [environmentDraftDirty, setEnvironmentDraftDirty] = useState(false);
+  const [poolSwitchError, setPoolSwitchError] = useState<string | null>(null);
   const [environmentEditorKey, setEnvironmentEditorKey] = useState(0);
   const [runnerUpgrade, setRunnerUpgrade] = useState<{
     agentId: string;
@@ -633,7 +644,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   const runtimeConfig = !isCreate ? ((props.agent.runtimeConfig ?? {}) as Record<string, unknown>) : {};
   const heartbeat = !isCreate ? ((runtimeConfig.heartbeat ?? {}) as Record<string, unknown>) : {};
   const debug = !isCreate ? ((runtimeConfig.debug ?? {}) as Record<string, unknown>) : {};
-  displayedOriginals.set("runtime.runtimeConfig", { ...runtimeConfig, aiConnection: runtimeConfig.aiConnection });
+  displayedOriginals.set("runtime.runtimeConfig", { ...runtimeConfig, aiConnection: runtimeConfig.aiConnection, harnessPool: runtimeConfig.harnessPool });
 
   const adapterType = isCreate
     ? props.values.adapterType
@@ -1827,6 +1838,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                 poolEligible={adapterType === "paperclip_runner" || ["codex_local", "claude_local", "grok_local", "opencode_local"].includes(adapterType)}
                 museEnabled={experimentalSettings?.enableMuse === true && experimentalSettings?.enableNativeRunner === true}
                 onChange={(choice) => {
+                  setPoolSwitchError(null);
                   if (!isCreate) {
                     const currentChoice = isPoolHarness ? "pool" : isDotRunner ? "openai_dot" : isMuseRunner ? "muse" : isRunnerHarness ? harnessType : adapterType;
                     if (choice === currentChoice) return;
@@ -1846,6 +1858,8 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                   }
                   if (choice === "pool") {
                     if (isCreate) return;
+                    const restrictedPolicy = poolConversionRestrictedPolicy(adapterType, effectiveConfig);
+                    if (restrictedPolicy) { setPoolSwitchError(restrictedPolicy); return; }
                     setOverlay(prev => ({ ...prev, adapterType: "paperclip_runner", runner: "paperclip", adapterConfig: { ...config, ...prev.adapterConfig, ...(adapterType !== "paperclip_runner" ? paperclipRunnerProfileForHarness(adapterType) : {}), homeMode: undefined }, runtime: { ...prev.runtime, runtimeConfig: { ...selectedRuntime, aiConnection: undefined, harnessPool: { poolId: "" } } } }));
                     return;
                   }
@@ -1919,6 +1933,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                   }
                 }}
               />
+              {poolSwitchError && <p role="alert" className="text-sm text-destructive">{poolSwitchError}</p>}
             </Field>
           )}
 

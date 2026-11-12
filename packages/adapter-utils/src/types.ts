@@ -773,6 +773,10 @@ export interface CreateConfigValues {
   thinkingEffort: string;
   chrome: boolean;
   dangerouslySkipPermissions: boolean;
+  claudeProfileImportMode?: "off" | "copy" | "cache";
+  claudeProfileSourceDir?: string;
+  claudeTranscriptRetentionEnabled?: boolean;
+  claudeTranscriptRetentionDays?: number;
   claudeEngine?: "auto" | "cli" | "acp";
   claudeProfileImportMode?: "off" | "copy" | "cache";
   claudeProfileSourceDir?: string;

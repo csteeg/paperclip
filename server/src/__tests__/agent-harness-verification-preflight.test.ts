@@ -192,7 +192,11 @@ describePostgres("saved harness account preflight", () => {
     expect(release).toHaveBeenCalledExactlyOnceWith("released");
     const [verified] = await db.select().from(agents).where(eq(agents.id, agent.id));
     expect(verified.adapterType).toBe(configuredAdapterType);
+    expect(verified.harnessVerifiedDigest).toMatch(/^v2:hmac-sha256:[a-f0-9]{64}$/);
 
+    await db.update(agents).set({ adapterType: "opencode_local" }).where(eq(agents.id, agent.id));
+    await expect(verify()).resolves.toBe("complete");
+    expect(probe).toHaveBeenCalledOnce();
   });
 
   it("checks account access again after allocation and releases on revocation", async () => {

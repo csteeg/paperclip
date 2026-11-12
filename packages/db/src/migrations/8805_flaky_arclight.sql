@@ -1,3 +1,4 @@
+-- paperclip:migration-compat requires_staging: Create the task-session composite index before enabling pool execution; retain guarded DDL for earlier branch installations.
 -- Keep renumbered pool migrations safe on instances that already applied the earlier branch version.
 CREATE TABLE IF NOT EXISTS "agent_account_sessions" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,

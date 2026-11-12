@@ -8818,7 +8818,8 @@ export function nativeSessionFailureDisposition(
     sourceFailureCode === NATIVE_CURRENT_WAKE_COMMENTS_CHANGED_AFTER_READ ||
     sourceFailureCode === "native_session_cleanup_quarantined" ||
     sourceFailureCode === "native_adopted_runner_authentication_timeout" ||
-    sourceFailureCode === "native_provider_usage_limit" || sourceFailureCode === "native_provider_auth_failed" ||
+    sourceFailureCode === "native_provider_usage_limit" ||
+    sourceFailureCode === "native_provider_auth_failed" ||
     sourceFailureCode === NATIVE_PROVIDER_SESSION_CLOSED ||
     sourceFailureCode === NATIVE_PROVIDER_STARTUP_REJECTED ||
     sourceFailureCode === NATIVE_CONTROLLER_JOURNAL_BEHIND_RUNNER;
@@ -12947,8 +12948,7 @@ async function executePaperclipNativeSessionAttempt(
           ? classifiedFailureCode
           : providerUsageLimitObserved
             ? "native_provider_usage_limit"
-            : providerAuthenticationFailureObserved ? "native_provider_auth_failed"
-            : nativeRemoteStartupRejectionCode(classifiedFailureCode, error, input.runnerExecutionTarget?.kind === "remote",
+            : providerAuthenticationFailureObserved ? "native_provider_auth_failed" : nativeRemoteStartupRejectionCode(classifiedFailureCode, error, input.runnerExecutionTarget?.kind === "remote",
               previousStartupSignature);
       const bootstrap = input.useRunnerd && input.runnerExecutionTarget?.kind === "remote"
           && !input.restartRecovery && !retainedTransition && !remoteWarmRecovery
