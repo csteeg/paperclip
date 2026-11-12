@@ -1,7 +1,9 @@
-// A suspended launch closes the child-spawn race; the job forbids breakaway.
+// Based on PR #18144 by Chris van de Steeg; create the child inside the job atomically.
+// The job forbids breakaway; settlement is proven to the parent over an authenticated pipe.
 export const WINDOWS_PROCESS_JOB_SOURCE = String.raw`
 using System;
 using System.ComponentModel;
+using System.Collections.Generic;
 using System.IO;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
@@ -25,14 +27,17 @@ public static class PaperclipProcessJob {
     public uint Size; public string Reserved, Desktop, Title; public uint X, Y, XSize, YSize, XChars, YChars, Fill, Flags;
     public ushort Show, ReservedSize; public IntPtr ReservedPtr, Input, Output, Error;
   }
+  [StructLayout(LayoutKind.Sequential)] struct StartupEx { public Startup Startup; public IntPtr Attributes; }
   [StructLayout(LayoutKind.Sequential)] struct ProcessInfo { public IntPtr Process, Thread; public uint Pid, Tid; }
   [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern IntPtr CreateJobObject(IntPtr attributes, string name);
   [DllImport("kernel32.dll", SetLastError=true)] static extern bool SetInformationJobObject(IntPtr job, int kind, IntPtr data, uint size);
   [DllImport("kernel32.dll", SetLastError=true)] static extern bool QueryInformationJobObject(IntPtr job, int kind, out Accounting data, uint size, IntPtr returned);
-  [DllImport("kernel32.dll", SetLastError=true)] static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
   [DllImport("kernel32.dll", SetLastError=true)] static extern bool TerminateJobObject(IntPtr job, uint code);
   [DllImport("kernel32.dll", SetLastError=true)] static extern bool TerminateProcess(IntPtr process, uint code);
-  [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern bool CreateProcess(string app, StringBuilder command, IntPtr pa, IntPtr ta, bool inherit, uint flags, IntPtr env, string cwd, ref Startup startup, out ProcessInfo info);
+  [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern bool CreateProcess(string app, StringBuilder command, IntPtr pa, IntPtr ta, bool inherit, uint flags, IntPtr env, string cwd, ref StartupEx startup, out ProcessInfo info);
+  [DllImport("kernel32.dll", SetLastError=true)] static extern bool InitializeProcThreadAttributeList(IntPtr list, int count, uint flags, ref IntPtr size);
+  [DllImport("kernel32.dll", SetLastError=true)] static extern bool UpdateProcThreadAttribute(IntPtr list, uint flags, IntPtr attribute, IntPtr value, IntPtr size, IntPtr previous, IntPtr returned);
+  [DllImport("kernel32.dll")] static extern void DeleteProcThreadAttributeList(IntPtr list);
   [DllImport("kernel32.dll", SetLastError=true)] static extern uint ResumeThread(IntPtr thread);
   [DllImport("kernel32.dll", SetLastError=true)] static extern uint WaitForMultipleObjects(uint count, IntPtr[] handles, bool all, uint timeout);
   [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetExitCodeProcess(IntPtr process, out uint code);
@@ -89,10 +94,36 @@ public static class PaperclipProcessJob {
         } else {
           for (int i = 4; i < args.Length; i++) { if (i > 4) command.Append(' '); command.Append(Quote(args[i])); }
         }
-        var startup = new Startup { Size = (uint)Marshal.SizeOf(typeof(Startup)), Flags = 0x100,
-          Input = GetStdHandle(-10), Output = GetStdHandle(-11), Error = GetStdHandle(-12) };
-        Require(CreateProcess(args[4], command, IntPtr.Zero, IntPtr.Zero, true, 4, IntPtr.Zero, null, ref startup, out child));
-        Require(AssignProcessToJobObject(job, child.Process));
+        IntPtr size = IntPtr.Zero, attributes = IntPtr.Zero, jobList = IntPtr.Zero, handles = IntPtr.Zero;
+        bool attributesInitialized = false;
+        try {
+          var stdInput = GetStdHandle(-10); var stdOutput = GetStdHandle(-11); var stdError = GetStdHandle(-12);
+          var stdHandles = new List<IntPtr>();
+          foreach (IntPtr handle in new[] { stdInput, stdOutput, stdError })
+            if (handle != IntPtr.Zero && handle != new IntPtr(-1) && !stdHandles.Contains(handle)) stdHandles.Add(handle);
+          int count = stdHandles.Count > 0 ? 2 : 1;
+          InitializeProcThreadAttributeList(IntPtr.Zero, count, 0, ref size);
+          attributes = Marshal.AllocHGlobal(size);
+          Require(InitializeProcThreadAttributeList(attributes, count, 0, ref size));
+          attributesInitialized = true;
+          jobList = Marshal.AllocHGlobal(IntPtr.Size);
+          Marshal.WriteIntPtr(jobList, job);
+          Require(UpdateProcThreadAttribute(attributes, 0, new IntPtr(0x0002000d), jobList, new IntPtr(IntPtr.Size), IntPtr.Zero, IntPtr.Zero));
+          if (stdHandles.Count > 0) {
+            handles = Marshal.AllocHGlobal(IntPtr.Size * stdHandles.Count);
+            for (int i = 0; i < stdHandles.Count; i++) Marshal.WriteIntPtr(handles, i * IntPtr.Size, stdHandles[i]);
+            Require(UpdateProcThreadAttribute(attributes, 0, new IntPtr(0x00020002), handles, new IntPtr(IntPtr.Size * stdHandles.Count), IntPtr.Zero, IntPtr.Zero));
+          }
+          var startup = new StartupEx { Attributes = attributes, Startup = new Startup {
+            Size = (uint)Marshal.SizeOf(typeof(StartupEx)), Flags = 0x100,
+            Input = stdInput, Output = stdOutput, Error = stdError } };
+          Require(CreateProcess(args[4], command, IntPtr.Zero, IntPtr.Zero, stdHandles.Count > 0, 0x00080004, IntPtr.Zero, null, ref startup, out child));
+        } finally {
+          if (attributesInitialized) DeleteProcThreadAttributeList(attributes);
+          if (attributes != IntPtr.Zero) Marshal.FreeHGlobal(attributes);
+          if (jobList != IntPtr.Zero) Marshal.FreeHGlobal(jobList);
+          if (handles != IntPtr.Zero) Marshal.FreeHGlobal(handles);
+        }
         uint result = 1;
         if (!stop.WaitOne(0)) {
           if (ResumeThread(child.Thread) == UInt32.MaxValue) throw new Win32Exception(Marshal.GetLastWin32Error());
@@ -117,7 +148,7 @@ public static class PaperclipProcessJob {
         return unchecked((int)code);
       }
     } finally {
-      // Also covers failed assignment: the target is still suspended.
+      // Also covers a failure while the target is suspended inside the job.
       if (child.Process != IntPtr.Zero) { TerminateProcess(child.Process, 1); CloseHandle(child.Process); }
       if (child.Thread != IntPtr.Zero) CloseHandle(child.Thread);
       CloseHandle(job); if (port != IntPtr.Zero) CloseHandle(port);
