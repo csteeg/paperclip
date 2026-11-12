@@ -105,6 +105,7 @@ const RETAINED_SANDBOX_GONE = new RegExp(`^${NATIVE_REMOTE_RECOVERY_LEASE_MISMAT
 
 /** Prepares the workspace and environment; dispatch and terminal lease release stay with the caller. */
 export interface HeartbeatWorkspacePreparationInput {
+  signal?: AbortSignal;
   run: typeof heartbeatRuns.$inferSelect;
   agent: typeof agents.$inferSelect;
   task: {
@@ -146,6 +147,7 @@ export interface HeartbeatWorkspacePreparationInput {
     configSnapshot: WorkspaceMetadataInput["configSnapshot"];
     secretManifest: WorkspaceMetadataInput["secretManifest"];
     managedAiCredentialIdentity?: string;
+    runnerTaskResumeSessionId?: string | null;
   };
   reuse: {
     requestedShouldReuseExisting: boolean;
@@ -155,7 +157,7 @@ export interface HeartbeatWorkspacePreparationInput {
     nativeRecoveryExecutionWorkspaceId: string | null;
     persistedNativeExecutionInput: NativeExecutionInput | null;
     isDotRun: boolean;
-    runOptions: { nativeLeaseOwner?: string; nativeRestartRecovery?: NativeRestartRecoveryClaim };
+    runOptions: { nativeLeaseOwner?: string; nativeRestartRecovery?: NativeRestartRecoveryClaim; portablePreparationLeaseId?: string };
   };
   services: {
     workspaceWorkers?: WorkspaceWorkers;
@@ -254,6 +256,12 @@ async function prepareHeartbeatWorkspaceLocked(db: Db, input: HeartbeatWorkspace
     appendRunEvent,
   } = input.services;
   const pluginTaskWorkspace = selectedEnvironmentForConfig?.driver === "plugin" && agent.adapterType === "paperclip_runner";
+  const restartRecovery = runOptions.nativeRestartRecovery;
+  const portablePreparationLeaseId = runOptions.portablePreparationLeaseId ??
+    (restartRecovery?.kind === "bootstrap_incomplete" ? restartRecovery.portablePreparationLeaseId : undefined);
+  if (portablePreparationLeaseId && (!pluginTaskWorkspace || controllerOnly)) {
+    throw remoteRecoveryLeaseMismatch("workspace_preparation", "environment_driver");
+  }
   for (const workspaceId of new Set([existingExecutionWorkspace?.id, reusableExistingExecutionWorkspace?.id].filter(Boolean))) {
     const [workspace] = await db.select({ metadata: executionWorkspacesTable.metadata }).from(executionWorkspacesTable)
       .where(and(eq(executionWorkspacesTable.companyId, agent.companyId), eq(executionWorkspacesTable.id, workspaceId!)));
@@ -1302,7 +1310,8 @@ async function prepareHeartbeatWorkspaceLocked(db: Db, input: HeartbeatWorkspace
     await controllerLease.assertOwned();
     const remoteRecovery = runOptions.nativeRestartRecovery?.kind === "reattach_remote_runner"
       ? runOptions.nativeRestartRecovery : null;
-    const pluginRecovery = remoteRecovery?.remote.kind === "plugin_task" ? remoteRecovery.remote : null;
+    const pluginRecovery = remoteRecovery?.remote.kind === "plugin_task" ? remoteRecovery.remote : portablePreparationLeaseId
+      ? { kind: "plugin_task" as const, leaseId: portablePreparationLeaseId, preparation: true as const } : undefined;
     const sandboxRecovery = remoteRecovery && remoteRecovery.remote.kind !== "plugin_task" ? remoteRecovery.remote : null;
     const recoveryWorkspace = sandboxRecovery
       ? readNativeWorkspaceSyncReference(parseObject(run.runnerProfileJson).nativeWorkspaceSync) : null;
@@ -1341,10 +1350,12 @@ async function prepareHeartbeatWorkspaceLocked(db: Db, input: HeartbeatWorkspace
       adapterConfig: parseObject(agent.adapterConfig),
       admittedLifecycleMode: persistedNativeExecutionInput?.session.lifecyclePolicy.mode,
       managedAiCredentialIdentity: input.config.managedAiCredentialIdentity,
+      runnerTaskResumeSessionId: input.config.runnerTaskResumeSessionId,
       runnerTaskProjectIds:[...new Set([executionWorkspace.projectId,...resolvedWorkspace.runnerTaskProjectIds ?? [],
         ...(executionWorkspace.additionalWorkspaces ?? []).map(workspace=>workspace.projectId)]
         .filter((id):id is string=>Boolean(id)))],
-      recoverPluginTask: runOptions.nativeRestartRecovery?.kind === "resume_dead_runner" || runOptions.nativeRestartRecovery?.kind === "bootstrap_incomplete",
+      recoverPluginTask: !portablePreparationLeaseId &&
+        (restartRecovery?.kind === "resume_dead_runner" || restartRecovery?.kind === "bootstrap_incomplete"),
       issueId: issueId ?? null,
       heartbeatRunId: run.id,
       agentId: agent.id,
@@ -1442,6 +1453,7 @@ async function prepareHeartbeatWorkspaceLocked(db: Db, input: HeartbeatWorkspace
       effectiveExecutionWorkspaceMode,
       persistedExecutionWorkspace,
       runnerTaskProjectIds: resolvedWorkspace.runnerTaskProjectIds,
+      ...(input.signal ? { signal: input.signal } : {}),
       assertOwned: remoteAuthority ? assertRemotePreparationOwned : controllerLease.assertOwned,
       duplexObservabilityRecorder,
     }));

@@ -6,6 +6,7 @@ import { endStorageOutageWaitOn, reportStorageOutageWaitsTo, runInOwnStorageScop
 import { createStorageWaitNotice } from "./heartbeat/storage-wait-notice.js";
 import { resolveProviderApiPlacement } from "./native-runtime/provider-api-placement.js";
 import { isProcessRunAdmissionClosed } from "./heartbeat/run-admission.js";
+import { isYieldingRunStarts, refreshRunStartYieldIfStale, type RunStartHandover } from "./run-start-handover.js";
 import type { StopInvocationOptions } from "./heartbeat/run-control.js";
 import { isContextCompactionRun } from "./context-compaction.js";
 import { isUnstartedTaskQuestionAnswer } from "./unstarted-task-question-answer.js";
@@ -799,6 +800,8 @@ export type HeartbeatEnvironmentRuntime = ReturnType<
 >;
 
 export interface HeartbeatServiceOptions {
+  /** This server's run-start hand-over; defaults to the process's registered one. */
+  runStartHandover?: Pick<RunStartHandover, "isYielding" | "refreshIfStale">;
   /** Test seam before the atomic native runtime handoff. */
   beforeNativeRuntimeSelection?: (runId: string) => Promise<void>;
   /** Test seam for a concurrent cooldown observation before fresh provider preparation. */
@@ -1349,7 +1352,10 @@ export function heartbeatService(
     isHeartbeatRunTerminalStatus,
     liveRunExecutions,
     getSchedulingSuppression,
-    isRunAdmissionClosed: () => shutdownInProgress || isProcessRunAdmissionClosed(),
+    // A newer server that already starts runs takes new run starts during a deploy overlap.
+    isRunAdmissionClosed: () => shutdownInProgress || isProcessRunAdmissionClosed()
+      || (options.runStartHandover ? options.runStartHandover.isYielding() : isYieldingRunStarts()),
+    refreshRunAdmission: () => options.runStartHandover ? options.runStartHandover.refreshIfStale() : refreshRunStartYieldIfStale(),
     resumeExecutionWaitComments,
     getWorktreeExecutionCutoff,
     resumeQueuedCommentInterrupt,
@@ -1898,6 +1904,7 @@ export function heartbeatService(
     runOptions: {
       nativeLeaseOwner?: string;
       nativeRestartRecovery?: NativeRestartRecoveryClaim;
+      portablePreparationLeaseId?: string;
       onNativeExecutionLeaseAcquired?: () => Promise<void>;
     } = {},
   ) {
@@ -1915,7 +1922,8 @@ export function heartbeatService(
 
   async function executeRunAttempt(
     runId: string,
-    runOptions: { nativeLeaseOwner?: string; nativeRestartRecovery?: NativeRestartRecoveryClaim; onNativeExecutionLeaseAcquired?: () => Promise<void> },
+    runOptions: { nativeLeaseOwner?: string; nativeRestartRecovery?: NativeRestartRecoveryClaim; portablePreparationLeaseId?: string;
+      onNativeExecutionLeaseAcquired?: () => Promise<void> },
   ) {
     const attemptStartedAtMs = Date.now();
     let attestedQuestionResponseAtMs: number | null = null;
@@ -2088,8 +2096,9 @@ export function heartbeatService(
     let dispatchGateEntered = false;
     const nativeDispatchMayHaveStarted = () => nativeDispatchStarted || dispatchGateEntered || nativeOwnershipHeld
       || Boolean(runOptions.nativeRestartRecovery || runOptions.nativeLeaseOwner);
+    const preparationHandedOff = () => shutdownHandedOff() && !legacyAdapterEntered && !nativeDispatchStarted;
     const leaveToNextController = async (error: unknown) => {
-      if (!shutdownHandedOff() || legacyAdapterEntered || nativeDispatchStarted) return false;
+      if (!preparationHandedOff()) return false;
       nativeSessionResumeScheduled = true;
       const reason = error instanceof Error ? error.message : String(error);
       const errorCode = /^[a-z][a-z0-9_]{0,80}$/.test(reason) ? reason : null;
@@ -2922,7 +2931,7 @@ export function heartbeatService(
         executionTarget,
         workspaceRestoreSource,
       } = await timePreparation("workspace", () => prepareHeartbeatWorkspace(db, {
-        run, agent, controllerLease, nativeRunnerPreparationSpans,
+        run, agent, controllerLease, nativeRunnerPreparationSpans, signal: executionControl.controller.signal,
         task: {
           issueRef,
           issueId,
@@ -2957,6 +2966,7 @@ export function heartbeatService(
           configSnapshot,
           secretManifest,
           managedAiCredentialIdentity: managedAiRuntime?.identity,
+          runnerTaskResumeSessionId: run.nativeSessionId ?? preparedSession.taskResumeSessionId,
         },
         reuse: {
           requestedShouldReuseExisting,
@@ -3384,7 +3394,7 @@ export function heartbeatService(
         context.projectId = executionWorkspace.projectId;
       }
       const {
-        previousSessionDisplayId, runtimeSessionParamsForAdapter, taskSessionCredentialCompatible, runtimeForAdapter, configFreshnessResultMetadata, sessionCompaction,
+        previousSessionDisplayId, runtimeSessionParamsForAdapter, runtimeForAdapter, configFreshnessResultMetadata, sessionCompaction,
       } = await resolveHeartbeatAdapterSession({
         agent,
         task: { context, taskKey, issueId, continuationSummary, executionContinuation },
@@ -3596,9 +3606,7 @@ export function heartbeatService(
           session: {
             persistedNativeExecutionInput,
             persistedRunnerProfile,
-            taskSessionCredentialCompatible,
-            taskSessionDecodedParams,
-            taskSessionForRun,
+            taskResumeSessionId: preparedSession.taskResumeSessionId,
             isFailedChatRunRetry,
             getFreshSessionHandoff,
           },
@@ -3674,6 +3682,8 @@ export function heartbeatService(
             adapter,
             runtimeForAdapter,
             getNativeFreshSessionHandoff,
+            pluginTaskDescription: runtimeSelection.pluginTaskDescription,
+            toolRefreshOnResume: runtimeSelection.toolRefreshOnResume,
             getFreshSessionHandoff,
             runOptions,
           },
@@ -4093,6 +4103,7 @@ export function heartbeatService(
       await instructionWorkingCopy?.nativeInstructionReservation?.release().catch(error => logger.warn({ runId: run.id, err: error }, "Managed warm session preparation cleanup failed"));
       if (managedAiRuntime) await managedAiRuntime.cleanup().catch(() => logger.warn({ runId: run.id }, "AI connection refresh or cleanup failed"));
       let latestRun = await getRun(run.id).catch(() => null);
+      if (preparationHandedOff() && (!latestRun || latestRun.status === "running")) nativeSessionResumeScheduled = true;
       try {
         if (latestRun && isHeartbeatRunTerminalStatus(latestRun.status)) {
           await writeExecutionControl(db, DELIVERY_QUEUES.executionFinalization, tx => tx
@@ -4701,6 +4712,11 @@ export function heartbeatService(
         dependencies: reconcileResolvedDependencyWakes,
         locks: sweepStaleIssueLocks,
         watchdogs: reconcileTaskWatchdogs,
+        assignedWork: {
+          listSuspects: async (scope, cursor, limit) => recovery.assignedWork.listSuspects(
+            { ...scope, createdAfter: await getWorktreeExecutionCutoff() }, cursor, limit),
+          checkIssue: recovery.assignedWork.checkIssue,
+        },
         schedulingSuppressed: async () => (await getSchedulingSuppression(true)).suppressed,
       }, () => canRun() && readTaskDrain(new Date()) === null),
     registerRunDispatchWork: (coordinator: Parameters<typeof registerRunDispatchWork>[0], canRun: () => boolean) =>
@@ -4730,6 +4746,8 @@ export function heartbeatService(
     scheduleBoundedRetry,
 
     reconcileStrandedAssignedIssues,
+    checkAssignedWorkInvariant: recovery.assignedWork.checkIssue,
+    reportAssignedWorkInvariant: recovery.assignedWork.report,
     recoverPendingSessionGoalActions,
     recoverActiveSessionGoals,
 
