@@ -10,6 +10,7 @@ import { resolveExternalTestDatabaseUrl } from './helpers/external-test-database
 import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from './helpers/embedded-postgres.js';
 import { githubFixture } from './helpers/github-skills.js';
 import { skillSourceService, type SkillSourceContext } from '../services/skill-sources.js';
+import { companySkillService } from '../services/company-skills.js';
 
 const externalUrl = resolveExternalTestDatabaseUrl('PAPERCLIP_SKILL_SOURCES_TEST_DATABASE_URL');
 const support = externalUrl ? { supported: true } : await getEmbeddedPostgresTestSupport();
@@ -62,8 +63,11 @@ describe.skipIf(!support.supported)('skill source security overrides', () => {
     const { result, audits } = await setup(false);
     const packaged = result.source.repositoryPackage?.files.map(file => file.path).sort();
     expect(packaged).toEqual(['hooks/install.sh', 'skills/one/SKILL.md']);
-    expect(result.source.securityOverride).toMatchObject({ commitSha: first, reason: 'Maintained by our platform team.', trustFutureUpdates: false,
-      approvedByUserId: 'admin-user', files: [{ path: 'hooks/install.sh', code: 'remote_fetch_exec', sha256: hash(hook) }] });
+    // Source responses carry a summary; the approved files stay on the server.
+    expect(result.source.securityOverride).toEqual({ commitSha: first, reason: 'Maintained by our platform team.', trustFutureUpdates: false,
+      approvedByUserId: 'admin-user', approvedAt: expect.any(String), fileCount: 1 });
+    const [stored] = await db.select({ securityOverride: companySkillSources.securityOverride }).from(companySkillSources).where(eq(companySkillSources.id, result.source.id));
+    expect(stored?.securityOverride?.files).toEqual([{ path: 'hooks/install.sh', code: 'remote_fetch_exec', sha256: hash(hook) }]);
     expect(audits.find(entry => entry.action === 'company.skill_source_security_override_approved')?.details).toMatchObject({
       commit: first, reason: 'Maintained by our platform team.', approvedByUserId: 'admin-user',
       files: [{ path: 'hooks/install.sh', code: 'remote_fetch_exec', sha256: hash(hook) }],
@@ -87,6 +91,41 @@ describe.skipIf(!support.supported)('skill source security overrides', () => {
     expect(await db.select().from(companySkillSources).where(eq(companySkillSources.companyId, companyId))).toEqual([]);
   });
 
+  it('checks the approval against the canonical repository when a branch URL was submitted', async () => {
+    const companyId = randomUUID();
+    await db.insert(companies).values({ id: companyId, name: 'Scoped deny', issuePrefix: `D${companyId.slice(0, 6)}` });
+    const files = { 'skills/one/SKILL.md': md('one'), 'hooks/install.sh': hook };
+    const checked: string[] = [];
+    const context: SkillSourceContext = { actor: { type: 'user', userId: 'admin-user' }, authorize: async () => {}, audit: async () => {}, read: () => githubFixture(files, {}, first),
+      authorizeSecurityOverride: async ({ sourceLocator }) => {
+        checked.push(sourceLocator);
+        if (sourceLocator === 'https://github.com/acme/skills') throw forbidden('Skill policy denies security overrides for this repository.');
+      } };
+    await expect(skillSourceService(db).create(companyId, {
+      repositoryUrl: 'https://github.com/acme/skills/tree/main', trackingRef: 'main', packageMode: 'repository', commitSha: first, selectedPaths: ['skills/one/SKILL.md'],
+      securityOverride: { commitSha: first, reason: 'Maintained by our platform team.', trustFutureUpdates: false, files: [{ path: 'hooks/install.sh', sha256: hash(hook) }] },
+    }, context)).rejects.toMatchObject({ status: 403 });
+    expect(checked).toEqual(['https://github.com/acme/skills/tree/main', 'https://github.com/acme/skills']);
+    expect(await db.select().from(companySkillSources).where(eq(companySkillSources.companyId, companyId))).toEqual([]);
+  });
+
+  it('keeps an approved file accepted when the installed skill is audited again', async () => {
+    const companyId = randomUUID();
+    await db.insert(companies).values({ id: companyId, name: 'Audited', issuePrefix: `A${companyId.slice(0, 6)}` });
+    const files = { 'skills/one/SKILL.md': md('one'), 'skills/one/install.sh': hook };
+    const context: SkillSourceContext = { actor: { type: 'user', userId: 'admin-user' }, authorize: async () => {}, audit: async () => {},
+      read: () => githubFixture(files, {}, first), authorizeSecurityOverride: async () => {} };
+    const created = await skillSourceService(db).create(companyId, {
+      repositoryUrl: 'https://github.com/acme/skills', trackingRef: 'main', packageMode: 'skills', commitSha: first, selectedPaths: ['skills/one/SKILL.md'],
+      securityOverride: { commitSha: first, reason: 'Maintained by our platform team.', trustFutureUpdates: false, files: [{ path: 'skills/one/install.sh', sha256: hash(hook) }] },
+    }, context);
+    const skillId = created.source.entries.find(entry => entry.path === 'skills/one/SKILL.md')?.skillId;
+    expect(skillId).toBeTruthy();
+    const audit = await companySkillService(db).auditSkill(companyId, skillId!);
+    expect(audit?.findings.filter(finding => finding.code === 'remote_fetch_exec')).toEqual([expect.objectContaining({ path: 'install.sh', severity: 'warning' })]);
+    expect(audit?.verdict).not.toBe('fail');
+  });
+
   it('keeps approved files viewable in the saved source', async () => {
     const { companyId, service, context } = await setup(false);
     const preview = await service.preview(companyId, { repositoryUrl: 'https://github.com/acme/skills', packageMode: 'repository', commitSha: first,
@@ -105,7 +144,8 @@ describe.skipIf(!support.supported)('skill source security overrides', () => {
       securityOverride: { commitSha: second, reason: 'Reviewed the new hook by hand.', trustFutureUpdates: true, files: [{ path: 'hooks/other.sh', sha256: hash(otherHook) }] } });
     const published = approved.source.repositoryPackage?.files.map(file => file.path).sort();
     expect(published).toEqual(['hooks/other.sh', 'skills/one/SKILL.md']);
-    expect(approved.source.securityOverride?.files.map(file => file.path)).toEqual(['hooks/other.sh']);
+    const [stored] = await db.select({ securityOverride: companySkillSources.securityOverride }).from(companySkillSources).where(eq(companySkillSources.id, result.source.id));
+    expect(stored?.securityOverride?.files.map(file => file.path)).toEqual(['hooks/other.sh']);
     const again = await service.refresh(companyId, result.source.id, { ...context, authorizeSecurityOverride: undefined });
     expect(again.source.repositoryPackage?.files.map(file => file.path).sort()).toEqual(published);
   });
@@ -125,5 +165,49 @@ describe.skipIf(!support.supported)('skill source security overrides', () => {
     expect(trusting.audits.find(entry => entry.action === 'company.skill_source_security_override_applied')?.details).toMatchObject({
       commit: second, approvedCommit: first, files: [{ path: 'hooks/install.sh', sha256: hash(changedHook) }],
     });
+  });
+
+  it('lets an administrator withdraw a future-updates approval before a later commit reintroduces the pattern', async () => {
+    const { companyId, result, service, context, audits, setFiles } = await setup(true);
+    setFiles({ 'skills/one/SKILL.md': md('one') }, second);
+    const { revision } = await service.detail(companyId, result.source.id);
+    const selection = { revision, selectedPaths: ['skills/one/SKILL.md'], excludedFolders: [], securityOverride: null };
+    await expect(service.refresh(companyId, result.source.id, { ...context, authorizeSecurityOverride: undefined }, selection)).rejects.toMatchObject({ status: 403 });
+    const withdrawn = await service.refresh(companyId, result.source.id, context, selection);
+    expect(withdrawn.source.securityOverride).toBeNull();
+    expect(audits.find(entry => entry.action === 'company.skill_source_security_override_revoked')?.details).toMatchObject({ approvedCommit: first, fileCount: 1 });
+    setFiles({ 'skills/one/SKILL.md': md('one'), 'hooks/install.sh': `${hook}
+echo again` }, 'c'.repeat(40));
+    const later = await service.refresh(companyId, result.source.id, { ...context, authorizeSecurityOverride: undefined });
+    expect(later.source.repositoryPackage?.files.map(file => file.path)).toEqual(['skills/one/SKILL.md']);
+  });
+
+  it('does not record a carried approval for a file in a skill that is not installed', async () => {
+    const companyId = randomUUID();
+    await db.insert(companies).values({ id: companyId, name: 'Deselected', issuePrefix: `S${companyId.slice(0, 6)}` });
+    let files: Record<string, string> = { 'skills/one/SKILL.md': md('one'), 'skills/two/SKILL.md': md('two'), 'skills/two/install.sh': hook };
+    let commit = first;
+    const audits: Array<{ action: string }> = [];
+    const context: SkillSourceContext = { actor: { type: 'user', userId: 'admin-user' }, authorize: async () => {},
+      audit: async (_tx, _sourceId, action) => { audits.push({ action }); }, read: () => githubFixture(files, {}, commit), authorizeSecurityOverride: async () => {} };
+    const service = skillSourceService(db);
+    const created = await service.create(companyId, {
+      repositoryUrl: 'https://github.com/acme/skills', trackingRef: 'main', packageMode: 'skills', commitSha: first, selectedPaths: ['skills/one/SKILL.md', 'skills/two/SKILL.md'],
+      securityOverride: { commitSha: first, reason: 'Maintained by our platform team.', trustFutureUpdates: true, files: [{ path: 'skills/two/install.sh', sha256: hash(hook) }] },
+    }, context);
+    files = { ...files, 'skills/two/install.sh': `${hook}
+echo updated` }; commit = second;
+    const { revision } = await service.detail(companyId, created.source.id);
+    await service.refresh(companyId, created.source.id, { ...context, authorizeSecurityOverride: undefined }, { revision, selectedPaths: ['skills/one/SKILL.md'], excludedFolders: [] });
+    expect(audits.some(entry => entry.action === 'company.skill_source_security_override_applied')).toBe(false);
+  });
+
+  it('does not record a carried approval for a file that a blocking finding still keeps out', async () => {
+    const trusting = await setup(true);
+    trusting.setFiles({ 'skills/one/SKILL.md': md('one'), 'hooks/install.sh': `${hook}
+${leak}` }, second);
+    const refreshed = await trusting.service.refresh(trusting.companyId, trusting.result.source.id, { ...trusting.context, authorizeSecurityOverride: undefined });
+    expect(refreshed.source.repositoryPackage?.files.map(file => file.path)).toEqual(['skills/one/SKILL.md']);
+    expect(trusting.audits.some(entry => entry.action === 'company.skill_source_security_override_applied')).toBe(false);
   });
 });
