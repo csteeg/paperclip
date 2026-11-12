@@ -1,7 +1,7 @@
 // Personal access token (PAT) and shared company (organization) GitHub
 // identities: PATs serve managed Git and `gh`, the token's account is recorded
-// and bound to its secret version, and selection prefers the responsible
-// person's own identity, then the agent's dedicated one, then a shared one.
+// and bound to its secret version, and selection prefers the agent's dedicated
+// identity, then the responsible person's own one, then a shared one.
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -274,6 +274,19 @@ const support = await getEmbeddedPostgresTestSupport();
         login: "robot",
       });
     });
+    it("uses the agent's dedicated identity over the responsible person's own personal access token", async () => {
+      const input = await seed();
+      await grant(input, "A", false, { pat: true });
+      await grant(input, "robot", true);
+      const result = await resolveGitHubOperationCredentials(db, input);
+      expect(result).toMatchObject({
+        status: "available",
+        source: "dedicated",
+        login: "robot",
+      });
+      expect(result.env.GH_TOKEN).toBe("test-dedicated-token");
+      expect(result.env.GH_TOKEN).not.toBe("test-token-A");
+    });
     it("clones and pushes with the responsible person's own personal access token", async () => {
       const input = await seed();
       await grant(input, "A", false, { pat: true });
@@ -347,17 +360,18 @@ const support = await getEmbeddedPostgresTestSupport();
       });
       expect(sharedOnly.env.GH_TOKEN).toBe("test-dedicated-token");
 
-      await grant(input, "robot", true);
-      expect(await resolveGitHubOperationCredentials(db, input)).toMatchObject({
-        source: "dedicated",
-        login: "robot",
-      });
-
       // A person's own GitHub never conflicts with the shared one: it wins.
       await grant(input, "A", false, { pat: true });
       expect(await resolveGitHubOperationCredentials(db, input)).toMatchObject({
         source: "personal",
         login: "A",
+      });
+
+      // An agent's dedicated identity outranks both.
+      await grant(input, "robot", true);
+      expect(await resolveGitHubOperationCredentials(db, input)).toMatchObject({
+        source: "dedicated",
+        login: "robot",
       });
     });
     it("re-reads a token's account after the token is rotated, so an old account never authors commits", async () => {
@@ -420,6 +434,19 @@ const support = await getEmbeddedPostgresTestSupport();
       expect(stored!.providerTenant?.githubAccount).toMatchObject({
         login: "new-a",
         secretVersion: 2,
+      });
+    });
+    it("resolves the exact token version its recorded account is bound to", async () => {
+      const input = await seed();
+      await grant(input, "A", false, { pat: true });
+      // The recorded account is bound to version 1. Resolving "latest" could
+      // return a token a concurrent reconnect wrote after that binding was read.
+      vault.resolveUserSecretValue.mockClear();
+      const result = await resolveGitHubOperationCredentials(db, input);
+      expect(result).toMatchObject({ status: "available", login: "A" });
+      expect(vault.resolveUserSecretValue).toHaveBeenCalledTimes(1);
+      expect(vault.resolveUserSecretValue.mock.calls[0]![1]).toMatchObject({
+        version: 1,
       });
     });
     it("gives shared company GitHub only to people in its audience", async () => {
