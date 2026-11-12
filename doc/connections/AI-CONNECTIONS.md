@@ -1106,6 +1106,8 @@ the existing connection without repeating the callback. Local and device login
 services continue to own their final states.
 
 
+### Claude behavior versus workspace consent
+
 Claude profile import and transcript retention are execution-configuration settings.
 Their shared `ClaudeRuntimePolicyFields` controls render under the Claude
 configuration's **Advanced** disclosure, outside agent heartbeat/run scheduling.
@@ -1114,3 +1116,12 @@ adapter settings; per-member pool integration is tracked in PR #19481. Cache and
 transcript storage stay isolated per company, agent, task and account. Workspace
 project trust is a separate source-specific grant in PR #19216 and cannot be
 implicitly enabled by these configuration values.
+
+The workspace Configuration page owns the
+**Trust this workspace for Claude** panel: its grant binds an agent identity to
+the exact reviewed source. The selector therefore includes company agents
+independently of their current adapter, including agents configured with pools.
+Only an explicit checkbox selection followed by Save grants consent. The existing
+company, board-operator, source revision, supported execution-target, and exact
+workspace checks remain in force; a native Runner or Codex run gains no new
+permission from appearing in the selector.
