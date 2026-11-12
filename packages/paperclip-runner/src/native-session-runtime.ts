@@ -2802,8 +2802,8 @@ export async function executeNativeSession(
     const recoveredSnapshot = await session.snapshot();
     const restartContinuation = (
       steeredMessages: Array<{ id: string; text: string }>,
-      attachmentPrompt?: string,
       internalReceiptLimit = false,
+      attachmentPrompt?: string,
     ) => ({
       message: { role: "user" as const, text: JSON.stringify({
         schema: "paperclip.native-continuation.v1",
@@ -2881,7 +2881,7 @@ export async function executeNativeSession(
         signal?.throwIfAborted();
         const attachmentPrompt = await options.prepareWakeAttachmentPrompt?.();
         signal?.throwIfAborted();
-        const started = await session.startTurn(restartContinuation(steeredMessages, attachmentPrompt, internalReceiptLimit));
+        const started = await session.startTurn(restartContinuation(steeredMessages, internalReceiptLimit, attachmentPrompt));
         restartContinuationTurnId = started.turnId;
         if (started.borrowedDispositionMarker === true) borrowedContinuationTurnId = started.turnId;
         await checkpoint(signal);
