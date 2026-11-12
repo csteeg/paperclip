@@ -2166,6 +2166,9 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                 </>
               } />
 
+            {props.hiddenSections?.includes("run-policy") && !isCreate && <AgentRuntimeConfigSections
+              fieldProps={{ ...adapterFieldProps, hideModel: isLocal }} section="runPolicy" includeTimeouts={isLocal}
+              schemaKeys={configSchema?.fields.map(field => field.key)} />}
           </AgentConfigPanel>
         </div>
       )}
