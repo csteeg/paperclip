@@ -1,0 +1,3 @@
+-- paperclip:migration-compat online_compatible: replaces a CHECK constraint with a wider one; no upsert or cascade uses it, the previous release writes only values the new check allows, and NOT VALID skips the table scan
+ALTER TABLE "projects" DROP CONSTRAINT "projects_repository_checkout_check";--> statement-breakpoint
+ALTER TABLE "projects" ADD CONSTRAINT "projects_repository_checkout_check" CHECK ("projects"."repository_checkout" in ('all', 'primary', 'none')) NOT VALID;

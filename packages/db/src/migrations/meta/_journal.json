@@ -3347,6 +3347,13 @@
       "when": 1794569756638,
       "tag": "8806_project_repository_checkout",
       "breakpoints": true
+    },
+    {
+      "idx": 478,
+      "version": "7",
+      "when": 1794580160740,
+      "tag": "8807_project_repository_checkout_none",
+      "breakpoints": true
     }
   ]
 }
