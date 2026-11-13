@@ -13,6 +13,20 @@ type SourceLockScope = { db: Db; companyId: string; keys: Set<string>; transacti
 const sourceLocks = new AsyncLocalStorage<SourceLockScope>();
 export class IsolatedRepositorySourceBusy extends Error {}
 export type WorkspaceSourceLockWait = { waitMs: number; signal?: AbortSignal };
+/** Bounds how long an owner scope may hold its source locks. When the limit
+ * passes, the scope's transaction ends, which releases the locks for queued
+ * work, and the caller receives the error from `onExpired`. */
+export type WorkspaceSourceLockHoldLimit = { holdMs: number; onExpired: () => Error };
+
+function runWithinHoldLimit<T>(action: () => Promise<T>, limit: WorkspaceSourceLockHoldLimit | undefined): Promise<T> {
+  if (!limit) return action();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(limit.onExpired()), limit.holdMs);
+    timer.unref?.();
+  });
+  return Promise.race([action(), expired]).finally(() => clearTimeout(timer));
+}
 
 async function acquireQueuedSourceLocks(db: Db, transaction: SourceTransaction, keys: string[], wait: WorkspaceSourceLockWait) {
   wait.signal?.throwIfAborted();
@@ -68,8 +82,9 @@ function heldScope(): SourceLockScope | undefined {
  * Joining that scope would tie these locks to the other transaction. */
 export function withIndependentWorkspaceSourceLocks<T>(db: Db,
   input: { companyId: string; issueIds?: readonly string[]; projectIds?: readonly string[] },
-  action: (transaction: SourceTransaction) => Promise<T>, tryOnly = false, wait?: WorkspaceSourceLockWait): Promise<T> {
-  return sourceLocks.exit(() => withWorkspaceSourceLocks(db, input, action, tryOnly, wait));
+  action: (transaction: SourceTransaction) => Promise<T>, tryOnly = false, wait?: WorkspaceSourceLockWait,
+  holdLimit?: WorkspaceSourceLockHoldLimit): Promise<T> {
+  return sourceLocks.exit(() => withWorkspaceSourceLocks(db, input, action, tryOnly, wait, holdLimit));
 }
 
 export function withIsolatedRepositorySourceLock<T>(db: Db, companyId: string, issueId: string,
@@ -79,7 +94,10 @@ export function withIsolatedRepositorySourceLock<T>(db: Db, companyId: string, i
 
 export async function withWorkspaceSourceLocks<T>(db: Db,
   input: { companyId: string; issueIds?: readonly string[]; projectIds?: readonly string[] },
-  action: (transaction: SourceTransaction) => Promise<T>, tryOnly = false, wait?: WorkspaceSourceLockWait): Promise<T> {
+  action: (transaction: SourceTransaction) => Promise<T>, tryOnly = false, wait?: WorkspaceSourceLockWait,
+  holdLimit?: WorkspaceSourceLockHoldLimit): Promise<T> {
+  if (holdLimit && (!Number.isSafeInteger(holdLimit.holdMs) || holdLimit.holdMs < 1 || holdLimit.holdMs > 2_147_483_647))
+    throw new Error("workspace_source_hold_limit_invalid");
   if (wait && (!Number.isSafeInteger(wait.waitMs) || wait.waitMs < 1 || wait.waitMs > 2_147_483_647))
     throw new Error("workspace_source_wait_invalid");
   const keys = [...new Set([
@@ -116,7 +134,7 @@ export async function withWorkspaceSourceLocks<T>(db: Db,
       } else await acquire(scope, tryOnly);
       const rows = await transaction.execute(sql`select setting::bigint as idle_timeout_ms from pg_settings where name = 'idle_in_transaction_session_timeout'`);
       return await withWorkspaceLockKeepalive(transaction, Number(rows[0]?.idle_timeout_ms),
-        () => sourceLocks.run(scope, () => action(transaction)));
+        () => sourceLocks.run(scope, () => runWithinHoldLimit(() => action(transaction), holdLimit)));
     } finally {
       scope.active = false;
     }

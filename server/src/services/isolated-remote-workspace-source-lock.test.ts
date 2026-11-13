@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDb } from "@paperclipai/db";
 import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from "../__tests__/helpers/embedded-postgres.js";
 import { IsolatedRepositorySourceBusy, withIsolatedRepositorySourceLock } from "./isolated-remote-workspace-source.js";
-import { withIndependentWorkspaceSourceLocks } from "./workspace-source-lock.js";
+import { withIndependentWorkspaceSourceLocks, withWorkspaceSourceLocks } from "./workspace-source-lock.js";
 
 const support = await getEmbeddedPostgresTestSupport();
 const describePostgres = support.supported ? describe : describe.skip;
@@ -97,6 +97,32 @@ describePostgres("workspace source ownership during preparation", () => {
       release();
     }
     expect(await detached).toEqual({ value: "prepared" });
+  });
+
+  it("ends a preparation that exceeds its hold limit and releases the project source for queued work", async () => {
+    const companyId = randomUUID(), projectId = randomUUID();
+    const expired = new Error("workspace preparation timed out");
+    let entered!: () => void;
+    const holding = new Promise<void>(resolve => { entered = resolve; });
+    const stuck = withIndependentWorkspaceSourceLocks(db, { companyId, issueIds: [randomUUID()] },
+      () => withWorkspaceSourceLocks(db, { companyId, projectIds: [projectId] }, async () => {
+        entered();
+        await new Promise<never>(() => undefined);
+      }), false, undefined, { holdMs: 1_500, onExpired: () => expired })
+      .then(value => ({ value }), error => ({ error }));
+    await holding;
+    const queued = withIndependentWorkspaceSourceLocks(db, { companyId, issueIds: [randomUUID()] },
+      () => withWorkspaceSourceLocks(db, { companyId, projectIds: [projectId] }, async () => "prepared"),
+      false, undefined, { holdMs: 20_000, onExpired: () => new Error("queued preparation timed out") });
+
+    expect(await stuck).toEqual({ error: expired });
+    await expect(queued).resolves.toBe("prepared");
+  });
+
+  it("rejects an invalid hold limit before acquiring locks", async () => {
+    await expect(withIndependentWorkspaceSourceLocks(db, { companyId: randomUUID(), issueIds: [randomUUID()] },
+      async () => "never", false, undefined, { holdMs: 0, onExpired: () => new Error("unused") }))
+      .rejects.toThrow("workspace_source_hold_limit_invalid");
   });
 
   it("keeps an independent preparation's lock after the scope that started it commits", async () => {

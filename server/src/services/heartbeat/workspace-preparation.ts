@@ -51,7 +51,7 @@ import { readNativeWorkspaceSyncReference, readNativeWorkspaceSyncLocalCwd } fro
 import { parseObject } from "../../adapters/utils.js";
 import { materializeNativeChatTaskRoot } from "../native-runtime/native-chat-workspace.js";
 import { materializeIsolatedTaskDirectory } from "../isolated-task-directory.js";
-import { withIndependentWorkspaceSourceLocks } from "../workspace-source-lock.js";
+import { withIndependentWorkspaceSourceLocks, type WorkspaceSourceLockHoldLimit } from "../workspace-source-lock.js";
 import {
   cleanupExecutionWorkspaceArtifacts,
   ensurePersistedExecutionWorkspaceAvailable,
@@ -176,14 +176,35 @@ function readNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
 
+const DEFAULT_WORKSPACE_PREPARATION_HOLD_MS = 30 * 60 * 1000;
+
+export function resolveWorkspacePreparationHoldMs(env: NodeJS.ProcessEnv = process.env): number {
+  const configured = Number(env.PAPERCLIP_WORKSPACE_PREPARATION_TIMEOUT_MS);
+  return Number.isSafeInteger(configured) && configured >= 1_000 && configured <= 2_147_483_647
+    ? configured : DEFAULT_WORKSPACE_PREPARATION_HOLD_MS;
+}
+
+export function workspacePreparationHoldLimit(holdMs = resolveWorkspacePreparationHoldMs()): WorkspaceSourceLockHoldLimit {
+  const minutes = Math.max(1, Math.round(holdMs / 60_000));
+  return {
+    holdMs,
+    onExpired: () => new WorkspaceValidationFailure(
+      `Workspace preparation did not finish within ${minutes} minute${minutes === 1 ? "" : "s"}. `
+        + "The project workspace or its repository access may be stuck. Repair repository access, then retry.",
+      { reason: "workspace_preparation_timeout", timeoutMs: holdMs },
+    ),
+  };
+}
+
 export async function prepareHeartbeatWorkspace(db: Db, input: HeartbeatWorkspacePreparationInput) {
   const sourceIssueId = input.reuse.reusableExistingExecutionWorkspace?.sourceIssueId
     ?? input.reuse.existingExecutionWorkspace?.sourceIssueId ?? input.task.issueId;
   if (input.reuse.isDotRun || resolveProviderApiPlacement(input)) return prepareHeartbeatWorkspaceLocked(db, input);
+  const holdLimit = workspacePreparationHoldLimit();
   // A run can be dispatched from inside another operation's source scope, for
   // example by a recovery timer. Its preparation owns its own locks.
   if (!sourceIssueId) return withIndependentWorkspaceSourceLocks(db, { companyId: input.agent.companyId },
-    () => prepareHeartbeatWorkspaceLocked(db, input));
+    () => prepareHeartbeatWorkspaceLocked(db, input), false, undefined, holdLimit);
   return withIndependentWorkspaceSourceLocks(db, { companyId: input.agent.companyId,
     issueIds: [...new Set([sourceIssueId, input.task.issueId].filter((id): id is string => Boolean(id)))] }, async () => {
     const reuse = { ...input.reuse };
@@ -197,7 +218,7 @@ export async function prepareHeartbeatWorkspace(db: Db, input: HeartbeatWorkspac
       if (current && readRemoteWorkspaceAuthority(current.metadata)) reuse[key] = current;
     }
     return prepareHeartbeatWorkspaceLocked(db, { ...input, reuse });
-  });
+  }, false, undefined, holdLimit);
 }
 
 async function prepareHeartbeatWorkspaceLocked(db: Db, input: HeartbeatWorkspacePreparationInput) {
