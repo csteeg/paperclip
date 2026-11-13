@@ -48,6 +48,7 @@ export type ProjectConfigFieldKey =
   | "status"
   | "visibility"
   | "decision_owner"
+  | "repository_checkout"
   | "goals"
   | "env"
   | "execution_workspace_enabled"
@@ -281,6 +282,7 @@ export function ProjectProperties({ project, repositories, onUpdate, onFieldUpda
   const projectEnvironmentView = useQueryView(projectEnvironments);
 
   const workspaces = project.workspaces ?? [];
+  const repositoryWorkspaceCount = new Set(workspaces.flatMap((workspace) => workspace.repoUrl ? [workspace.repoUrl.toLowerCase()] : [])).size;
   const codebase = project.codebase;
   const primaryCodebaseWorkspace = project.primaryWorkspace ?? null;
   const hasAdditionalLegacyWorkspaces = workspaces.some((workspace) =>
@@ -540,6 +542,29 @@ export function ProjectProperties({ project, repositories, onUpdate, onFieldUpda
           </div>
         </PropertyRow>
         {repositories ?? <ProjectRepositories key={project.id} project={project} />}
+        {repositoryWorkspaceCount > 1 ? (
+          <PropertyRow label={<FieldLabel label="Repository checkout" state={fieldState("repository_checkout")} />} alignStart>
+            <div className="space-y-1">
+              <NativeSelect
+                aria-label="Repository checkout"
+                data-testid="project-repository-checkout"
+                value={project.repositoryCheckout ?? "all"}
+                disabled={!onUpdate && !onFieldUpdate}
+                onChange={(event) =>
+                  commitField("repository_checkout", { repositoryCheckout: event.target.value })
+                }
+              >
+                <option value="all">All project repositories</option>
+                <option value="primary">Primary repository only</option>
+              </NativeSelect>
+              <p className="text-(length:--text-micro) text-muted-foreground">
+                {(project.repositoryCheckout ?? "all") === "primary"
+                  ? "New task workspaces check out only the primary repository. Agents request the other repositories when a task needs them."
+                  : "Every task workspace checks out all of this project's repositories."}
+              </p>
+            </div>
+          </PropertyRow>
+        ) : null}
         <ProjectGitAuthorization key={`git-${project.id}`} project={project} />
         <ProjectProviderGitAuthorization key={`provider-git-${project.id}`} project={project} />
         <PropertyRow
