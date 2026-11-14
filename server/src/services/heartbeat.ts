@@ -3182,15 +3182,6 @@ export function heartbeatService(
       }
       const projectRepositories = [{ projectId: resolvedWorkspace.projectId, repoUrl: resolvedWorkspace.repoUrl },
         ...(resolvedWorkspace.additionalWorkspaces ?? []).map((workspace) => ({ projectId: workspace.projectId, repoUrl: workspace.repoUrl }))];
-      const repositoryProjectIds = [...new Set(projectRepositories.map(workspace => workspace.projectId).filter((id): id is string => Boolean(id)))];
-      if (repositoryProjectIds.length) {
-        const linked = await db.select({ projectId: projectWorkspaces.projectId, repoUrl: projectWorkspaces.repoUrl })
-          .from(projectWorkspaces)
-          .innerJoin(projects, and(eq(projects.id, projectWorkspaces.projectId), eq(projects.companyId, projectWorkspaces.companyId)))
-          .where(and(eq(projectWorkspaces.companyId, agent.companyId), inArray(projectWorkspaces.projectId, repositoryProjectIds),
-            eq(projects.repositoryCheckout, "all")));
-        projectRepositories.push(...linked);
-      }
       const projectRepoUrls = projectRepositories.map(workspace => workspace.projectId ? workspace.repoUrl : null)
         .filter((url): url is string => Boolean(url));
       const azureProjectRepositories = taskProjectContext?.id || projectRepositories.some(workspace => Boolean(workspace.projectId))
