@@ -2540,10 +2540,10 @@ const support = externalUrl ? { supported: true } : await getEmbeddedPostgresTes
       if (scenario === "cleared identity") {
         await db.delete(heartbeatRunEvents).where(eq(heartbeatRunEvents.runId, f.sourceRunId));
         await db.update(heartbeatRuns).set({ processPid: null, processGroupId: null, processStartedAt: null,
-          runnerProfileJson: { sessionCheckpoint: { fixture: true } } }).where(eq(heartbeatRuns.id, f.sourceRunId));
+          processHostHash: space!.hash, runnerProfileJson: { sessionCheckpoint: { fixture: true } } }).where(eq(heartbeatRuns.id, f.sourceRunId));
         await appendHeartbeatRunEvent(db, { companyId: f.companyId, runId: f.sourceRunId, agentId: f.agentId,
           eventType: PROCESS_IDENTITY_RECORDED, payload: { targetKind: "local", hostname: os.hostname(),
-            processPid: 999999999, processHostHash: space!.hash, processGroupId: null, processStartedAt: "2026-09-11T09:55:00.000Z" } });
+            processPid: 999999999, processGroupId: null, processStartedAt: "2026-09-11T09:55:00.000Z" } });
       }
       if (scenario === "pending lease") await db.insert(environmentLeases).values({ companyId: f.companyId,
         heartbeatRunId: f.sourceRunId, issueId: f.issueId, status: "pending_cleanup", provider: "local" });
