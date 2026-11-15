@@ -24,21 +24,18 @@ vi.mock("@paperclipai/adapter-utils/execution-target", async () => {
   };
 });
 
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-const execFileAsync = promisify(execFile);
 import {
   buildRemoteClaudeConfigMaterializationCommand,
   CLAUDE_TOOL_SHELL_PREFIX_SCRIPT,
   materializeRemoteClaudeConfig,
-  resolveRemoteClaudeToolShellPrefixPath,
   prepareClaudeConfigSeed,
   prepareManagedClaudePluginRuntime,
   resolveManagedClaudeRuntimeStateDir,
-  prepareClaudeConfigSeed,
   prepareSandboxClaudeProbeRuntime,
   resolveRemoteClaudeToolShellPrefixPath,
 } from "./claude-config.js";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
