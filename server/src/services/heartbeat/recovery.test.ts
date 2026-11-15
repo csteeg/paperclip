@@ -895,7 +895,7 @@ describePostgres("heartbeat recovery module ownership", () => {
     let holding: Promise<unknown> | undefined;
     try {
       await db.update(heartbeatRuns).set({ status: "cancelled", finishedAt: new Date(), processPid: null,
-        processGroupId: null, processStartedAt: null, runnerProfileJson: { sessionCheckpoint: { fixture: true } } })
+        processGroupId: null, processStartedAt: null, processHostHash: space.hash, runnerProfileJson: { sessionCheckpoint: { fixture: true } } })
         .where(eq(heartbeatRuns.id, f.run.id));
       await db.update(nativeRunFinalizations).set({ phase: "committed", leaseOwner: null })
         .where(eq(nativeRunFinalizations.runId, f.run.id));
@@ -927,7 +927,7 @@ describePostgres("heartbeat recovery module ownership", () => {
     const registration = createHeartbeatRecovery(db, f.deps).registerResidualRecoveryWork(coordinator, () => true, async () => true);
     try {
       await db.update(heartbeatRuns).set({ status: "cancelled", finishedAt: new Date(), processPid: null,
-        processGroupId: null, processStartedAt: null, runnerProfileJson: { sessionCheckpoint: { fixture: true } },
+        processGroupId: null, processStartedAt: null, processHostHash: space.hash, runnerProfileJson: { sessionCheckpoint: { fixture: true } },
         resultJson: { retainedWork: "saved design" } }).where(eq(heartbeatRuns.id, f.run.id));
       await db.update(nativeRunFinalizations).set({ phase: "committed", leaseOwner: null })
         .where(eq(nativeRunFinalizations.runId, f.run.id));
@@ -961,7 +961,7 @@ describePostgres("heartbeat recovery module ownership", () => {
       const f = await nativeProcessFixture(child.pid, "local", "failed"), space = qualifiedProcessSpace();
       try {
         await db.update(heartbeatRuns).set({ status: "cancelled", finishedAt: new Date(), processPid: null, processGroupId: null,
-          processStartedAt: null, runnerProfileJson: { sessionCheckpoint: { fixture: true } } }).where(eq(heartbeatRuns.id, f.run.id));
+          processStartedAt: null, processHostHash: space.hash, runnerProfileJson: { sessionCheckpoint: { fixture: true } } }).where(eq(heartbeatRuns.id, f.run.id));
         await db.update(nativeRunFinalizations).set({ phase: "committed",
           leaseOwner: kind === "owned_controller" ? "active-owner" : null }).where(eq(nativeRunFinalizations.runId, f.run.id));
         if (kind === "new_launch") await appendHeartbeatRunEvent(db, { companyId: f.run.companyId,
@@ -988,12 +988,9 @@ describePostgres("heartbeat recovery module ownership", () => {
           .where(eq(heartbeatRuns.id, f.run.id));
         if (kind === "running") await db.update(heartbeatRuns).set({ status: "running", finishedAt: null })
           .where(eq(heartbeatRuns.id, f.run.id));
-        if (["missing_space", "foreign_space", "unknown_space"].includes(kind)) {
-          const [identity] = await db.select().from(heartbeatRunEvents).where(eq(heartbeatRunEvents.runId, f.run.id));
-          await db.update(heartbeatRunEvents).set({ payload: { ...identity.payload,
-            processHostHash: kind === "missing_space" ? null : kind === "unknown_space" ? "unknown" : "other-space" } })
-            .where(eq(heartbeatRunEvents.id, identity.id));
-        }
+        if (["missing_space", "foreign_space", "unknown_space"].includes(kind)) await db.update(heartbeatRuns)
+          .set({ processHostHash: kind === "missing_space" ? null : kind === "unknown_space" ? "unknown" : "other-space" })
+          .where(eq(heartbeatRuns.id, f.run.id));
         const before = await f.current();
         const outcome = kind === "stopped"
           ? (await discoverSettledNativeRunProcesses(db, { limit: 1, skip: id => id !== f.run.id })).released > 0
