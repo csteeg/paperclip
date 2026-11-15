@@ -7,8 +7,7 @@ import { assertSkillSnapshotPath, snapshotFile, skillFileBytes, MAX_SKILL_SNAPSH
 import { indexSkillPackagePaths, inspectSkillPackage } from './skill-package-inspection.js';
 import { auditSkillSnapshot, classifyInventoryKind } from './company-skills.js';
 import { skillRepositoryDependencies } from './skill-repository-dependencies.js';
-import { mergeSecurityFindings, securityFindingsFor, securityOverrideAcceptor, skillRelativeToRepositoryPath } from './skill-security-overrides.js';
-import type { SkillSourceSecurityOverride, SkillSecurityOverrideRequest } from '@paperclipai/shared';
+import { mergeSecurityFindings, securityFindingsFor, securityOverrideAcceptor, skillRelativeToRepositoryPath, type SecurityOverrideGrant } from './skill-security-overrides.js';
 
 import type { GitSkillSnapshot, GitSkillSnapshotOptions, GitSkillTreeEntry as TreeEntry } from './skill-source-git-snapshot.js';
 
@@ -50,7 +49,7 @@ export interface SkillScanOptions {
    * overridable findings stop blocking file inclusion; they are verified
    * against exact file hashes and never cover credential or path findings.
    */
-  securityOverrides?: Array<SkillSourceSecurityOverride | SkillSecurityOverrideRequest | null | undefined>;
+  securityOverrides?: Array<SecurityOverrideGrant | null | undefined>;
 }
 
 export type SkillScanInput = { packageMode?: 'skills' | 'repository'; repositoryUrl: string; trackingRef?: string; commitSha?: string; onlySkillPath?: string };
@@ -239,7 +238,7 @@ export async function scanGitSkillSnapshot(
       return bytes;
     };
     const skills: DiscoveredSkill[] = [];
-    const accepts = (toRepositoryPath?: (filePath: string) => string) => securityOverrideAcceptor(options.securityOverrides ?? [], commit.sha, toRepositoryPath);
+    const accepts = (toRepositoryPath?: (filePath: string) => string) => securityOverrideAcceptor(options.securityOverrides ?? [], commit.sha, toRepositoryPath, trackingRef);
     const securityFindings: NonNullable<ScannedSkillSource['securityFindings']> = [];
     Object.assign(progress, { phase: 'checking', totalSkills: selectedRoots.length, currentPath: null });
     await report();

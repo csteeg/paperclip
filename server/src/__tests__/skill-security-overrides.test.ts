@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { SKILL_SECURITY_OVERRIDE_MAX_PATH_BYTES, skillSecurityOverrideSchema, skillSourceCreateSchema, type SkillSecurityOverrideRequest } from '@paperclipai/shared';
+import { SKILL_SECURITY_OVERRIDE_MAX_PATH_BYTES, skillSecurityOverrideSchema, skillSourceCreateSchema, type SkillSecurityOverrideRequest, type SkillSourceSecurityOverride } from '@paperclipai/shared';
 import { DEFAULT_JSON_BODY_LIMIT_BYTES } from '../http/body-limits.js';
 import { githubFixture } from './helpers/github-skills.js';
 import { scanGitHubSkills } from '../services/github-skill-source.js';
-import { securityOverrideAcceptor, verifySecurityOverride } from '../services/skill-security-overrides.js';
+import { securityOverrideAcceptor, verifySecurityOverride, versionApprovalGrant, versionSecurityApproval } from '../services/skill-security-overrides.js';
 
 const md = (name: string) => `---\nname: ${name}\ndescription: A useful skill\n---\nFollow these instructions.\n`;
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');
@@ -70,6 +70,21 @@ describe('skill security overrides', () => {
     expect(later?.('hooks/install.sh', hash(hook), 'secret_exfiltration')).toBe(false);
   });
 
+  it('records the approved files a version installs and applies that record only to its own bytes and commit', async () => {
+    const installedCommit = 'a'.repeat(40);
+    const approval: SkillSourceSecurityOverride = { commitSha: 'b'.repeat(40), trustFutureUpdates: true, reason: 'Reviewed the hook by hand.',
+      approvedByUserId: 'admin-user', approvedAt: '2026-11-12T00:00:00.000Z', files: [{ path: 'hooks/install.sh', code: 'remote_fetch_exec', sha256: hash('older bytes') }] };
+    const scan = await scanGitHubSkills({ ...repository, commitSha: installedCommit }, githubFixture(files, {}, installedCommit), { securityOverrides: [approval] });
+    const record = versionSecurityApproval(approval, scan, new Set(scan.repositoryFiles!.map(file => file.path)));
+    // Future-update trust admitted these bytes at this commit, so the version records them, not the reviewed hash.
+    expect(record).toMatchObject({ commitSha: installedCommit, approvedCommitSha: 'b'.repeat(40), trustFutureUpdates: true,
+      files: [{ path: 'hooks/install.sh', code: 'remote_fetch_exec', sha256: hash(hook) }] });
+    const installed = await scanGitHubSkills({ ...repository, commitSha: installedCommit }, githubFixture(files, {}, installedCommit), { securityOverrides: [versionApprovalGrant(record)] });
+    expect(installed.repositoryFiles?.some(file => file.path === 'hooks/install.sh')).toBe(true);
+    expect(securityOverrideAcceptor([versionApprovalGrant(record)], 'c'.repeat(40))?.('hooks/install.sh', hash(hook), 'remote_fetch_exec')).toBe(false);
+    expect(versionSecurityApproval(approval, scan, new Set(['skills/plain/SKILL.md']))).toBeNull();
+  });
+
   it('validates override requests', () => {
     const base = { repositoryUrl: 'https://github.com/acme/skills', commitSha: 'a'.repeat(40), selectedPaths: [] };
     const valid = override('a'.repeat(40), { 'hooks/install.sh': hook });
@@ -83,9 +98,20 @@ describe('skill security overrides', () => {
   it('keeps a maximum-sized approval within the JSON body limit', () => {
     const valid = override('a'.repeat(40), { 'hooks/install.sh': hook });
     const longFiles = (count: number) => Array.from({ length: count }, (_, index) => ({ path: `${String(index).padStart(5, '0')}/${'x'.repeat(4000)}`, sha256: hash(hook) }));
-    const fitting = { ...valid, files: longFiles(Math.floor(SKILL_SECURITY_OVERRIDE_MAX_PATH_BYTES / 4006)) };
+    const fitting = { ...valid, files: longFiles(Math.floor(SKILL_SECURITY_OVERRIDE_MAX_PATH_BYTES / 4008)) };
     expect(skillSecurityOverrideSchema.safeParse(fitting).success).toBe(true);
     expect(Buffer.byteLength(JSON.stringify(fitting))).toBeLessThan(DEFAULT_JSON_BODY_LIMIT_BYTES / 2);
     expect(skillSecurityOverrideSchema.safeParse({ ...valid, files: longFiles(3000) }).success).toBe(false);
+  });
+
+  it('budgets paths at the size JSON sends them, with the same paths among the selected ones', () => {
+    const valid = override('a'.repeat(40), { 'hooks/install.sh': hook });
+    // Control characters are valid in a path and JSON sends each one as a six-byte escape.
+    const escaped = (count: number) => Array.from({ length: count }, (_, index) => ({ path: `${String(index).padStart(5, '0')}/${''.repeat(900)}`, sha256: hash(hook) }));
+    expect(skillSecurityOverrideSchema.safeParse({ ...valid, files: escaped(1000) }).success).toBe(false);
+    const fitting = { ...valid, files: escaped(Math.floor(SKILL_SECURITY_OVERRIDE_MAX_PATH_BYTES / 5408)) };
+    expect(skillSecurityOverrideSchema.safeParse(fitting).success).toBe(true);
+    const request = { repositoryUrl: 'https://github.com/acme/skills', commitSha: 'a'.repeat(40), selectedPaths: fitting.files.map(file => file.path), securityOverride: fitting };
+    expect(Buffer.byteLength(JSON.stringify(request))).toBeLessThan(DEFAULT_JSON_BODY_LIMIT_BYTES);
   });
 });

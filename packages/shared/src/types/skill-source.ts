@@ -40,11 +40,32 @@ export interface SkillSecurityOverrideRequest {
 /** The recorded override a source applies on refresh. Grants file inclusion only, never execution. */
 export interface SkillSourceSecurityOverride {
   commitSha: string;
+  /** The branch the reviewed commit was scanned from. Future-update trust covers later commits of this branch only. */
+  reviewedRef?: string;
   files: Array<{ path: string; code: string; sha256: string }>;
   reason: string;
   trustFutureUpdates: boolean;
   approvedByUserId: string | null;
   approvedAt: string;
+}
+/**
+ * The security approval that admitted an installed skill version's flagged files, recorded on the
+ * version when it is installed. Audits, update diffs and previews of that version read this record;
+ * a source's current approval only decides what new scans and refreshes include.
+ */
+export interface SkillVersionSecurityApproval {
+  /** The commit this version was installed from. */
+  commitSha: string;
+  /** How this version installed its files: a single skill package, or the repository package. Audits map paths with it. */
+  packageMode?: SkillSourcePackageMode;
+  /** The commit the administrator reviewed; differs when future-update trust carried the approval. */
+  approvedCommitSha: string;
+  approvedByUserId: string | null;
+  approvedAt: string;
+  reason: string;
+  trustFutureUpdates: boolean;
+  /** The admitted files at their repository paths, with the exact bytes this version installed. */
+  files: Array<{ path: string; code: string; sha256: string }>;
 }
 /** What a source response shows about its saved approval. The approved files stay on the server. */
 export interface SkillSourceSecurityOverrideSummary extends Omit<SkillSourceSecurityOverride, 'files'> {
@@ -81,7 +102,7 @@ export interface SkillPackageReference {
   resolvedPath: string;
   kind: 'missing' | 'outside_package';
 }
-export interface SkillSourcePreviewRequest extends SkillSourceDiscoveryRequest {
+export interface SkillSourcePreviewRequest extends Omit<SkillSourceDiscoveryRequest, 'sourceId'> {
   commitSha: string;
   skillPath: string;
   filePath: string;
@@ -188,6 +209,8 @@ export interface SkillSourceDiscoveryRequest {
   repositoryUrl: string;
   trackingRef?: string;
   connectionId?: string | null;
+  /** Scan a saved source again: authorized like editing that source, and scans its stored repository. */
+  sourceId?: string;
 }
 export interface SkillSourceCandidate {
   inspection?: SkillPackageInspection | null;
@@ -212,7 +235,7 @@ export interface SkillSourceDiscovery {
   warnings: string[];
   /** Files left out by blocking audit findings at this commit; omitted by older servers. */
   securityFindings?: SkillSecurityFinding[];
-  /** Whether this caller may approve a security override; omitted by older servers. */
+  /** Whether this caller may approve or withdraw a security override for this repository; omitted by older servers. */
   canOverrideSecurity?: boolean;
 }
 /** Live scan metadata only. A complete event is required before selections can be imported. */
@@ -235,7 +258,7 @@ export type SkillSourceDiscoveryEvent = SkillSourceScanUpdate
   | { type: 'complete'; discovery: SkillSourceDiscovery }
   | { type: 'error'; error: string; status: number };
 
-export interface SkillSourceCreateRequest extends SkillSourceDiscoveryRequest {
+export interface SkillSourceCreateRequest extends Omit<SkillSourceDiscoveryRequest, 'sourceId'> {
   commitSha: string;
   selectedPaths: string[];
   excludedFolders?: string[];
