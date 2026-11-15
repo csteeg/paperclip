@@ -5,7 +5,8 @@ import { useAgentChatNavigation, useOpenAgentChat } from "@/hooks/useAgentChatNa
 import { useLocation, useNavigate } from "@/lib/router";
 import { useSidebar } from "@/context/SidebarContext";
 import { agentRouteRef } from "@/lib/utils";
-import { useQueries } from "@tanstack/react-query";
+import { useQueries, useQueryClient } from "@tanstack/react-query";
+import { issuesApi } from "@/api/issues";
 import { agentsApi } from "@/api/agents";
 import { queryKeys } from "@/lib/queryKeys";
 import { resourceMembershipState, useResourceMemberships } from "@/hooks/useResourceMemberships";
@@ -15,6 +16,7 @@ import { AgentChatPin, agentChatPinKey, useAgentChatPins } from "./AgentChatPin"
 /** Account- and company-scoped data for the secondary chat navigation. */
 export function AgentConversationsSidebar({ onConversationOpened }: { onConversationOpened?: () => void } = {}) {
   const { companyId, userId, agents, chats, session } = useAgentChatNavigation();
+  const queryClient = useQueryClient();
   const agentChatPins = useAgentChatPins();
   const unreadMessageCounts = useMemo(() => {
     const counts = new Map<string, number>();
@@ -75,6 +77,11 @@ export function AgentConversationsSidebar({ onConversationOpened }: { onConversa
   return <AgentConversationSidebar key={`${companyId}:${userId}`} agents={[...uniqueConversations, ...teammates]} availableAgents={roster}
     chats={(chats.data ?? []).flatMap(chat => { const agent = chat.conversationAgentId ? byId.get(chat.conversationAgentId) : undefined; return agent ? [{ chat, agent }] : []; })}
     onSelectHistory={() => { if (isMobile) setSidebarOpen(false); }}
+    onRenameChat={async (chat, title) => {
+      // A person's rename is final: the agent no longer names this chat.
+      await issuesApi.update(chat.id, { title });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.agentChats.list(companyId, userId) });
+    }}
     existingChatAgentIds={existingChatAgentIds}
     activeId={active?.id} previews={previews}
     unreadAgentIds={unreadAgentIds}
@@ -91,7 +98,10 @@ export function AgentConversationsSidebar({ onConversationOpened }: { onConversa
     historyLoading={historyAgents.some(result => result.isPending)}
     historyError={historyAgents.find(result => queryViewKind(result) === "error")?.error}
     onRetryHistory={() => { historyAgents.filter(result => result.isError).forEach(result => { void result.refetch(); }); }}
-    onAddChat={async (agent, signal) => { await openChat(agent, signal); if (!signal?.aborted) onConversationOpened?.(); }}
+    onAddChat={async (agent, signal) => {
+      // A confirmed new chat opens even after its picker was dismissed, so close the history with it.
+      if (await openChat(agent, signal)) onConversationOpened?.();
+    }}
     onSelect={agent => {
       navigate(`/chats/${encodeURIComponent(agent.status === "terminated" ? agent.id : agentRouteRef(agent))}`);
       if (isMobile) setSidebarOpen(false);

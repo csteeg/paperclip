@@ -27,6 +27,8 @@ vi.mock("@/lib/router", () => ({
   Link: ({ to, children, ...props }: { to: string; children: ReactNode }) => <a href={to} {...props}>{children}</a>,
 }));
 vi.mock("@/api/agents", () => ({ agentsApi: { list: vi.fn(), get: state.getAgent } }));
+const issueUpdates = vi.hoisted(() => vi.fn(async () => ({})));
+vi.mock("@/api/issues", () => ({ issuesApi: { update: issueUpdates } }));
 vi.mock("@/api/agentChats", () => ({ agentChatsApi: { list: vi.fn(), ensure: state.ensure, create: state.ensure } }));
 vi.mock("@/api/auth", () => ({ authApi: { getSession: () => ({ user: { id: "user-a" } }) } }));
 vi.mock("./AgentAvatar", () => ({ AgentAvatar: () => null }));
@@ -51,7 +53,7 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   state.companyId = "company-a";
-  state.navigate.mockReset(); state.closeSidebar.mockReset(); state.ensure.mockReset(); state.getAgent.mockReset(); state.newAgent.mockReset(); localStorage.clear(); sessionStorage.clear();
+  state.navigate.mockReset(); state.closeSidebar.mockReset(); state.ensure.mockReset(); state.getAgent.mockReset(); state.newAgent.mockReset(); issueUpdates.mockClear(); localStorage.clear(); sessionStorage.clear();
   sidebarInputs.length = 0;
   state.ensure.mockImplementation(async (_company, id) => chat(id));
   memberships.agentMemberships = {};
@@ -101,6 +103,13 @@ it.each([false, true])("retries a lost create response without another chat (rem
   const [conversation] = committed.values();
   expect(state.navigate).toHaveBeenLastCalledWith(`/chats/bob/${conversation.id}`);
   expect(client.getQueryData<ReturnType<typeof chat>[]>(queryKeys.agentChats.list("company-a", "user-a"))!.filter(item => item.conversationAgentId === "bob")).toHaveLength(1);
+});
+it("starts a new chat on a plain-HTTP page, where the browser has no randomUUID", async () => {
+  const { randomUUID: _secureContextOnly, ...insecure } = { randomUUID: undefined, getRandomValues: crypto.getRandomValues.bind(crypto) };
+  vi.stubGlobal("crypto", insecure);
+  await render(); await addChat(); await choose("bob");
+  expect(state.ensure).toHaveBeenCalledTimes(1);
+  expect(state.ensure.mock.calls[0][2]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
 });
 it("uses a fresh request for a new chat after confirmed creation", async () => {
   state.ensure.mockImplementation(async (companyId: string, agentId: string) => ({ ...chat(agentId), companyId, id: crypto.randomUUID() }));
@@ -329,6 +338,38 @@ it("lists and opens separate chats for the same agent", async () => {
   expect(state.closeSidebar).toHaveBeenCalledWith(false);
 });
 
+it("renames a chat inline from the history", async () => {
+  client.setQueryData(queryKeys.agentChats.list("company-a", "user-a"), [{ ...chat("alice"), id: "first", title: "How do I reset my password?", createdAt: "2026-09-01T12:00:00Z" }]);
+  await render();
+  const history = container.querySelector('nav[aria-label="Chat history"]')!;
+  await act(async () => history.querySelector<HTMLButtonElement>('button[aria-label="Rename How do I reset my password?"]')!.click());
+  const input = history.querySelector<HTMLInputElement>('input[aria-label="Chat title"]')!;
+  // Touch devices keep the shared 16px input size, so Safari does not zoom on focus.
+  expect(input.className.split(" ")).toContain("text-base");
+  // Touch devices keep the shared 16px input size, so Safari does not zoom on focus.
+  expect(input.className.split(/s+/)).not.toContain("text-sm");
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "Password help");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => input.form!.requestSubmit());
+  expect(issueUpdates).toHaveBeenCalledWith("first", { title: "Password help" });
+  expect(history.querySelector('input[aria-label="Chat title"]')).toBeNull();
+});
+
+it("confirms an unchanged provisional chat title with Enter, but not by leaving the field", async () => {
+  client.setQueryData(queryKeys.agentChats.list("company-a", "user-a"), [{ ...chat("alice"), id: "first", title: "Plan the Q3 offsite", titleNeedsGeneration: true, createdAt: "2026-09-01T12:00:00Z" }]);
+  await render();
+  const history = container.querySelector('nav[aria-label="Chat history"]')!;
+  const open = async () => act(async () => history.querySelector<HTMLButtonElement>('button[aria-label="Rename Plan the Q3 offsite"]')!.click());
+  await open();
+  await act(async () => history.querySelector<HTMLInputElement>('input[aria-label="Chat title"]')!.blur());
+  expect(issueUpdates).not.toHaveBeenCalled();
+  await open();
+  await act(async () => history.querySelector<HTMLInputElement>('input[aria-label="Chat title"]')!.form!.requestSubmit());
+  expect(issueUpdates).toHaveBeenCalledWith("first", { title: "Plan the Q3 offsite" });
+});
+
 it("shows accessible unread indicators only for the current company and human", async () => {
   client.setQueryData(queryKeys.agentChats.list("company-a", "user-a"), [{ ...chat("alice"), isUnreadForMe: true }, chat("bob")]);
   client.setQueryData(queryKeys.agentChats.list("company-a", "other-human"), [{ ...chat("bob"), isUnreadForMe: true }]);
@@ -410,6 +451,37 @@ it("retains terminated agents' history by id without offering them for new chats
   expect([...document.querySelectorAll("[role=option]")].some(option => option.textContent?.includes("Retired"))).toBe(false);
 });
 
+it("opens a confirmed new chat when the picker was dismissed while it was being created", async () => {
+  let finishAlice!: (value: ReturnType<typeof chat>) => void;
+  state.ensure.mockImplementation(async (_company, id) => id === "alice"
+    ? new Promise(resolve => { finishAlice = resolve; }) : chat(id));
+  const opened = vi.fn();
+  await render(opened); await addChat(); await choose("alice");
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-slot="dialog-close"]')!.click());
+  expect(state.navigate).not.toHaveBeenCalled();
+  expect(opened).not.toHaveBeenCalled();
+  await act(async () => finishAlice(chat("alice")));
+  expect(state.navigate).toHaveBeenLastCalledWith("/chats/alice/chat-alice");
+  // The surrounding history closes with the confirmed chat, as it does for a picker that stayed open.
+  expect(opened).toHaveBeenCalledOnce();
+});
+it("does not let a chat dismissed in one picker replace a newer chat from the other picker", async () => {
+  let finishAlice!: (value: ReturnType<typeof chat>) => void;
+  state.ensure.mockImplementation(async (_company, id) => id === "alice"
+    ? new Promise(resolve => { finishAlice = resolve; }) : chat(id));
+  // The Coordinator's New chat picker is a separate hook instance from the history's Add chat picker.
+  function CoordinatorNewChat() {
+    const openNewChat = useOpenAgentChat("company-a", "user-a", true);
+    return <button type="button" onClick={() => { void openNewChat(roster[1]!); }}>Coordinator new chat with bob</button>;
+  }
+  await act(async () => { root.render(<QueryClientProvider client={client}><AgentConversationsSidebar /><CoordinatorNewChat /></QueryClientProvider>); });
+  await addChat(); await choose("alice");
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-slot="dialog-close"]')!.click());
+  await act(async () => [...container.querySelectorAll("button")].find(button => button.textContent === "Coordinator new chat with bob")!.click());
+  expect(state.navigate).toHaveBeenLastCalledWith("/chats/bob/chat-bob");
+  await act(async () => finishAlice(chat("alice")));
+  expect(state.navigate).toHaveBeenCalledTimes(1);
+});
 it("does not let a dismissed selection override a newer chat", async () => {
   let finishAlice!: (value: ReturnType<typeof chat>) => void;
   state.ensure.mockImplementation(async (_company, id) => id === "alice"

@@ -149,7 +149,8 @@ test("retired Chat opt-outs allow sends and resets while preserving existing his
         ).status(),
       ).toBe(201);
     await page.reload();
-    await expect(page.getByText("Visible history", { exact: true }).first()).toBeVisible();
+    // The chat history also lists the chat under its first message, so read the transcript bubble.
+    await expect(page.getByTestId("task-chat-human-bubble").getByText("Visible history", { exact: true })).toBeVisible();
     expect(
       (await json(await request.get(`/api/issues/${issue.id}/comments`))).some(
         (c: any) => c.body.includes("Visible history"),
@@ -282,7 +283,8 @@ test("Coordinator agent switching preserves drafts and opens one conversation on
     const chat = await json(await request.get(f.chatPath));
     await switchTo("Beta");
     await switchTo("Alpha");
-    await expect(page.getByText("Coordinator conversation acceptance", { exact: true })).toBeVisible();
+    // The first message also names the chat in the history, so read it from the transcript bubble.
+    await expect(page.getByTestId("task-chat-human-bubble").getByText("Coordinator conversation acceptance", { exact: true })).toBeVisible();
     expect((await json(await request.get(f.chatPath))).id).toBe(chat.id);
     expect(await json(await request.get(`/api/companies/${f.company.id}/chats`))).toHaveLength(1);
   } finally {
@@ -452,7 +454,7 @@ test("secondary chat navigation preserves layout, separate conversations, histor
     await expect(nav.getByRole("link", { name: /^Alpha/ })).toHaveAttribute("aria-current", "page");
     await betaLink.click();
     await expect(nav.getByRole("link", { name: /^Beta/ })).toHaveAttribute("aria-current", "page");
-    await expect(page.getByText("Background activity", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("task-chat-human-bubble").getByText("Background activity", { exact: true })).toBeVisible();
     expect((await json(await request.get(betaPath))).id).toBe(beta.id);
     expect(await json(await request.get(chatListPath))).toHaveLength(3);
     await json(await request.post(`/api/agents/${f.agents[1].id}/terminate`));
@@ -460,9 +462,9 @@ test("secondary chat navigation preserves layout, separate conversations, histor
     await expect(nav.getByRole("link", { name: /^Beta / })).toContainText("Terminated");
     await betaLink.click();
     await expect(page).toHaveURL(new RegExp(`/chats/${f.agents[1].id}/${beta.id}$`));
-    await expect(page.getByText("Background activity", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("task-chat-human-bubble").getByText("Background activity", { exact: true })).toBeVisible();
     await page.reload();
-    await expect(page.getByText("Background activity", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("task-chat-human-bubble").getByText("Background activity", { exact: true })).toBeVisible();
   } finally {
     await json(await request.put(workspacePath, { data: { coordinatorWorkspaceEnabled: originalWorkspace.coordinatorWorkspaceEnabled } }));
     await f.restore();

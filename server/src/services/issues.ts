@@ -2081,6 +2081,8 @@ type IssueCreateInput = Omit<typeof issues.$inferInsert, "companyId" | "title" |
   trustExplicitResponsibleUserId?: boolean;
   idempotencyKey?: string | null;
   allowDuplicate?: boolean;
+  /** Keep an explicit title provisional, so the assigned agent may still name the task (new agent chats). */
+  titleIsProvisional?: boolean;
   assertCanReuseIssue?: (issue: typeof issues.$inferSelect) => Promise<void>;
   onDeduplicated?: (reason: "idempotency_key" | "recent_open_title") => void;
 };
@@ -10588,6 +10590,7 @@ export function issueService(db: Db) {
         onDeduplicated,
         parentDepthPolicy = "flatten",
         expectedParentId,
+        titleIsProvisional = false,
         ...issueData
       } = data;
       // The parent the caller asked for. It still drives provenance, privacy and
@@ -10600,7 +10603,7 @@ export function issueService(db: Db) {
         : undefined;
       const resolvedTitle = explicitTitle || provisionalTitle;
       if (!resolvedTitle) throw unprocessable("Provide a title or task description");
-      const titleNeedsGeneration = !explicitTitle;
+      const titleNeedsGeneration = !explicitTitle || titleIsProvisional;
       // A prompt prefix is not a task identity: distinct requests can share it.
       const deduplicateByTitle = allowDuplicate === false && !titleNeedsGeneration;
       issueData.title = resolvedTitle;
