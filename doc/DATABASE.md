@@ -443,6 +443,23 @@ node scripts/renumber-migrations.mjs --start 8801
 
 Both commands accept `--dry-run` to print the plan and `--base <ref>` to compare with a ref other than `upstream/master`. Stage the result with `git add -A packages/db/src/migrations`.
 
+Current fork-local migrations (SQL bytes are final once a database has applied them; never edit or rename these files):
+
+| File | Origin |
+| --- | --- |
+| `8801_skill_source_security_override` | skill source security override (PR 20846) |
+| `8802_messy_talkback` | managed Claude project sources (PR 19216) |
+| `8803_flaky_arclight` | provider pool (PR 19481) |
+| `8804_project_provider_authorizations` | Azure DevOps skill sources (PR 20533) |
+| `8805_multiple_agent_chat_conversations` | multiple agent chats (PR 19425) |
+| `8806_project_repository_checkout` | project repository checkout scope (PR 21367) |
+| `8807_project_repository_checkout_none` | project repository checkout scope, `none` value (PR 21367) |
+| `8808_skill_version_security_approval` | skill version security approval (PR 20846, was `0489`) |
+| `8809_skill_source_security_override_summary` | skill source override summary (PR 20846, was `0490`) |
+| `8810_skill_version_security_approval_index` | concurrent index for the approvals table (PR 20846, was `0491`); listed in `MIGRATIONS_WITH_TOP_LEVEL_STATEMENTS` in `packages/db/src/client.ts` |
+
+PR 21367's own branch collapses `8806` and `8807` into one `0477_project_repository_checkout` file. That file is not part of `develop`, because a database that applied `8806` and `8807` already has the column and constraint.
+
 Migration `0471` keeps the existing conversation as the default for its company, agent and user and permits additional conversations. The partial unique index still protects concurrent creation of the default conversation.
 
 ## Harness pool configuration compatibility

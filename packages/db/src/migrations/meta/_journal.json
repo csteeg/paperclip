@@ -3452,6 +3452,27 @@
       "when": 1794639469694,
       "tag": "8807_project_repository_checkout_none",
       "breakpoints": true
+    },
+    {
+      "idx": 493,
+      "version": "7",
+      "when": 1794756403810,
+      "tag": "8808_skill_version_security_approval",
+      "breakpoints": true
+    },
+    {
+      "idx": 494,
+      "version": "7",
+      "when": 1794756403811,
+      "tag": "8809_skill_source_security_override_summary",
+      "breakpoints": true
+    },
+    {
+      "idx": 495,
+      "version": "7",
+      "when": 1794756403812,
+      "tag": "8810_skill_version_security_approval_index",
+      "breakpoints": true
     }
   ]
 }

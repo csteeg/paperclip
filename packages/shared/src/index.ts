@@ -2991,4 +2991,3 @@ export * from "./tool-call-progress.js";
 export * from "./mcp-skills.js";
 export type { TailscaleConnection, TailscaleDeviceLogin } from "./types/tailscale.js";
 
-export { isActionableAttention, supportsAttentionRecoveryResolution } from "./types/attention.js";
