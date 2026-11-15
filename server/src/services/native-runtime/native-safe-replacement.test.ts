@@ -38,7 +38,6 @@ import {
   environmentLeases,
   companies,
   createDb,
-  environmentLeases,
   subscribeDatabaseWork,
   heartbeatRunEvents,
   heartbeatRuns,
