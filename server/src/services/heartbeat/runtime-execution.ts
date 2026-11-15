@@ -36,6 +36,7 @@ import {
 } from "./workspaces.js";
 import { recordLegacyWorkspaceRestoreFailure } from "../legacy-execution-recovery.js";
 import { configuredEnvironmentProjection } from "../../vendor/paperclip-runner/index.js";
+import { observabilitySecretValues } from "@paperclipai/adapter-utils/agent-observability";
 import { buildAgentIdentityEnv } from "@paperclipai/adapter-utils/server-utils";
 import { externalObjectService } from "../external-objects.js";
 import { isAgentDirectoryCopy } from "../agent-directory-working-copies.js";
@@ -96,7 +97,8 @@ import type { createHeartbeatRunState } from "./run-state.js";
 import type { createHeartbeatLifecycle } from "./run-lifecycle.js";
 import type { createHeartbeatRunControl } from "./run-control.js";
 import type { createHeartbeatQueue } from "./queue.js";
-import type { createAgentIdentityRedactor } from "../agent-identity-redaction.js";
+import { secretOutputForms, type createAgentIdentityRedactor } from "../agent-identity-redaction.js";
+import { createRunOutputSecretStore } from "../run-secret-redaction.js";
 import type { createAdapterExecutionControl } from "../adapter-execution-control.js";
 import type { executionWorkspaceService } from "../execution-workspaces.js";
 import type { workspaceOperationService } from "../workspace-operations.js";
@@ -106,6 +108,7 @@ import type { EffectiveRunSessionConfigMetadata } from "./workspaces.js";
 import type { ProviderResourceDisposition } from "../environment-runtime.js";
 import type { NativeExecutionInput, NativeSessionBackend } from "../../vendor/paperclip-runner/index.js";
 import type { PluginWorkerManager } from "../plugin-worker-manager.js";
+import { resolvePluginWorkspaceFinalization } from "../plugin-workspaces.js";
 import type { RealizedExecutionWorkspace } from "../workspace-runtime.js";
 import type { reserveWarmNativeInstructionDirectory } from "../native-runtime/index.js";
 
@@ -147,6 +150,8 @@ export interface HeartbeatRuntimeExecutionInput {
   config: Pick<Selection["config"], "runtimeConfig" | "resolvedConfig" | "managedAiRuntime"> & {
     resolvedInstanceSettings: { experimental: Pick<Awaited<ReturnType<ReturnType<typeof instanceSettingsService>["getExperimental"]>>, "enableWorkspaceBranchReconcileForward" | "enableWorkspaceDirtyQuarantineRepair"> };
     configuredTaskEnvironment: Parameters<typeof configuredEnvironmentProjection>[0];
+    /** Names of configured entries resolved from secrets; values never leave the projection. */
+    secretKeys?: ReadonlySet<string>;
     adapterEnv: Parameters<typeof buildNativeProviderEnvironment>[0];
     agentIdentity: AdapterExecutionContext["agentIdentity"];
     observability?: AdapterExecutionContext["observability"];
@@ -251,7 +256,7 @@ export async function executeHeartbeatRuntime(db: Db, input: HeartbeatRuntimeExe
   const { nativeRuntimeResolution, nativeExecution, nativeRunnerInstanceId, adapter, runtimeForAdapter, getNativeFreshSessionHandoff, getFreshSessionHandoff, runOptions } = input.runtime;
   const { persistedExecutionWorkspace, executionWorkspace, executionTarget, workspaceOperationRecorder, nativeWorkspaceSync, workspaceRestoreSource, remoteExecution } = input.workspace;
   const remoteWorkspaceAuthority = readRemoteWorkspaceAuthority(persistedExecutionWorkspace?.metadata);
-  const { runtimeConfig, resolvedConfig, resolvedInstanceSettings, configuredTaskEnvironment, adapterEnv, agentIdentity, observability, managedAiRuntime, runtimeEnv, useHostGitHub, requireGitHubConnection, githubProjectRepositories, githubProjectBindings, azureProjectRepositories, githubSelection, azureGitConfigured } = input.config;
+  const { runtimeConfig, resolvedConfig, resolvedInstanceSettings, configuredTaskEnvironment, secretKeys, adapterEnv, agentIdentity, observability, managedAiRuntime, runtimeEnv, useHostGitHub, requireGitHubConnection, githubProjectRepositories, githubProjectBindings, azureProjectRepositories, githubSelection, azureGitConfigured } = input.config;
   const { runtimeSessionParamsForAdapter, configuredModel, sessionConfigMetadata, goalCheckpointSession } = input.session;
   const { nativeInstructionWorkingCopy, collectStoppedInstructions, nativeInstructionReservation, releaseInstructionCopy } = input.instructions;
   const { providerTraceCapture, nativeRunnerPreparationSpans, attestedQuestionResponseAtMs, attemptStartedAtMs, environmentAcquireStartedAtMs, environmentRealizeEndedAtMs } = input.trace;
@@ -302,15 +307,15 @@ export async function executeHeartbeatRuntime(db: Db, input: HeartbeatRuntimeExe
   let adapterFinalizeOutcome: "succeeded" | "failed" | null = null;
   let preserveRunGatewayTokens = false;
   let pluginWorkspaceFinalization: Record<string, unknown> | null = null;
-  const inspectFinalizeWorkspaceBranch = async () => {
-    const workspaceRecord = persistedExecutionWorkspace?.id
-      ? await executionWorkspacesSvc.getStoredById(
-          agent.companyId,
-          persistedExecutionWorkspace.id,
-        )
-      : persistedExecutionWorkspace;
+  let pluginWorkspaceFinalizationPlan: Awaited<ReturnType<typeof resolvePluginWorkspaceFinalization>>;
+  let pluginWorkspaceFinalizationRecord: typeof persistedExecutionWorkspace;
+  let pluginWorkspacePlacementFailed = false;
+  const inspectFinalizeWorkspaceBranch = async (
+    workspaceRecord: typeof persistedExecutionWorkspace,
+    plan: Awaited<ReturnType<typeof resolvePluginWorkspaceFinalization>>,
+  ) => {
     pluginWorkspaceFinalization = workspaceRecord
-      ? await inspectPluginWorkspaceForFinalization(db, options.pluginWorkerManager, workspaceRecord, agent.id, run.id)
+      ? await inspectPluginWorkspaceForFinalization(db, options.pluginWorkerManager, workspaceRecord, agent.id, run.id, { taskLease: null, plan })
       : null;
     if (pluginWorkspaceFinalization || readRemoteWorkspaceAuthority(workspaceRecord?.metadata)
       || workspaceRecord?.strategyType !== "git_worktree") return null;
@@ -337,9 +342,23 @@ export async function executeHeartbeatRuntime(db: Db, input: HeartbeatRuntimeExe
     restore?: () => Promise<void>,
   ) => {
     if (adapterFinalizeOutcome) return;
+    const workspaceRecord = pluginWorkspaceFinalizationRecord ??
+      ((status === "succeeded" || persistedExecutionWorkspace?.providerType === "plugin") && persistedExecutionWorkspace?.id
+        ? await executionWorkspacesSvc.getStoredById(agent.companyId, persistedExecutionWorkspace.id).catch(error => {
+            if (persistedExecutionWorkspace.providerType === "plugin") pluginWorkspacePlacementFailed = true;
+            throw error;
+          })
+        : persistedExecutionWorkspace);
+    const plan = pluginWorkspaceFinalizationPlan ??= workspaceRecord
+      ? await resolvePluginWorkspaceFinalization(db, workspaceRecord, { runId: run.id, agentId: agent.id })
+        .catch(error => { pluginWorkspacePlacementFailed = true; throw error; })
+      : undefined;
+    if (plan) pluginWorkspaceFinalizationRecord = workspaceRecord;
+    const pluginWorkspaceTaskLease = plan?.kind === "finalize" ? plan.taskLease : undefined;
     await workspaceOperationRecorder.recordOperation({
       phase: "workspace_finalize", cwd: executionWorkspace.cwd,
       metadata: { adapterType: agent.adapterType, executionTargetKind: executionTarget?.kind ?? "local",
+        ...(pluginWorkspaceTaskLease ? { pluginWorkspaceTaskLease } : {}),
         ...(restore ? { owningService: "native_workspace_finalizer" } : {}), ...metadata },
       run: async () => {
         await restore?.();
@@ -347,7 +366,7 @@ export async function executeHeartbeatRuntime(db: Db, input: HeartbeatRuntimeExe
         let finalizeBranchRepairMetadata: Record<string, unknown> | null =
           null;
         if (status === "succeeded") {
-          const branchInspection = await inspectFinalizeWorkspaceBranch();
+          const branchInspection = await inspectFinalizeWorkspaceBranch(workspaceRecord, plan);
           if (branchInspection) {
             let inspection = branchInspection.inspection;
             const initialManagedGitWorktreeBranch =
@@ -629,6 +648,10 @@ export async function executeHeartbeatRuntime(db: Db, input: HeartbeatRuntimeExe
           nativeDispatchAtMs,
         }),
       );
+      const outputSecretStore = createRunOutputSecretStore(db);
+      await outputSecretStore.registerAll(run.companyId, run.id,
+        identityRedactor.secretSources.filter((value) => secretOutputForms([value]).length > 0));
+      identityRedactor.addSecretValues(await outputSecretStore.valuesForRun(run.companyId, run.id));
       const stopCleanup = runOptions.nativeRestartRecovery?.kind === "reattach_remote_runner"
         && await readClaimedNativeStopRecovery(db, run, runOptions.nativeLeaseOwner);
       const guardedDispatch =
@@ -708,9 +731,10 @@ export async function executeHeartbeatRuntime(db: Db, input: HeartbeatRuntimeExe
               managedAiAccountIdentity: managedAiRuntime?.sessionIdentity,
               managedAiCredentialWriteback: managedAiRuntime?.credentialWriteback,
               managedAiCredentialHome: managedAiRuntime ? String((managedAiRuntime.config.env as Record<string, unknown>).CODEX_HOME) : undefined,
+              outputSecrets: [...identityRedactor.secretSources, ...observabilitySecretValues(observability)],
               dotWorkspaceRoot: nativeExecution.provider.kind === "openai_dot" && resolvedConfig.dotWorkspaceAccess === true ? executionWorkspace.cwd : undefined,
               runnerEnvironment: {
-                ...configuredEnvironmentProjection(configuredTaskEnvironment),
+                ...configuredEnvironmentProjection(configuredTaskEnvironment, secretKeys ?? []),
                 ...buildNativeProviderEnvironment(
                   adapterEnv,
                   process.env,
@@ -1040,7 +1064,7 @@ export async function executeHeartbeatRuntime(db: Db, input: HeartbeatRuntimeExe
               eq(heartbeatRuns.id, run.id),
               eq(heartbeatRuns.status, "running"),
             ),
-          ), { companyId: run.companyId });
+          ), { companyId: run.companyId, runId: run.id });
         const workspaceFinalizeStatus = hasWorkspaceRestoreFailure(adapterResult.resultJson) ? "failed" : "succeeded";
         await recordWorkspaceFinalize(workspaceFinalizeStatus);
         if (adapterResult.nativeFinalization) {
@@ -1121,7 +1145,7 @@ export async function executeHeartbeatRuntime(db: Db, input: HeartbeatRuntimeExe
             eq(heartbeatRuns.id, run.id),
             eq(heartbeatRuns.status, "running"),
           ),
-        ), { companyId: run.companyId });
+        ), { companyId: run.companyId, runId: run.id });
     } catch (writeError) {
       if (adapterErr instanceof NativeStartupCleanupPendingError) throw adapterErr;
       throw writeError;
@@ -1154,7 +1178,7 @@ export async function executeHeartbeatRuntime(db: Db, input: HeartbeatRuntimeExe
         },
         runGoalControlRequestId,
         adapterErr instanceof Error
-          ? adapterErr.message
+          ? identityRedactor.redact(adapterErr.message)
           : "session_goal_control_failed",
       ).catch(() => undefined);
     }
@@ -1215,10 +1239,11 @@ export async function executeHeartbeatRuntime(db: Db, input: HeartbeatRuntimeExe
       await recordWorkspaceFinalize(settleAcceptedResult ? "succeeded" : "failed", settleAcceptedResult
         ? { runnerSettlementDiagnostic: postResultFailure }
         : {
-            errorMessage:
+            errorMessage: identityRedactor.redact(
               adapterErr instanceof Error
                 ? adapterErr.message
                 : String(adapterErr),
+            ),
             ...(postResultFailure ? { failureDiagnostic: postResultFailure } : {}),
           });
     } catch (recordErr) {
@@ -1241,7 +1266,8 @@ export async function executeHeartbeatRuntime(db: Db, input: HeartbeatRuntimeExe
         .where(eq(nativeRunFinalizations.runId, run.id))
         .limit(1)
         .then((rows) => rows[0]?.resultId ?? null);
-      if (proposedResult && (nativeWorkspaceSync || remoteWorkspaceAuthority)) {
+      if (proposedResult && (nativeWorkspaceSync || remoteWorkspaceAuthority || pluginWorkspacePlacementFailed ||
+          (pluginWorkspaceFinalizationPlan?.kind === "finalize" && pluginWorkspaceFinalizationPlan.taskLease))) {
         const workspaceFailureMessage =
           adapterErr instanceof Error ? adapterErr.message : "";
         const unrecoverable =

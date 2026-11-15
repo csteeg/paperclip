@@ -17,7 +17,7 @@ import { mkdtemp, mkdir, realpath, rm, access, readFile, writeFile, stat } from 
 import os from "node:os";
 import path from "node:path";
 import { and, eq, sql } from "drizzle-orm";
-import { createDb, closeRegisteredClients, companies, agents, agentTaskSessions, heartbeatRuns, nativeRunFinalizations, companyMemberships, connectionGrants, toolApplications, connectionGrantDelegations, connectionGrantMembers, toolConnections, toolConnectionInstalls, aiConnectionDefaults, aiProviderDefaults, adapterAuthSessions, environments, plugins, issues, issueThreadInteractions, issueRecoveryActions, connectionIntentDeliveries, agentWakeupRequests, companySecrets, companySecretVersions, userSecretDefinitions, principalPermissionGrants, type Db } from "@paperclipai/db";
+import { createDb, closeRegisteredClients, companies, agents, agentTaskSessions, heartbeatRuns, nativeRunFinalizations, companyMemberships, connectionGrants, toolApplications, connectionGrantDelegations, connectionGrantMembers, toolConnections, toolConnectionInstalls, aiConnectionDefaults, aiProviderDefaults, adapterAuthSessions, environments, plugins, issues, issueThreadInteractions, issueRecoveryActions, connectionIntentDeliveries, agentWakeupRequests, companySecrets, companySecretVersions, secretAccessEvents, userSecretDefinitions, principalPermissionGrants, type Db } from "@paperclipai/db";
 import { startEmbeddedPostgresTestDatabase } from "@paperclipai/db/test-embedded-postgres";
 import { resolveExternalTestDatabaseUrl } from "./helpers/external-test-database.js";
 import { fetchCompanyQuotaWindows } from "../services/quota-windows.js";
@@ -792,8 +792,10 @@ describe("managed AI connections", () => {
     try {
       const first = await fetchCompanyQuotaWindows(db, companyId, owner);
       const [after] = await db.select().from(companySecrets).where(eq(companySecrets.id, secretId));
-      expect(after.lastResolvedAt).not.toBeNull();
-      expect(after.updatedAt.getTime()).toBeGreaterThan(before.updatedAt.getTime());
+      // A read is recorded as an access event, never written to the row that
+      // admissions share-lock to fence rotation.
+      expect(after.updatedAt.getTime()).toBe(before.updatedAt.getTime());
+      expect(await db.select().from(secretAccessEvents).where(and(eq(secretAccessEvents.secretId, secretId), eq(secretAccessEvents.outcome, "success")))).not.toHaveLength(0);
       expect(first[0].ok).toBe(true);
       expect(await fetchCompanyQuotaWindows(db, companyId, owner)).toEqual(first);
       expect(fetchSpy).toHaveBeenCalledTimes(1);
