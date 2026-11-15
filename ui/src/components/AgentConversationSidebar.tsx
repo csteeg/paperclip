@@ -129,12 +129,7 @@ export function AgentConversationSidebar({ agents, chats, onSelectHistory, onRen
       {!!chats?.length && <nav aria-label="Chat history" className="flex flex-col gap-1">
         <p className="px-2 text-xs font-medium text-muted-foreground">Conversations</p>
         {chats.filter(({ agent, chat }) => `${agent.name} ${chat.title}`.toLocaleLowerCase().includes(query)).map(({ agent, chat }) =>
-          <Link key={chat.id} to={`/chats/${encodeURIComponent(agent.status === "terminated" ? agent.id : agentRouteRef(agent))}/${chat.id}`} onClick={onSelectHistory} className="rounded-md px-2 py-2 text-sm hover:bg-accent">
-            <span className="flex min-w-0 items-center gap-2"><span className="min-w-0 flex-1 truncate">{chat.title}</span>
-              {(chat.unreadMessageCount ?? 0) > 0 ? <Badge variant="ghost" aria-label={`${chat.unreadMessageCount} unread ${chat.unreadMessageCount === 1 ? "message" : "messages"} in ${chat.title}`} className="shrink-0 bg-primary font-mono tabular-nums text-primary-foreground">{chat.unreadMessageCount}</Badge>
-                : chat.isUnreadForMe && <span role="img" aria-label={`Unread messages in ${chat.title}`} className="size-2 shrink-0 rounded-full bg-primary" />}
-            </span><span className="text-xs text-muted-foreground">{agent.name} · <span className="font-mono">{formatDateTime(chat.createdAt)}</span></span>
-          </Link>)}
+          <ChatHistoryRow key={chat.id} agent={agent} chat={chat} onSelect={onSelectHistory} onRename={onRenameChat} />)}
       </nav>}
     </div>
     {onBrowse && <div className="shrink-0 px-3 py-4">
