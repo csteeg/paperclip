@@ -13,8 +13,8 @@ import { NATIVE_SESSION_PROVIDER_EVENT_TYPES } from "./native-runtime/native-ses
 import os from "node:os";
 import { proveOwnerGone } from "./owner-proof.js";
 
-export const PROCESS_START_REQUESTED = "native.process_start_requested";
-export const PROCESS_IDENTITY_RECORDED = "native.process_identity_recorded";
+import { PROCESS_IDENTITY_RECORDED, PROCESS_START_REQUESTED } from "./native-process-start-events.js";
+export { PROCESS_IDENTITY_RECORDED, PROCESS_START_REQUESTED };
 /** Server-authored: the runner-state fence refused this run before it asked for
  * a runner, because a prior run's saved state could not be proven finished. */
 export const PRIOR_OWNER_FENCE_REFUSED = "native.prior_owner_fence_refused";
