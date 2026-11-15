@@ -1450,8 +1450,7 @@ describe.skipIf(!support.supported && !externalDatabaseUrl)("heartbeat workspace
     input.policy.requestedExecutionWorkspaceMode = "isolated_workspace";
     input.config.mergedConfig = { workspaceStrategy: { type: "git_worktree" } };
     const prepared = await prepareHeartbeatWorkspace(db, input);
-    expect(readIsolatedTaskPath(await realpath(resolvePaperclipInstanceRoot()), prepared.executionWorkspace.cwd))
-      .toMatchObject({ companyId: input.agent.companyId, issueId: issue.id, rest: [] });
+    expect(await realpath(prepared.executionWorkspace.cwd)).toBe(join(await realpath(resolvePaperclipInstanceRoot()), "isolated-workspaces", input.agent.companyId, issue.id));
     expect(prepared.persistedExecutionWorkspace).toMatchObject({ mode: "isolated_workspace", strategyType: "project_primary", sourceIssueId: issue.id });
   });
 
