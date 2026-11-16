@@ -72,7 +72,7 @@ import { preserveNativeFailedWorkspace } from "./native-runtime/native-failed-wo
 import { startOverdueWorkspaceRecovery } from "./workspace-recovery.js";
 import { nativeRunHasNoWorkspaceAccess } from "./workspace-restore-recovery-state.js";
 import { prepareAndSelectHeartbeatRuntime } from "./heartbeat/runtime-selection.js";
-import { createHeartbeatRunCompletion } from "./heartbeat/run-completion.js";
+import { createHeartbeatRunCompletion, recoverLegacyPoolAttribution } from "./heartbeat/run-completion.js";
 import { crashPoint } from "@paperclipai/shared/crash-points";
 export {
   MAX_TURN_CONTINUATION_WAKE_REASON,
@@ -1090,6 +1090,7 @@ export function heartbeatService(
     retryScheduledRetryNow,
     scheduleBoundedRetry,
   } = createHeartbeatRetries(db, {
+    recoverPoolAttribution: run => recoverLegacyPoolAttribution(db, run),
     hasCaseHandoffForRun: async (run) => Boolean(await pendingCaseHandoffForRun(db, run.id, run.companyId)),
     appendRunEvent,
     escalatePlanApprovalResumeFailureNeedsAttention,
