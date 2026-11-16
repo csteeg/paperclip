@@ -124,16 +124,13 @@ import {
   readCurrentWakeComments,
   type CurrentWakeCommentsBinding,
 } from "./current-wake-comments.js";
+import { LIST_CHAT_ATTACHMENTS_TOOL_DEFINITION, LIST_CHAT_ATTACHMENTS_TOOL_NAME, REUSE_CHAT_ATTACHMENT_TOOL_DEFINITION, REUSE_CHAT_ATTACHMENT_TOOL_NAME } from "./chat-attachment-tool-definitions.js";
 import {
   readPublishedGitHubReviewCompletionContinuation,
   authorizeChatAttachmentReuse,
   authorizeChatConversationForBoundRun,
-  LIST_CHAT_ATTACHMENTS_TOOL_DEFINITION,
-  LIST_CHAT_ATTACHMENTS_TOOL_NAME,
   listAuthorizedChatAttachments,
   prepareReusedChatAttachment,
-  REUSE_CHAT_ATTACHMENT_TOOL_DEFINITION,
-  REUSE_CHAT_ATTACHMENT_TOOL_NAME,
   type ChatAttachmentReuseSource,
 } from "./chat-attachment-reuse.js";
 import {
