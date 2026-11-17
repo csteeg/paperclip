@@ -1,4 +1,5 @@
 import { hasProviderQuotaRetryBudget } from "../execution-recovery-attempt.js";
+import { NATIVE_RESTART_RECOVERY_FAILED } from "../native-runtime/native-runner-recovery-contract.js";
 import { settleOwnableKind } from "../recovery/ownership-invariant-report.js";
 import { isRunHandedOffForShutdown, markRunHandedOffForShutdown } from "./shutdown-handoff.js";
 import { ORPHANED_RUN_LEASE_FAILURE_REASON } from "../environment-run-lease-settlement.js";
@@ -97,7 +98,6 @@ import {
   dispatchNativeSessionResumptions,
   detachNativeSessionsForRestart,
   isNativeSessionId,
-  NATIVE_RESTART_RECOVERY_FAILED,
   readNativeWorkspaceSyncReference,
   type NativeRestartRecoveryClaim,
   reconcileNativeFinalizations,

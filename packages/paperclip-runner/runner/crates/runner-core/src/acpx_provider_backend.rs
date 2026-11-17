@@ -717,6 +717,9 @@ fn same_launch_shape(descriptor: &AcpxProviderDescriptor, profile: &AcpxLaunchPr
 /// so a new run can attach to it and a new Runner build can adopt it.
 fn settled_checkpoint_blockers(state: &AcpxDurableState) -> Vec<&'static str> {
     let mut blockers = Vec::new();
+    if state.bootstrap_preparation.is_some() {
+        blockers.push("provider_preparation_pending");
+    }
     if state.lifecycle == "closed" {
         blockers.push("durable_closed");
     }

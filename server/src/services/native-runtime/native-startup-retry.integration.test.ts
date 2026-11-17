@@ -472,7 +472,6 @@ describe("native provider startup retry", () => {
     expect(coordinator.nextAttemptAt!.getTime()).toBeGreaterThan(accountDeadline.getTime());
     expect(coordinator.nextAttemptAt!.getTime()).toBeLessThan(accountDeadline.getTime() + 60_000);
   });
-
   it("records a timed-out step's own cause and settles the run through the failure classifier", async () => {
     const seeded = await seedRun(await createAgent());
     const expired = AbortSignal.timeout(1);

@@ -1,3 +1,4 @@
+import { hasReviewPoolAllocation } from "./pool-allocation-affinity.js";
 import { poolRunnerCooldownIdentity } from "../ai-connection-pool-cooldown.js";
 import { notifyExecutionRunWork } from "../execution-control-notifications.js";
 import { nativePoolFailureKind } from "../native-runtime/native-pool-failure.js";
@@ -178,7 +179,7 @@ export async function recordVerifiedRouterQuotaCooldown(db: Db, input: {
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     const credentialIdentity = grantId && input.credentialIdentity ? quotaIdentityFromSessionSnapshot(grantId, input.credentialIdentity) : null;
     if (!poolId || !uuid.test(poolId) || !connectionId || !uuid.test(connectionId) || !grantId || !credentialIdentity || !taskKey) return false;
-    const taskMatches = run.scopeKind === "issue" ? taskKey === run.issueId || Boolean(issue?.identifier && taskKey === issue.identifier)
+    const taskMatches = run.scopeKind === "issue" ? taskKey === run.issueId || Boolean(issue?.identifier && taskKey === issue.identifier) || await hasReviewPoolAllocation(tx as unknown as Db, run, taskKey)
       : await hasCompanyPoolAffinity(tx as unknown as Db, run, taskKey);
     if (!taskMatches) return false;
 

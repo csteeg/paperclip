@@ -109,6 +109,58 @@ describe("legacy quota prestart retry", () => {
     const [pin] = await db.select().from(aiConnectionTaskPins).where(eq(aiConnectionTaskPins.poolId, f.pool.id));
     expect(pin.selection.memberId).toBe(f.members[1].id);
   }, 30_000);
+  it.each([
+    ...[0, 1, 2].flatMap(ordinaryRetries => [true, false].map(healthy => ({ ordinaryRetries, healthy, tamper: "none" }))),
+    ...["selection", "marker"].map(tamper => ({ ordinaryRetries: 1, healthy: true, tamper })),
+  ])("does not revisit exhausted credentials in a failover chain (healthy: $healthy, ordinary retries: $ordinaryRetries, tamper: $tamper)", async ({ healthy, ordinaryRetries, tamper }) => {
+    const f = await fixture(true);
+    await db.delete(heartbeatRunEvents).where(eq(heartbeatRunEvents.runId, f.source.id));
+    await db.delete(aiConnectionQuotaCooldowns).where(eq(aiConnectionQuotaCooldowns.companyId, f.companyId));
+    const third = await aiConnectionService(db).save(f.companyId, f.userId, { provider: "anthropic", method: "subscription",
+      ownership: "personal", name: "Third", loginSessionId: "fixture", agentIds: [], allAgents: true }, "fixture-three");
+    const alias = { ...f.members[0], id: randomUUID() };
+    const thirdMember = { ...f.members[0], id: randomUUID(), binding: { ...f.members[0].binding, ...third } };
+    await db.update(aiConnectionPools).set({ config: { name: f.pool.name, enabled: true, mode: "failover", thresholdPercent: 90,
+      members: [...f.members, alias, ...(healthy ? [thirdMember] : [])] } }).where(eq(aiConnectionPools.id, f.pool.id));
+    const failure = { ...f.source.resultJson, terminalSessionFailure: { category: "limit", title: "You've hit your weekly limit" } };
+    const [first] = await db.update(heartbeatRuns).set({ runnerProfileJson: { adapterDispatch: { adapterType: "claude_local" } },
+      resultJson: failure }).where(eq(heartbeatRuns.id, f.source.id)).returning();
+    Object.assign(f.source, first);
+    vi.mocked(globalThis.fetch).mockImplementation(async () => new Response("unavailable", { status: 429 }));
+    expect((await f.schedule()).outcome).toBe("scheduled");
+    const [successor] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.retryOfRunId, first.id));
+    expect(successor.contextSnapshot?.aiRouterSelection).toMatchObject({ memberId: f.members[1].id });
+    const [grant] = await db.select().from(connectionGrants).where(eq(connectionGrants.id, f.members[1].binding.grantId));
+    const ref = grant.credentialSecretRefs[0];
+    const [secret] = await db.select().from(companySecrets).where(eq(companySecrets.id, ref.secretId));
+    let retry = successor;
+    for (let index = 0; index < ordinaryRetries; index++) {
+      await db.update(heartbeatRuns).set({ status: "failed", errorCode: "adapter_failed", finishedAt: new Date(),
+        resultJson: { ...failure, errorFamily: "transient_upstream", terminalSessionFailure: undefined },
+      }).where(eq(heartbeatRuns.id, retry.id));
+      const [next] = await db.insert(heartbeatRuns).values({ companyId: f.companyId, agentId: f.agent.id,
+        issueId: f.issue.id, scopeKind: "issue", runtimeMode: "legacy", status: "scheduled_retry",
+        retryOfRunId: retry.id, responsibleUserId: f.userId, contextSnapshot: retry.contextSnapshot,
+      }).returning();
+      if (index === ordinaryRetries - 1 && tamper !== "none") {
+        await db.update(heartbeatRuns).set({ contextSnapshot: { ...retry.contextSnapshot,
+          ...(tamper === "selection" ? { aiRouterSelection: { ...(retry.contextSnapshot?.aiRouterSelection as Record<string, unknown>), memberId: randomUUID() } }
+            : { aiPoolFailover: { sourceRunId: randomUUID() } }),
+        } }).where(eq(heartbeatRuns.id, retry.id));
+      }
+      retry = next;
+    }
+    const [second] = await db.update(heartbeatRuns).set({ status: "failed", errorCode: "provider_quota", finishedAt: new Date(),
+      runnerProfileJson: first.runnerProfileJson, resultJson: failure,
+      contextSnapshot: { ...retry.contextSnapshot, aiConnection: { ...f.members[1].binding,
+        sessionIdentity: `${grant.id}:fixture:${secret.id}:${secret.aiSessionEpoch}` } },
+    }).where(eq(heartbeatRuns.id, retry.id)).returning();
+    await db.update(issues).set({ executionRunId: second.id, checkoutRunId: second.id }).where(eq(issues.id, f.issue.id));
+    Object.assign(f.source, second);
+    expect((await f.schedule()).outcome).toBe(healthy && tamper === "none" ? "scheduled" : "not_scheduled");
+    const [pin] = await db.select().from(aiConnectionTaskPins).where(eq(aiConnectionTaskPins.poolId, f.pool.id));
+    expect(pin.selection.memberId).toBe(healthy && tamper === "none" ? thirdMember.id : f.members[1].id);
+  }, 30_000);
   it("rechecks missing account evidence when a settled quota run is retried after a transient probe failure", async () => {
     const f = await fixture(true);
     await db.delete(heartbeatRunEvents).where(eq(heartbeatRunEvents.runId, f.source.id));

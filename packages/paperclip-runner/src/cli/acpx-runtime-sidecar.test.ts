@@ -135,7 +135,7 @@ describe("qualified ACPX runtime sidecar", () => {
     const baseHost = new URL("../test-support/acpx-blocked-output-host.mjs", import.meta.url).href;
     const capability = { version: 1, controlMethod: "_session/goal", actions: ["set", "clear"] as Array<"set" | "clear"> };
     const goal = { objective: mode === "oversized" ? "x".repeat(ACPX_SIDECAR_MAX_FRAME_BYTES) : "Retain the completed goal",
-      status: "paused" as const, iterations: 1, lastReason: "Unicode ÃƒÂ©Ã°Å¸â„¢â€š, quote \" and slash \\ and newline\n" };
+      status: "paused" as const, iterations: 1, lastReason: "Unicode é🙂, quote \" and slash \\ and newline\n" };
     if (mode.startsWith("payload-")) {
       const bytes = Buffer.byteLength(JSON.stringify({status:"completed", goalAtTerminal:{
         ...acpxGoalProjection(capability, goal, false), providerRevision:1 }}));
@@ -2189,6 +2189,7 @@ describe("qualified ACPX runtime sidecar", () => {
     });
   });
 });
+
 
 
 type ToolCallResponseBody = { result: { content: Array<{ text: string }>; isError?: boolean } };

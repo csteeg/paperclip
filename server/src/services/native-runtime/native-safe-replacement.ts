@@ -315,12 +315,23 @@ async function releaseOwnershipProofWake(db: ReplacementDb, run: typeof heartbea
     sql`${nativeRunFinalizations.failureDetail} ? 'ownershipUnverifiedAt'`));
 }
 
-export async function nextNativeOwnershipProofDeadlineAt(db: Db): Promise<number | null> {
-  const [row] = await db.select({ at: sql<number | null>`(extract(epoch from min(${ownershipProofDeadline()})) * 1000)::float8` })
+export async function nativeReplacementSchedule(db: Db): Promise<{ retry: boolean; at: number | null }> {
+  const pool = and(or(nativeReplacementPending(), nativePoolAttributionPending()),
+    inArray(nativeRunFinalizations.failureCode, NATIVE_POOL_FAILURE_CODES),
+    sql`coalesce(${nativeRunFinalizations.failureDetail}->>'replacementWaitingForCleanup', 'false') <> 'true'`);
+  const ownership = and(nativeReplacementPending(), ownershipProofWaiting(),
+    sql`${nativeRunFinalizations.failureDetail} ? 'ownershipUnverifiedAt'`);
+  // Pool cooldowns and ownership proofs share one bounded scheduling query.
+  // A missing pool deadline means retry now; an ownership hold retains its
+  // proof deadline. Neither query path locks or polls settled run history.
+  const [row] = await db.select({
+    retry: sql<boolean>`coalesce(bool_or((${pool}) and ${nativeRunFinalizations.nextAttemptAt} is null), false)`,
+    at: sql<number | null>`(extract(epoch from min(case when ${pool}
+      then ${nativeRunFinalizations.nextAttemptAt} else ${ownershipProofDeadline()} end)) * 1000)::float8`,
+  })
     .from(heartbeatRuns).innerJoin(nativeRunFinalizations, eq(nativeRunFinalizations.runId, heartbeatRuns.id))
-    .where(and(nativeReplacementPending(), ownershipProofWaiting(),
-      sql`${nativeRunFinalizations.failureDetail} ? 'ownershipUnverifiedAt'`));
-  return row?.at == null ? null : Math.ceil(Number(row.at));
+    .where(or(pool, ownership));
+  return { retry: row?.retry === true, at: row?.at == null ? null : Math.ceil(Number(row.at)) };
 }
 
 const REPLACEMENT_SCAN_LIMIT = 100;
@@ -520,7 +531,7 @@ export async function reconcileSafeNativeReplacements(
       const ownershipOverdue = async () => overdue ??= await ownershipProofExpired(db, run);
       const leaseHeld = leases.some((lease) => lease.releasedAt === null);
       // Teardown is still in progress. The next sweep rechecks its durable outcome.
-      if (leaseHeld && !await ownershipOverdue()) {
+      if (leaseHeld && (poolFailure || !await ownershipOverdue())) {
         if (Boolean(poolFailure)) {
           if (leases.some(lease => lease.releasedAt === null &&
               (!['active', 'pending_cleanup'].includes(lease.status) || ['failed', 'success'].includes(lease.cleanupStatus ?? '')))) {
@@ -544,7 +555,7 @@ export async function reconcileSafeNativeReplacements(
             });
           }
         }
-        if (coordinator.failureCode === "native_provider_terminal_failed") await markOwnershipProofWaiting(db, run);
+        if (!poolFailure && coordinator.failureCode === "native_provider_terminal_failed") await markOwnershipProofWaiting(db, run);
         continue;
       }
       const historicalListener = coordinator.failureCode === "native_session_interrupted";
@@ -781,8 +792,8 @@ export async function reconcileSafeNativeReplacements(
       });
       if (!decision.allowed) {
         // Lack of containment can be temporary; do not prevent the next proof.
-        const ownershipBound = decision.cause === OWNERSHIP_UNVERIFIED;
-        if (ownershipBound && !poolFailure && !await ownershipOverdue()) {
+        const ownershipBound = !poolFailure && decision.cause === OWNERSHIP_UNVERIFIED;
+        if (ownershipBound && !await ownershipOverdue()) {
           await markOwnershipProofWaiting(db, run);
           continue;
         }
