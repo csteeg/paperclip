@@ -1449,6 +1449,8 @@ export const PLUGIN_CAPABILITIES = [
   "local.folders",
   // Agent Tools
   "agent.tools.register",
+  // Connectors
+  "connectors.provide",
   // UI
   "instance.settings.register",
   "ui.sidebar.register",

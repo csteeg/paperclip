@@ -3419,72 +3419,79 @@
       "breakpoints": true
     },
     {
-      "idx": 488,
+      "idx": 490,
       "version": "7",
-      "when": 1794841384471,
-      "tag": "8801_skill_source_security_override",
+      "when": 1794923393849,
+      "tag": "0490_nappy_chat",
       "breakpoints": true
     },
     {
       "idx": 489,
       "version": "7",
-      "when": 1794841384472,
-      "tag": "8802_messy_talkback",
+      "when": 1794923393850,
+      "tag": "8801_skill_source_security_override",
       "breakpoints": true
     },
     {
       "idx": 490,
       "version": "7",
-      "when": 1794841384473,
-      "tag": "8803_flaky_arclight",
+      "when": 1794923393851,
+      "tag": "8802_messy_talkback",
       "breakpoints": true
     },
     {
       "idx": 491,
       "version": "7",
-      "when": 1794841384474,
-      "tag": "8804_project_provider_authorizations",
+      "when": 1794923393852,
+      "tag": "8803_flaky_arclight",
       "breakpoints": true
     },
     {
       "idx": 492,
       "version": "7",
-      "when": 1794841384475,
-      "tag": "8805_multiple_agent_chat_conversations",
+      "when": 1794923393853,
+      "tag": "8804_project_provider_authorizations",
       "breakpoints": true
     },
     {
       "idx": 493,
       "version": "7",
-      "when": 1794841384476,
-      "tag": "8806_project_repository_checkout",
+      "when": 1794923393854,
+      "tag": "8805_multiple_agent_chat_conversations",
       "breakpoints": true
     },
     {
       "idx": 494,
       "version": "7",
-      "when": 1794841384477,
-      "tag": "8807_project_repository_checkout_none",
+      "when": 1794923393855,
+      "tag": "8806_project_repository_checkout",
       "breakpoints": true
     },
     {
       "idx": 495,
       "version": "7",
-      "when": 1794841384478,
-      "tag": "8808_skill_version_security_approval",
+      "when": 1794923393856,
+      "tag": "8807_project_repository_checkout_none",
       "breakpoints": true
     },
     {
       "idx": 496,
       "version": "7",
-      "when": 1794841384479,
-      "tag": "8809_skill_source_security_override_summary",
+      "when": 1794923393857,
+      "tag": "8808_skill_version_security_approval",
       "breakpoints": true
     },
     {
       "idx": 497,
       "version": "7",
-      "when": 1794841384480,
+      "when": 1794923393858,
+      "tag": "8809_skill_source_security_override_summary",
+      "breakpoints": true
+    },
+    {
+      "idx": 498,
+      "version": "7",
+      "when": 1794923393859,
       "tag": "8810_skill_version_security_approval_index",
       "breakpoints": true
     }

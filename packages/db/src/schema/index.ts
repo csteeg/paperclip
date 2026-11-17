@@ -292,3 +292,4 @@ export { tailscaleConnections } from "./tailscale_connections.js";
 export { nativeProviderArtifacts, nativeProviderArtifactReferences } from "./native_provider_artifacts.js";
 export { issueRecoveryDeferrals, issueRecoveryFullPasses } from "./issue_recovery_full_passes.js";
 export { linkPreviews } from "./link_previews.js";
+export { toolConnectionContentDeletions } from "./tool_connection_content_deletions.js";

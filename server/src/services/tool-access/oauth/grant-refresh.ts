@@ -4,7 +4,7 @@ import type { ActorInfo, DbTransaction } from "../types.js";
 import { withAccountHomeSecretMutationLock } from "@paperclipai/adapter-codex-local/server";
 import { createOAuthClientProtocol, storedOAuthTokenEndpointAuthMethod } from "./client.js";
 import { connectionServerUrl, oauthConfig, normalizeOauthScopes, oauthRefreshRequestedScopes, resolveGrantedOauthScopes } from "./metadata.js";
-import { googleWorkspaceEffectiveScopes, isGoogleWorkspaceScopeGrant } from "@paperclipai/shared";
+import { googleWorkspaceEffectiveScopes, googleWorkspaceSubmittedScopesIn, isGoogleWorkspaceScopeGrant } from "@paperclipai/shared";
 import { emitConnectionUpdated } from "../../connector-telemetry.js";
 import { and, eq, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
@@ -149,8 +149,8 @@ export function createOAuthGrantRefresh(db: Db, { now, store, leases, currentClo
                 refreshToken: refreshSecret.value,
               });
               if (profile.id === "workspace.all") {
-                const requested = normalizeOauthScopes(oauthGrantConfig(grant).requestedScopes ?? oauthGrantConfig(grant).scopes);
-                credentials.scopes = googleWorkspaceEffectiveScopes(requested, credentials.scopes);
+                const requested = googleWorkspaceSubmittedScopesIn(normalizeOauthScopes(oauthGrantConfig(grant).requestedScopes ?? oauthGrantConfig(grant).scopes));
+                credentials.scopes = googleWorkspaceEffectiveScopes(requested, googleWorkspaceSubmittedScopesIn(credentials.scopes));
               }
               if (profile.id === "workspace.all" && !isGoogleWorkspaceScopeGrant(credentials.scopes)) {
                 throw new PaperclipCloudConnectorError("Google did not return verifiable permissions", "REAUTHORIZATION_REQUIRED");
@@ -452,6 +452,9 @@ export function createOAuthGrantRefresh(db: Db, { now, store, leases, currentClo
           throw error;
         }
 
+        if (connection.config.sourceTemplateKey === "google-workspace") {
+          token.scope = googleWorkspaceSubmittedScopesIn(normalizeOauthScopes(token.scope)).join(" ");
+        }
         if (connection.config.sourceTemplateKey === "google-workspace"
           && !isGoogleWorkspaceScopeGrant(normalizeOauthScopes(token.scope))) {
           await db.update(connectionGrants).set({ status: "needs_reauthorization", updatedAt: now() })
