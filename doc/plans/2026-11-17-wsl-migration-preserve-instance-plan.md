@@ -35,6 +35,20 @@ instance data. The first migration metadata scan ran before that cleanup and is
 not a current recovery manifest. Reconcile or repeat it at the final snapshot.
 No additional source cleanup is authorized by this exception.
 
+### Task-code cleanup exception, 2026-11-17
+
+The user subsequently authorized removing clean task repository copies before
+migration, with a recovery script. Inventory found 17 code roots containing 158
+repositories, including nested linked worktrees. Preserve their commits, refs,
+reflogs and Git metadata in a verified, deduplicated recovery set before removal.
+Recheck clean status and process ownership immediately before deletion. Keep the
+attempt directories and seed records, project sources, agent outputs, provider
+homes, conversations and session history. This exception applies only to the
+verified task code roots; it does not authorize broader instance cleanup.
+The recovery set becomes an external dependency of the migration and must be
+included in the final recovery inventory. Old-session continuation still needs
+verification; do not assume that retaining Git bundles alone proves it.
+
 The local configuration now sets `database.backup.intervalMinutes=1440` and
 `database.backup.retentionDays=3`. At the next authorized server start, also set
 the database-owned general setting through its API and verify it with GET:
