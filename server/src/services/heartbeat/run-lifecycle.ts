@@ -50,6 +50,7 @@ import { cancellationResultJson } from "../run-cancellation.js";
 import { CONTROLLER_LEASE_LOST_FAILURE_CODE } from "../legacy-controller-lease.js";
 import { isWaitingConversation } from "../agent-conversations.js";
 import { PROCESS_IDENTITY_RECORDED } from "../native-local-process-stop.js";
+import { trackRunIntake } from "../run-intake-stall-watch.js";
 import {
   hasAcknowledgedNativeReassignmentStopIntent,
   hasAcknowledgedNativeLifecycleStopIntent,
@@ -630,7 +631,7 @@ export async function persistHeartbeatRunProcessMetadata(
     observeWindowsProcessJobIdentity(meta.pid, meta.startedAt, startedAt.toISOString());
   }
   const processStartedAt = Number.isNaN(startedAt.getTime()) ? new Date() : startedAt;
-  return db.transaction(async tx => {
+  return trackRunIntake(runId, "process_identity", PROCESS_IDENTITY_RECORDED, () => db.transaction(async tx => {
     const [binding] = await tx
       .select({ companyId: heartbeatRuns.companyId, agentId: heartbeatRuns.agentId })
       .from(heartbeatRuns)
@@ -660,7 +661,7 @@ export async function persistHeartbeatRunProcessMetadata(
     });
     return tx.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId))
       .then((rows) => rows[0] ?? null);
-  });
+  }));
 }
 
 type SkillTestHeartbeatCompletion = {

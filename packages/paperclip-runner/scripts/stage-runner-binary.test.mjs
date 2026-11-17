@@ -84,10 +84,16 @@ test("release metadata rejects incompatible native, harness and protocol contrac
   }
 });
 
+async function standaloneSleep() {
+  if (process.platform !== "linux") return "/bin/sleep";
+  const multicall = (await readFile("/bin/sleep")).equals(await readFile("/bin/echo"));
+  return multicall ? "/usr/bin/gnusleep" : "/bin/sleep";
+}
+
 async function withOwnedChildren(root, action) {
   const owned = [];
-  const start = (command, args) => {
-    const child = spawn(command, args, { env: { PATH: "/usr/bin:/bin" }, stdio: "ignore" });
+  const start = (command, args, argv0) => {
+    const child = spawn(command, args, { argv0, env: { PATH: "/usr/bin:/bin" }, stdio: "ignore" });
     // close follows both exit and spawn error. A failed second spawn must not
     // interrupt retirement of the first still-running executable.
     const closed = new Promise(resolve => child.once("close", resolve));
@@ -112,6 +118,7 @@ async function withOwnedChildren(root, action) {
 test("atomically publishes while the previous executable is running", { skip: process.platform === "win32", timeout: 15_000 }, async () => {
   const root = await mkdtemp(path.join(tmpdir(), "runnerd-stage-test-"));
   const destination = path.join(root, "paperclip-runnerd");
+  const sleep = await standaloneSleep();
   await withOwnedChildren(root, async start => {
     await stageRunnerBinary(process.execPath, destination);
     const previous = await stat(destination);

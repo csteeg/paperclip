@@ -12,6 +12,7 @@ import { hasRemoteTerminationReceipt } from "./remote-execution-termination.js";
 import { NATIVE_SESSION_PROVIDER_EVENT_TYPES } from "./native-runtime/native-session-resume.js";
 import os from "node:os";
 import { proveOwnerGone } from "./owner-proof.js";
+import { beginRunIntake } from "./run-intake-stall-watch.js";
 
 import { PROCESS_IDENTITY_RECORDED, PROCESS_START_REQUESTED } from "./native-process-start-events.js";
 export { PROCESS_IDENTITY_RECORDED, PROCESS_START_REQUESTED };
@@ -642,6 +643,7 @@ export async function releaseOwnedSettledNativeRunProcessesAtShutdown(db: Db, op
   if (stopped.length === 0) return { candidates: candidates.length, stillRunning: candidates.length, released: 0 };
   const recorded = JSON.stringify(stopped.map(run => ({ id: run.id, pid: run.processPid, pgid: run.processGroupId,
     started: run.processStartedAt, started_iso: run.processStartedAtIso })));
+  const intake = stopped.map(run => beginRunIntake(run.id, "write", LOCAL_PROCESS_STOPPED));
   const released = await db.transaction(async transaction => {
     const tx = transaction as unknown as Db;
     await tx.execute(sql.raw(`set local statement_timeout = ${SHUTDOWN_SETTLED_PROCESS_STATEMENT_TIMEOUT_MS}`));
@@ -677,7 +679,7 @@ export async function releaseOwnedSettledNativeRunProcessesAtShutdown(db: Db, op
       Array<{ companyId: string; runId: string; agentId: string }>;
     if (rows.length > 0) await notifyInstructionCopyStopEvidenceForRuns(tx, rows);
     return rows;
-  });
+  }).finally(() => { for (const done of intake) done(); });
   for (const run of released) pendingSettledProcessReleases.delete(run.runId);
   return { candidates: candidates.length, stillRunning: candidates.length - stopped.length, released: released.length };
 }
