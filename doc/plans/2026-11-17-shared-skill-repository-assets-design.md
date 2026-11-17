@@ -1,6 +1,6 @@
 # Shared repository assets for native skills
 
-Status: proposal for approval. No implementation or agent migration is authorized by this document alone.
+Status: approved by the user on 2026-11-17 for implementation. Live agent migration or restart is not part of this approval.
 
 ## Problem and measured evidence
 
