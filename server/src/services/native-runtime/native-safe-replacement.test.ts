@@ -35,6 +35,7 @@ import {
   connectionGrants,
   aiConnectionTaskPins,
   aiConnectionQuotaCooldowns,
+  environmentLeases,
   companies,
   createDb,
   subscribeDatabaseWork,

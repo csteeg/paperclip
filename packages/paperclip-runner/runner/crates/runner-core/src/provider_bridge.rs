@@ -320,6 +320,14 @@ impl ProviderBridgeError {
         }
     }
 
+    pub(crate) fn result_backpressure() -> Self {
+        Self::tool_calls_in_flight()
+    }
+
+    pub fn is_result_backpressure(&self) -> bool {
+        self.is_retryable()
+    }
+
     pub fn is_retryable(&self) -> bool {
         self.message == TOOL_CALLS_IN_FLIGHT_MESSAGE
     }
