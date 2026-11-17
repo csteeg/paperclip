@@ -20,6 +20,33 @@
 - `doc/database-backups.md` explicitly states that database backups are not full instance filesystem backups.
 - There has been one successful native Linux Codex qualification run. That does not prove migration of the full instance, Claude readiness, or portability of all existing sessions.
 
+### Backup maintenance update, 2026-11-17
+
+The user separately approved removal of 132 older or incomplete database backups.
+Read-only verification now finds three backups, totaling 649,336,437 bytes:
+`paperclip-20261117-140602.sql.gz`, `paperclip-20261117-124126.sql.gz`, and
+`paperclip-20261117-104632.sql.gz`. The earlier 20.8 GiB backup inventory is obsolete.
+The maintenance receipts report complete gzip and SQL end-marker checks, with
+unchanged SHA-256 values after cleanup. A database restore test is still required.
+The private receipts are in the source instance's `data/backup-maintenance/`.
+
+The delegated post-cleanup measurement reports approximately 77.9 GiB of logical
+instance data. The first migration metadata scan ran before that cleanup and is
+not a current recovery manifest. Reconcile or repeat it at the final snapshot.
+No additional source cleanup is authorized by this exception.
+
+The local configuration now sets `database.backup.intervalMinutes=1440` and
+`database.backup.retentionDays=3`. At the next authorized server start, also set
+the database-owned general setting through its API and verify it with GET:
+
+```json
+{"backupRetention":{"dailyDays":3,"weeklyWeeks":1,"monthlyMonths":1}}
+```
+
+These are the lowest supported retention presets, not a hard three-file limit.
+Do not restart the server solely to apply this pending setting. Initial migration
+validation must still keep backup and retention jobs disabled as described below.
+
 ## Global constraints
 
 - Preserve the complete Windows instance and externally referenced user data. No destructive cleanup, retention expiry, source deletion or exclusion of agent-generated files to make the migration fit.
