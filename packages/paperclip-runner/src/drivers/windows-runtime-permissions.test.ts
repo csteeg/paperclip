@@ -14,6 +14,11 @@ beforeEach(() => {
 });
 
 describe("Windows runtime snapshot permissions", () => {
+  it("removes an owned inheritance-root deny without visiting every descendant", async () => {
+    const { setWindowsRuntimeTreeReadOnly } = await import("./windows-runtime-permissions.js");
+    await setWindowsRuntimeTreeReadOnly("C:\\runtime\\repositories", false, { recursive: false });
+    expect(execute.mock.calls.at(-1)?.[1]).toEqual(["C:\\runtime\\repositories", "/remove:d", "*S-1-5-21-123", "/L", "/Q"]);
+  });
   it("allows a large snapshot cleanup to outlast the observed thirty-second cutoff without success-output overflow", async () => {
     const { setWindowsRuntimeTreeReadOnly } = await import("./windows-runtime-permissions.js");
     await setWindowsRuntimeTreeReadOnly("C:\\runtime\\skills", false);

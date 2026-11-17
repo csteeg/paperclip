@@ -17,9 +17,10 @@ async function currentSid(): Promise<string> {
 }
 
 /** Applies only to a new, validated Paperclip-owned snapshot tree. */
-export async function setWindowsRuntimeTreeReadOnly(root: string, readOnly: boolean): Promise<void> {
+export async function setWindowsRuntimeTreeReadOnly(root: string, readOnly: boolean, options: { recursive?: boolean } = {}): Promise<void> {
   const sid = await currentSid();
   await execute(join(process.env.SystemRoot ?? "C:\\Windows", "System32", "icacls.exe"),
-    readOnly ? [root, "/deny", `*${sid}:(OI)(CI)(WD,AD,WEA,WA)`, "/Q"] : [root, "/remove:d", `*${sid}`, "/T", "/C", "/L", "/Q"],
+    readOnly ? [root, "/deny", `*${sid}:(OI)(CI)(WD,AD,WEA,WA)`, "/Q"]
+      : [root, "/remove:d", `*${sid}`, ...(options.recursive === false ? [] : ["/T", "/C"]), "/L", "/Q"],
     { windowsHide: true, timeout: 300_000, maxBuffer: 1024 * 1024 });
 }
