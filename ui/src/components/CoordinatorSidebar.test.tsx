@@ -12,6 +12,7 @@ import { formatDateTime } from "@/lib/utils";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const fixture = vi.hoisted(() => ({ attention: vi.fn(), summary: vi.fn(), openNewIssue: vi.fn(), openNewChat: vi.fn(), pathname: "/COO/issues", collapsed: false, userId: "reviewer", agents: [] as any[], chats: [] as any[], recentTasks: [] as Array<Record<string, unknown>>, projects: [] as Array<Record<string, unknown>>, projectTasks: vi.fn(), enableCases: false }));
+vi.mock("@/hooks/useCoordinatorWorkspaceEnabled", () => ({ useCoordinatorWorkspaceEnabled: () => ({ enabled: true, userId: fixture.userId }) }));
 vi.mock("@/hooks/useAgentChatNavigation", () => ({ useAgentChatNavigation: () => ({ companyId: "company", userId: fixture.userId, enabled: true, agents: { data: fixture.agents }, chats: { data: fixture.chats }, session: { isSuccess: true } }), useOpenAgentChat: () => fixture.openNewChat }));
 vi.mock("./AgentChatPicker", () => ({ AgentChatPicker: ({ open, onSelect, agents }: any) => open ? <button onClick={() => onSelect(agents[0])}>Choose agent</button> : null }));
 vi.mock("./AgentConversationsSidebar", () => ({ AgentConversationsSidebar: ({ onConversationOpened }: { onConversationOpened?: () => void }) => <><a href="/chats/alex/old">Old conversation</a><button onClick={onConversationOpened}>Create from history</button></> }));
@@ -41,7 +42,7 @@ vi.mock("@/lib/router", () => ({
 const pending = (id: string) => ({ id, sourceKind: "issue_thread_interaction", subject: { id, kind: "interaction", status: "pending" },
   createdAt: "2026-10-20T12:00:00Z", activityAt: "2026-10-20T12:00:00Z" }) as AttentionItem;
 function feed(items: AttentionItem[]): AttentionFeed {
-  return { companyId: "company", generatedAt: "2026-10-27T12:00:00Z", totalCount: items.length, deskBadgeCount: 0,
+  return { companyId: "company", generatedAt: "2026-10-27T12:00:00Z", totalCount: items.length, deskBadgeCount: items.length,
     viewCounts: { mine: items.length, unassigned: 0, company: 0, archived: 0, all: items.length }, nextCursor: null, countsBySourceKind: {} as AttentionFeed["countsBySourceKind"], items };
 }
 
@@ -358,13 +359,29 @@ async function renderSidebar() {
 const decisionLink = () => container.querySelector('a[href="/decisions"]')!;
 
 describe("Coordinator Inbox badge", () => {
+  it("shows personal grouped actions rather than raw company signals", async () => {
+    fixture.summary.mockResolvedValue({ ...summary(Array.from({ length: 5 }, (_, index) => pending(String(index)))), deskBadgeCount: 2 });
+    await renderSidebar();
+    expect(decisionLink().querySelector('[data-slot="badge"]')?.textContent).toBe("2");
+  });
+  it("does not reuse another person's cached count after an account switch", async () => {
+    const key = coordinatorAttentionSummaryQueryKey("company", "reviewer");
+    client.setQueryDefaults(key, { staleTime: Infinity });
+    client.setQueryData(key, summary([pending("private") ]));
+    await renderSidebar();
+    expect(decisionLink().querySelector('[data-slot="badge"]')?.textContent).toBe("1");
+    fixture.userId = "other-user";
+    fixture.summary.mockResolvedValue(summary([]));
+    await renderSidebar();
+    expect(decisionLink().querySelector('[data-slot="badge"]')).toBeNull();
+  });
   it("counts every canonical outstanding decision even when none arrived today", async () => {
     // Personal page filters and completed receipts are separate cache entries.
-    client.setQueryData([...coordinatorAttentionQueryKey("company"), { search: "no match" }], feed([]));
+    client.setQueryData([...coordinatorAttentionQueryKey("company", "reviewer", "mine"), { search: "no match" }], feed([]));
     client.setQueryData([...queryKeys.attention("company"), "history", "recent"], { items: [{ id: "answered-question" }] });
     await renderSidebar();
     expect(fixture.attention).not.toHaveBeenCalled();
-    expect(client.getQueryData(coordinatorAttentionQueryKey("company"))).toBeUndefined();
+    expect(client.getQueryData(coordinatorAttentionQueryKey("company", "reviewer", "mine"))).toBeUndefined();
     expect(fixture.summary).toHaveBeenCalledWith("company");
     expect(decisionLink().querySelector('[data-slot="badge"]')?.textContent).toBe("2");
   });
@@ -393,19 +410,19 @@ describe("Coordinator Inbox badge", () => {
 
 describe("Coordinator collection reads", () => {
   it("does not replace a resolved count with an older summary that arrives later", async () => {
-    const key = coordinatorAttentionSummaryQueryKey("company");
+    const key = coordinatorAttentionSummaryQueryKey("company", "reviewer");
     client.setQueryDefaults(key, { staleTime: Infinity });
     client.setQueryData(key, { ...summary([pending("old")]), generatedAt: "2026-10-27T12:00:00Z" }, { updatedAt: 20 });
-    client.setQueryData(coordinatorAttentionQueryKey("company"), { ...feed([]), generatedAt: "2026-10-27T12:01:00Z" }, { updatedAt: 10 });
+    client.setQueryData(coordinatorAttentionQueryKey("company", "reviewer", "mine"), { ...feed([]), generatedAt: "2026-10-27T12:01:00Z" }, { updatedAt: 10 });
     await renderSidebar();
     expect(decisionLink().querySelector('[data-slot="badge"]')).toBeNull();
   });
 
   it("keeps a newer resolved count when returning to a cached navigation summary", async () => {
-    const key = coordinatorAttentionSummaryQueryKey("company");
+    const key = coordinatorAttentionSummaryQueryKey("company", "reviewer");
     client.setQueryDefaults(key, { staleTime: Infinity });
     client.setQueryData(key, summary([pending("old")]), { updatedAt: 1 });
-    client.setQueryData(coordinatorAttentionQueryKey("company"), feed([]), { updatedAt: 2 });
+    client.setQueryData(coordinatorAttentionQueryKey("company", "reviewer", "mine"), feed([]), { updatedAt: 2 });
     await renderSidebar();
     expect(decisionLink().querySelector('[data-slot="badge"]')).toBeNull();
     expect(fixture.summary).not.toHaveBeenCalled();
@@ -414,12 +431,12 @@ describe("Coordinator collection reads", () => {
 
   it("reuses the page-owned complete feed on Inbox without a second summary read", async () => {
     fixture.pathname = "/COO/decisions";
-    client.setQueryData(coordinatorAttentionQueryKey("company"), feed([pending("review")]));
+    client.setQueryData(coordinatorAttentionQueryKey("company", "reviewer", "mine"), feed([pending("review")]));
     await renderSidebar();
     expect(fixture.summary).not.toHaveBeenCalled();
     expect(fixture.attention).not.toHaveBeenCalled();
     expect(decisionLink().querySelector('[data-slot="badge"]')?.textContent).toBe("1");
-    await act(async () => client.setQueryData(coordinatorAttentionQueryKey("company"), feed([])));
+    await act(async () => client.setQueryData(coordinatorAttentionQueryKey("company", "reviewer", "mine"), feed([])));
     await flush();
     expect(decisionLink().querySelector('[data-slot="badge"]')).toBeNull();
   });
