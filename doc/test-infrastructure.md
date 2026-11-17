@@ -311,6 +311,22 @@ per-query results and latency measurements; scale measurements are opt-in.
 
 ## Native skill preparation benchmark
 
+For a filesystem-only comparison of cold native asset collection, staging, and
+full source/destination integrity checks against a previous revision:
+
+```sh
+node --import ./server/node_modules/tsx/dist/loader.mjs server/scripts/benchmark-skill-materialization.ts --baseline-ref=<commit> --samples=5
+```
+
+The default fixture contains 671 files and about 11 MB. `--source=<directory>`
+instead reads an existing skill directory without changing it. The script extracts
+the original filesystem functions from the supplied pre-extraction revision,
+alternates baseline/current order, creates isolated destination trees, and reports
+every sample, medians, source revision and hashes. It checks identical source
+content across comparisons and verifies both copies within each timed sample.
+Publication locks, database resolution, warm asset-cache reuse, provider startup,
+and model latency are outside this measurement.
+
 Measure native skill preparation through the production service, real PostgreSQL,
 and an in-memory OpenTelemetry exporter:
 

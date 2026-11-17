@@ -18,8 +18,6 @@ vi.mock("./AgentConversationsSidebar", () => ({ AgentConversationsSidebar: ({ on
 vi.mock("@/hooks/useCoordinatorWorkspaceEnabled", () => ({ useCoordinatorWorkspaceEnabled: () => ({ enabled: true, userId: fixture.userId }) }));
 vi.mock("@/hooks/useRecentTasks", () => ({ useRecentTasks: () => ({ entries: fixture.recentTasks }) }));
 vi.mock("@/api/issues", () => ({ issuesApi: { listCompact: fixture.projectTasks } }));
-vi.mock("./AgentChatPicker", () => ({ AgentChatPicker: ({ open, onSelect, agents }: any) => open ? <button onClick={() => onSelect(agents[0])}>Choose agent</button> : null }));
-vi.mock("./AgentConversationsSidebar", () => ({ AgentConversationsSidebar: ({ onConversationOpened }: { onConversationOpened?: () => void }) => <><a href="/chats/alex/old">Old conversation</a><button onClick={onConversationOpened}>Create from history</button></> }));
 const taskPrefetch = vi.hoisted(() => vi.fn(() => Promise.resolve()));
 vi.mock("@/lib/issueDetailCache", async (importOriginal) => ({
   ...await importOriginal<typeof import("@/lib/issueDetailCache")>(),
@@ -359,7 +357,23 @@ async function renderSidebar() {
 const decisionLink = () => container.querySelector('a[href="/decisions"]')!;
 
 describe("Coordinator Inbox badge", () => {
-  it("counts outstanding decisions for you even when none arrived today", async () => {
+  it("shows personal grouped actions rather than raw company signals", async () => {
+    fixture.summary.mockResolvedValue({ ...summary(Array.from({ length: 5 }, (_, index) => pending(String(index)))), deskBadgeCount: 2 });
+    await renderSidebar();
+    expect(decisionLink().querySelector('[data-slot="badge"]')?.textContent).toBe("2");
+  });
+  it("does not reuse another person's cached count after an account switch", async () => {
+    const key = coordinatorAttentionSummaryQueryKey("company", "reviewer");
+    client.setQueryDefaults(key, { staleTime: Infinity });
+    client.setQueryData(key, summary([pending("private") ]));
+    await renderSidebar();
+    expect(decisionLink().querySelector('[data-slot="badge"]')?.textContent).toBe("1");
+    fixture.userId = "other-user";
+    fixture.summary.mockResolvedValue(summary([]));
+    await renderSidebar();
+    expect(decisionLink().querySelector('[data-slot="badge"]')).toBeNull();
+  });
+  it("counts every canonical outstanding decision even when none arrived today", async () => {
     // Personal page filters and completed receipts are separate cache entries.
     client.setQueryData([...coordinatorAttentionQueryKey("company", "reviewer", "mine"), { search: "no match" }], feed([]));
     client.setQueryData([...queryKeys.attention("company"), "history", "recent"], { items: [{ id: "answered-question" }] });
