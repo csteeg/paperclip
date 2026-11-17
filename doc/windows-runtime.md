@@ -63,3 +63,16 @@ passed only to the supervisor environment and removed before the provider is
 created. It is absent from argv and the provider environment. Writable temporary
 files and a killed supervisor cannot authorize handoff. Missing or invalid proof
 keeps handoff blocked. The pipe closes when launch fails or settlement finishes.
+
+## Credential file reads
+
+The server opens each Windows credential path component through native handles.
+It rejects reparse points and retains ancestor handles without write or delete
+sharing until the read finishes. Each child is opened relative to its retained
+parent handle. The credential is read from the final handle with a 64 KiB limit.
+
+A small helper is compiled once per server process with the Windows .NET Framework
+compiler, as with the process supervisor. Credential contents are not cached.
+Each request checks and reads the file again. The path travels through standard
+input and the content returns through the private child-process output pipe.
+No credential content is written to helper files or command-line arguments.
