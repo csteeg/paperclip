@@ -1262,54 +1262,54 @@
       "expectedMockState": "runtime_decision_record"
     },
     {
-      "id": "skill:skills/paperclip/references/issue-workspaces.md:37",
+      "id": "skill:skills/paperclip/references/issue-workspaces.md:39",
       "kind": "skill_heading",
-      "sourceAnchor": "skills/paperclip/references/issue-workspaces.md#L37:control-services",
+      "sourceAnchor": "skills/paperclip/references/issue-workspaces.md#L39:control-services",
       "heading": "Control Services",
       "primaryDisposition": "control_plane_owned",
       "semanticOperation": "runtime_reconciliation",
       "expectedMockState": "runtime_decision_record"
     },
     {
-      "id": "skill:skills/paperclip/references/issue-workspaces.md:42",
+      "id": "skill:skills/paperclip/references/issue-workspaces.md:44",
       "kind": "skill_heading",
-      "sourceAnchor": "skills/paperclip/references/issue-workspaces.md#L42:start-all-configured-services-waits-for-configured-readiness-checks",
+      "sourceAnchor": "skills/paperclip/references/issue-workspaces.md#L44:start-all-configured-services-waits-for-configured-readiness-checks",
       "heading": "Start all configured services; waits for configured readiness checks.",
       "primaryDisposition": "control_plane_owned",
       "semanticOperation": "runtime_reconciliation",
       "expectedMockState": "runtime_decision_record"
     },
     {
-      "id": "skill:skills/paperclip/references/issue-workspaces.md:50",
+      "id": "skill:skills/paperclip/references/issue-workspaces.md:52",
       "kind": "skill_heading",
-      "sourceAnchor": "skills/paperclip/references/issue-workspaces.md#L50:restart-all-configured-services",
+      "sourceAnchor": "skills/paperclip/references/issue-workspaces.md#L52:restart-all-configured-services",
       "heading": "Restart all configured services.",
       "primaryDisposition": "control_plane_owned",
       "semanticOperation": "runtime_reconciliation",
       "expectedMockState": "runtime_decision_record"
     },
     {
-      "id": "skill:skills/paperclip/references/issue-workspaces.md:58",
+      "id": "skill:skills/paperclip/references/issue-workspaces.md:60",
       "kind": "skill_heading",
-      "sourceAnchor": "skills/paperclip/references/issue-workspaces.md#L58:stop-all-running-services",
+      "sourceAnchor": "skills/paperclip/references/issue-workspaces.md#L60:stop-all-running-services",
       "heading": "Stop all running services.",
       "primaryDisposition": "control_plane_owned",
       "semanticOperation": "runtime_reconciliation",
       "expectedMockState": "runtime_decision_record"
     },
     {
-      "id": "skill:skills/paperclip/references/issue-workspaces.md:77",
+      "id": "skill:skills/paperclip/references/issue-workspaces.md:79",
       "kind": "skill_heading",
-      "sourceAnchor": "skills/paperclip/references/issue-workspaces.md#L77:read-the-url",
+      "sourceAnchor": "skills/paperclip/references/issue-workspaces.md#L79:read-the-url",
       "heading": "Read the URL",
       "primaryDisposition": "control_plane_owned",
       "semanticOperation": "runtime_reconciliation",
       "expectedMockState": "runtime_decision_record"
     },
     {
-      "id": "skill:skills/paperclip/references/issue-workspaces.md:86",
+      "id": "skill:skills/paperclip/references/issue-workspaces.md:88",
       "kind": "skill_heading",
-      "sourceAnchor": "skills/paperclip/references/issue-workspaces.md#L86:mcp-tools",
+      "sourceAnchor": "skills/paperclip/references/issue-workspaces.md#L88:mcp-tools",
       "heading": "MCP Tools",
       "primaryDisposition": "control_plane_owned",
       "semanticOperation": "runtime_reconciliation",

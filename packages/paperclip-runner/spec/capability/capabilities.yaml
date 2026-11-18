@@ -2100,9 +2100,9 @@
       ]
     },
     {
-      "id": "skill:skills/paperclip/references/issue-workspaces.md:control-services:37",
+      "id": "skill:skills/paperclip/references/issue-workspaces.md:control-services:39",
       "sourceKind": "skill_heading",
-      "sourceAnchor": "skills/paperclip/references/issue-workspaces.md:37",
+      "sourceAnchor": "skills/paperclip/references/issue-workspaces.md:39",
       "title": "Control Services",
       "expectedSemantics": "Skill guidance headed “Control Services”.",
       "primaryDisposition": "optional_agent_tool",
@@ -2111,13 +2111,13 @@
         "control_plane_invariant"
       ],
       "evidenceIds": [
-        "skill:skills/paperclip/references/issue-workspaces.md:37"
+        "skill:skills/paperclip/references/issue-workspaces.md:39"
       ]
     },
     {
-      "id": "skill:skills/paperclip/references/issue-workspaces.md:start-all-configured-services-waits-for-configured-readiness-checks:42",
+      "id": "skill:skills/paperclip/references/issue-workspaces.md:start-all-configured-services-waits-for-configured-readiness-checks:44",
       "sourceKind": "skill_heading",
-      "sourceAnchor": "skills/paperclip/references/issue-workspaces.md:42",
+      "sourceAnchor": "skills/paperclip/references/issue-workspaces.md:44",
       "title": "Start all configured services; waits for configured readiness checks.",
       "expectedSemantics": "Skill guidance headed “Start all configured services; waits for configured readiness checks.”.",
       "primaryDisposition": "optional_agent_tool",
@@ -2126,13 +2126,13 @@
         "control_plane_invariant"
       ],
       "evidenceIds": [
-        "skill:skills/paperclip/references/issue-workspaces.md:42"
+        "skill:skills/paperclip/references/issue-workspaces.md:44"
       ]
     },
     {
-      "id": "skill:skills/paperclip/references/issue-workspaces.md:restart-all-configured-services:50",
+      "id": "skill:skills/paperclip/references/issue-workspaces.md:restart-all-configured-services:52",
       "sourceKind": "skill_heading",
-      "sourceAnchor": "skills/paperclip/references/issue-workspaces.md:50",
+      "sourceAnchor": "skills/paperclip/references/issue-workspaces.md:52",
       "title": "Restart all configured services.",
       "expectedSemantics": "Skill guidance headed “Restart all configured services.”.",
       "primaryDisposition": "optional_agent_tool",
@@ -2141,13 +2141,13 @@
         "control_plane_invariant"
       ],
       "evidenceIds": [
-        "skill:skills/paperclip/references/issue-workspaces.md:50"
+        "skill:skills/paperclip/references/issue-workspaces.md:52"
       ]
     },
     {
-      "id": "skill:skills/paperclip/references/issue-workspaces.md:stop-all-running-services:58",
+      "id": "skill:skills/paperclip/references/issue-workspaces.md:stop-all-running-services:60",
       "sourceKind": "skill_heading",
-      "sourceAnchor": "skills/paperclip/references/issue-workspaces.md:58",
+      "sourceAnchor": "skills/paperclip/references/issue-workspaces.md:60",
       "title": "Stop all running services.",
       "expectedSemantics": "Skill guidance headed “Stop all running services.”.",
       "primaryDisposition": "optional_agent_tool",
@@ -2156,13 +2156,13 @@
         "control_plane_invariant"
       ],
       "evidenceIds": [
-        "skill:skills/paperclip/references/issue-workspaces.md:58"
+        "skill:skills/paperclip/references/issue-workspaces.md:60"
       ]
     },
     {
-      "id": "skill:skills/paperclip/references/issue-workspaces.md:read-the-url:77",
+      "id": "skill:skills/paperclip/references/issue-workspaces.md:read-the-url:79",
       "sourceKind": "skill_heading",
-      "sourceAnchor": "skills/paperclip/references/issue-workspaces.md:77",
+      "sourceAnchor": "skills/paperclip/references/issue-workspaces.md:79",
       "title": "Read the URL",
       "expectedSemantics": "Skill guidance headed “Read the URL”.",
       "primaryDisposition": "optional_agent_tool",
@@ -2171,13 +2171,13 @@
         "control_plane_invariant"
       ],
       "evidenceIds": [
-        "skill:skills/paperclip/references/issue-workspaces.md:77"
+        "skill:skills/paperclip/references/issue-workspaces.md:79"
       ]
     },
     {
-      "id": "skill:skills/paperclip/references/issue-workspaces.md:mcp-tools:86",
+      "id": "skill:skills/paperclip/references/issue-workspaces.md:mcp-tools:88",
       "sourceKind": "skill_heading",
-      "sourceAnchor": "skills/paperclip/references/issue-workspaces.md:86",
+      "sourceAnchor": "skills/paperclip/references/issue-workspaces.md:88",
       "title": "MCP Tools",
       "expectedSemantics": "Skill guidance headed “MCP Tools”.",
       "primaryDisposition": "optional_agent_tool",
@@ -2186,7 +2186,7 @@
         "control_plane_invariant"
       ],
       "evidenceIds": [
-        "skill:skills/paperclip/references/issue-workspaces.md:86"
+        "skill:skills/paperclip/references/issue-workspaces.md:88"
       ]
     },
     {
