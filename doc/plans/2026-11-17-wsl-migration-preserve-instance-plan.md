@@ -12,6 +12,52 @@
 
 ## Status and verified facts
 
+### Execution checkpoint, 2026-11-18
+
+- Removed 18 verified clean task code roots. The first 17 contained 158 Git
+  repositories; the older final root contained one more linked worktree.
+  Original projects, attempt directories and generated outputs remain.
+  The first cleanup reclaimed approximately 19.65 GiB. A verified 2.38 GiB Git
+  recovery set and a separate full instance archive retain the removed code.
+  The private recovery kit now has one `Restore-AllTaskCode.ps1` entrypoint.
+  It defaults to a dry run and refuses to overwrite existing destinations.
+- Independently verified the compressed instance archive, older referenced
+  session directories and eight external skill snapshots. The operational
+  Linux copy passed content checks for 1,707,271 regular files, plus 45,048
+  files from older referenced directories and 36 external skill files.
+  Windows physical database files stay in the recovery archive.
+- Native PostgreSQL restore matched all 350 tables and 523,003 rows, including
+  complete row hashes and submillisecond timestamps. The initial JavaScript
+  backup restore lost timestamp precision; it was rejected. The native dump
+  supersedes that failed proof.
+- Linux build passed. The validation server answered health and company/agent
+  reads on a separate port. The wiki plugin loaded after its stored machine
+  paths were translated. Operational path changes and temporary pauses have
+  private before/after receipts and company activity records.
+- The first validation start ran a normal retention job despite disabled
+  heartbeats. It removed 3,727 cached evidence files in the Linux copy. The
+  server was stopped; all those files were restored from the unchanged source
+  and verified. Subsequent validation explicitly disables those retention jobs.
+- The existing Ubuntu is 22.04 with glibc 2.35. Runner requires glibc 2.39.
+  Both native harness probes refused this unsupported environment before
+  starting providers. Ubuntu reports 24.04.5 LTS as the available upgrade.
+  Permission for that distribution-wide upgrade is pending. No Runner
+  platform gate was weakened and no final endpoint cutover has occurred.
+- The shared WSL helper passed Windows-to-Linux and Linux preflight, argument
+  preservation and conflicting-instance/configuration/database/port rejection.
+  Its Runner preflight now checks the owning shared platform contract before
+  expensive preparation. Independent review found the configuration override
+  issue; the corrected guard passed its reproduced regression.
+- Runtime preparation changes are saved on `codex/wsl-live-runtime-20261117`.
+  Incremental verification reports an outstanding trusted SDK lock-policy
+  update for the repaired integration lockfile. Required CI is not green.
+  Existing PRs #18144 and #22033 remain open; neither was closed or overwritten.
+
+The remaining acceptance work is the approved Ubuntu upgrade, real new and
+resumed Codex/Claude runs, final data reconciliation, trusted lock/CI
+qualification and controlled cutover. A healthy validation server is not
+completion of this migration.
+
 - This is a plan, not a completed migration or a backup receipt.
 - Source configuration currently identifies `C:\.paperclip\instances\default`, embedded PostgreSQL under its `db` directory, local storage under `data/storage`, the original `secrets/master.key`, and port 3100.
 - The current integration worktree points to a separate test instance on D:. Do not mistake it for the user's source instance.
