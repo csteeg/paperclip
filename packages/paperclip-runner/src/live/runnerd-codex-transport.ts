@@ -3911,6 +3911,9 @@ function createCapabilityRunnerdProviderEnvironmentBase(input: {
       PAPERCLIP_OPENCODE_RUNTIME_DIR:
         input.options.opencodeRuntimeDirectory ??
         resolve(input.options.stateDirectory ?? tmpdir(), "opencode"),
+      // OpenCode lists the shared skill home in skills.paths (opencode-server-driver.ts).
+      ...(usesCodexSkillHome({ ...input.options, provider: "codex" })
+        ? { PAPERCLIP_SKILL_HOME_STORE_ROOT: input.options.codexSkillHomeStoreRoot! } : {}),
       ...commonIdentity,
     };
   }

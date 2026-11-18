@@ -3357,6 +3357,24 @@ it.skipIf(process.platform === "win32").each([
   expect(environment.PAPERCLIP_SKILL_HOME_STORE_ROOT).toBe(expected);
 });
 
+it.skipIf(process.platform === "win32").each([
+  [{}, "/state/skill-homes"],
+  [{ runnerFilesystemRoot: "/remote/root" }, undefined],
+] as const)("passes the skill home store to OpenCode only when it can share skills (%o)", (extra, expected) => {
+  const environment = createCapabilityRunnerdProviderEnvironment({
+    provider: "opencode",
+    options: { provider: "opencode", codexSkillHomeStoreRoot: "/state/skill-homes", ...extra, environment: { PATH: "/bin" } },
+    identity: {
+      runnerInstanceId: "runner-1", environmentLeaseId: "lease-1", runId: "run-1",
+      normalizedSessionId: "session-1", turnId: "turn-1", itemId: "item-1",
+    },
+    codexHome: "/isolated/codex-home",
+    runtimeContextPath: "/isolated/runtime-context.json",
+    hasRuntimeContext: true,
+  });
+  expect(environment.PAPERCLIP_SKILL_HOME_STORE_ROOT).toBe(expected);
+});
+
 it("passes the configured Codex API key only through the provider process environment", () => {
   const environment = createCapabilityRunnerdProviderEnvironment({
     provider: "codex",
