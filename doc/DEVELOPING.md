@@ -749,4 +749,3 @@ budget checks, Stop and successor settlement retain their existing owners.
 It does not add another scheduler, provider transport, idle timer or state store.
 See [central harness pools](connections/AI-CONNECTION-ROUTERS.md#central-harness-pools)
 for operator setup, conversion and continuation limits.
-
