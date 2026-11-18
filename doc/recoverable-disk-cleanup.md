@@ -153,6 +153,14 @@ every file against `manifest.json` and moves a damaged home to
 Runner hosts keep the per-session copy, because Codex reads `HOME` only on Mac and
 Linux.
 
+ACPX Claude and OpenCode sessions use the same skill homes. Each home also contains
+`.agents/.claude-plugin/plugin.json`, and Claude loads `.agents` as a local plugin, so
+its assigned skills appear as `paperclip:<skill>`. OpenCode lists
+`<home>/.agents/skills` in `skills.paths` of its generated `opencode.json`. Their
+markers are `runtime/paperclip-runner/acpx/acpx/<session>/claude-home/paperclip-skill-home.json`
+and `durable-sessions/<scope>/opencode/<session>/paperclip-skill-home.json`. ACPX
+Grok and Kimi keep copying skills into their home.
+
 The same sweep removes a skill home when no session's
 `codex-home/paperclip-skill-home.json` names it and it was not launched for a day.
 Expiring a session's `codex-home` therefore releases its skill home too. A home is

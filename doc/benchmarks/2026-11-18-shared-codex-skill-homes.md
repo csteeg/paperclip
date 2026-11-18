@@ -28,6 +28,18 @@ same files took 1.3 s. That is why reuse compares recorded file identities.
 Instance-wide on the same machine: 274 sessions held 9.2 GB in `codex-home/skills`,
 over 30 distinct skill sets. One home per set is about 2.0 GB.
 
+## ACPX Claude and OpenCode
+
+They use the same publish and reuse path (`prepareSharedSkillHome`), so the copy and
+reuse times above apply. On the measured instance, 38 ACPX Claude sessions held
+3.5 GB of skill copies plus 8.9 GB of abandoned staging (removed separately).
+
+The patched `claude-agent-acp` was started over ACP stdio in WSL, in isolated mode
+with an empty `CLAUDE_CONFIG_DIR/skills`. With `PAPERCLIP_CLAUDE_SKILL_PLUGIN_DIR`
+pointing at a published skill home's `.agents`, its `available_commands_update`
+listed `paperclip:alpha` (49 commands); without it, no `alpha` command (48). No
+Claude or OpenCode model turn was run.
+
 ## Real turn through the shared HOME
 
 Codex 0.160.0 `app-server` on WSL Linux, ChatGPT login, `HOME` = a published skill

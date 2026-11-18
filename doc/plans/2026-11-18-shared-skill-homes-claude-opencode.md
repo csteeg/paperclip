@@ -1,6 +1,6 @@
 # Shared skill homes for Claude (ACPX) and OpenCode
 
-Status: design, awaiting user approval (2026-11-18). Extends
+Status: approved and implemented (2026-11-18). Extends
 `doc/plans/2026-11-18-shared-codex-home-caches.md` (implemented for native Codex).
 
 ## Problem
