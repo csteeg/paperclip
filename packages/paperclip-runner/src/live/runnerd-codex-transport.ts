@@ -67,7 +67,7 @@ import type {
 } from "../contracts/durable-recovery.js";
 import type { NativeRunIdentity, NativeTurnControlCapabilities } from "../contracts/types.js";
 import type { PrpEvent } from "../protocol/replay-contract.js";
-import { NativeSessionCloseUnrecoverableError } from "../contracts/native-session-backend.js";
+import { NativeProviderStateIncompatibleError, NativeSessionCloseUnrecoverableError } from "../contracts/native-session-backend.js";
 import type {
   HarnessSession,
   HarnessRuntimeRequestResolution,
@@ -7470,7 +7470,7 @@ class DurablePrpCodexTransport implements CodexAppServerTransport {
           observability: this.options.observability,
         });
         if (prepared.skillHome !== null && prepared.skillHome !== this.#skillHome) {
-          throw new Error("codex_skill_home_unavailable");
+          throw new NativeProviderStateIncompatibleError("codex_skill_home_unavailable");
         }
       }
     }

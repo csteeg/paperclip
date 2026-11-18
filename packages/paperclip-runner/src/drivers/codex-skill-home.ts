@@ -3,6 +3,7 @@ import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, read
 import { chmod, lstat, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 
+import { NativeProviderStateIncompatibleError } from "../contracts/native-session-backend.js";
 import type { NativeRuntimeContextSnapshot } from "../contracts/runtime-context.js";
 import {
   materializeNativeRuntimeSkills,
@@ -328,7 +329,7 @@ export async function resolveRecordedCodexSkillHome(input: {
   context: NativeRuntimeContextSnapshot | null;
 }): Promise<string> {
   const digest = await readCodexSkillHomeMarker(input.codexHome);
-  if (!digest) throw new Error("codex_skill_home_unavailable");
+  if (!digest) throw new NativeProviderStateIncompatibleError("codex_skill_home_unavailable");
   const home = join(input.storeRoot, digest);
   try {
     if (!(await reusableCodexSkillHome(input.storeRoot, home, digest))) throw integrityFailure();
@@ -336,7 +337,7 @@ export async function resolveRecordedCodexSkillHome(input: {
     return home;
   } catch {
     if (!input.context || codexSkillHomeDigest(input.context) !== digest) {
-      throw new Error("codex_skill_home_unavailable");
+      throw new NativeProviderStateIncompatibleError("codex_skill_home_unavailable");
     }
   }
   const ensured = await ensureCodexSkillHome({ storeRoot: input.storeRoot, context: input.context });

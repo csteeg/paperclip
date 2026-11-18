@@ -11,6 +11,7 @@ import {
   nativeRuntimePromptDigest,
   type NativeRuntimeContextSnapshot,
 } from "../contracts/runtime-context.js";
+import { NativeProviderStateIncompatibleError } from "../contracts/native-session-backend.js";
 import { codexSkillReadRoots, createRunnerdCodexAppServerArgs } from "../live/runner-provider-launch.js";
 import { resolveRunnerdCodexSkillInputs } from "../live/runnerd-codex-transport.js";
 import {
@@ -153,7 +154,9 @@ describe("Codex launches with a shared skill home", () => {
     await chmod(skillHome!, 0o700);
     await removeCodexSkillHomeTree(skillHome!);
     await expect(resolveRecordedCodexSkillHome({ codexHome, storeRoot, context: null }))
-      .rejects.toThrow("codex_skill_home_unavailable");
+      .rejects.toThrow(NativeProviderStateIncompatibleError);
+    await expect(resolveRecordedCodexSkillHome({ codexHome, storeRoot, context: null }))
+      .rejects.toMatchObject({ code: "native_provider_state_incompatible", message: expect.stringContaining("codex_skill_home_unavailable") });
   });
 
   it.each([

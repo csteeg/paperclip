@@ -410,12 +410,18 @@ describeEmbeddedPostgres("native harness backup expiration", () => {
     await fs.writeFile(path.join(home, ".agents", "skills", "alpha", "SKILL.md"), "skill");
     const old = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
     await fs.utimes(home, old, old);
-    const result = await nativeHarnessBackupExpirationService(db, {
-      stateBase, skillHomeStoreRoot, closedForDays: 7, now, isSessionBusy: () => false,
-    }).tick();
+    // Production runs tick() only from the evidence worker (duty "evidence").
+    const evidence = nativeHarnessBackupExpirationService(db, {
+      duty: "evidence", stateBase, skillHomeStoreRoot, closedForDays: 7, now, isSessionBusy: () => false,
+    });
+    const result = await evidence.tick();
     expect(result).toMatchObject({ skillHomesRemoved: 1, failed: 0 });
     expect(result.skillHomeReclaimedBytes).toBeGreaterThan(0);
     expect(await exists(home)).toBe(false);
+    // The worker comes back for skill homes even when no other evidence is due.
+    const next = evidence.nextEvidenceAt();
+    expect(next).not.toBeNull();
+    expect(next!).toBeLessThanOrEqual(now.getTime() + 24 * 60 * 60 * 1000);
   });
 
   it("removes skill staging an interrupted launch left in a provider home in the same pass", async () => {
@@ -427,7 +433,7 @@ describeEmbeddedPostgres("native harness backup expiration", () => {
     const old = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
     await fs.utimes(staging, old, old);
     const result = await nativeHarnessBackupExpirationService(db, {
-      stateBase, skillStagingRoots: [acpxSessions], closedForDays: 7, now, isSessionBusy: () => false,
+      duty: "evidence", stateBase, skillStagingRoots: [acpxSessions], closedForDays: 7, now, isSessionBusy: () => false,
     }).tick();
     expect(result).toMatchObject({ abandonedSkillStagingRemoved: 1, failed: 0 });
     expect(result.abandonedSkillStagingBytes).toBeGreaterThan(0);

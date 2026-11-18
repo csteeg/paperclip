@@ -16,9 +16,23 @@ import {
   type Db,
 } from "@paperclipai/db";
 import { logger } from "../../middleware/logger.js";
+import {
+  EXPIRED_PREFIX,
+  RETIRING_PREFIX,
+  LOCAL_PROVIDER_HOME,
+  LOCAL_PROVIDER_HOME_RETIRING,
+  LOCAL_PROVIDER_HOME_EXPIRED,
+  allocatedBytes,
+  isRealDirectory,
+  missingPath,
+  newestModification,
+  removeBackupTree,
+  retentionTargets,
+  settleLocalProviderHome,
+  type RetentionTarget,
+} from "./native-harness-backup-files.js";
 import { assessSessionRetention } from "./native-session-retention-blockers.js";
-import { sweepCodexSkillHomes } from "./codex-skill-home-retention.js";
-import { sweepAbandonedSkillStaging } from "./skill-staging-retention.js";
+import { sweepSharedSkillStorage } from "./codex-skill-home-retention.js";
 import { nativeHarnessStateBase } from "./native-harness-backup-stamp.js";
 import { nativeSessionScopeDigestIsBusy } from "./native-session-executor.js";
 import type { createDeliveryWorkCoordinator } from "../delivery-work-coordinator.js";
@@ -41,8 +55,6 @@ const CONTINUITY_ARCHIVE_PATTERN = /^(\d{1,15})-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]
 const QUARANTINE_PATTERN =
   /^([0-9a-f]{64})\.(?:identity_indeterminate|identity_mismatch)\.(\d{1,15})\.\d{1,10}\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const QUARANTINE_CLEANUP_PATTERN = /^[0-9a-f]{64}\.identity_indeterminate\.cleanup\./;
-const EXPIRED_PREFIX = ".expired-";
-const RETIRING_PREFIX = ".retiring-";
 const LIVE_RUN_STATUSES = ["queued", "scheduled_retry", "running"];
 const SETTLED_FINALIZATION_PHASES = ["committed", "terminal_failure"];
 const LIVE_LEASE_STATUSES = ["active", "released", "retained", "pending_cleanup"];
@@ -51,12 +63,9 @@ const MAX_CONTROL_PLANE_STATE_BYTES = 4 * 1024 * 1024;
 // A local session keeps its provider home in the session root. Once the
 // session can only resume by reopening closed work, it is as disposable as a
 // failover copy: a reopened issue starts a fresh provider session elsewhere.
-const LOCAL_PROVIDER_HOME = "codex-home";
 // Fixed, classified journal names (native-session-root-entries.ts), so
 // admission holds a root with an unsettled retirement instead of treating it
 // as writer drift.
-const LOCAL_PROVIDER_HOME_RETIRING = "provider-home-retiring";
-const LOCAL_PROVIDER_HOME_EXPIRED = "provider-home-expired";
 const CHECKPOINT_EXPIRATION_MAX_FAILED_PASSES = 3;
 
 export type NativeHarnessBackupExpirationOptions = {
@@ -138,75 +147,6 @@ function emptyResult(): NativeHarnessBackupExpirationResult {
     abandonedSkillStagingRemoved: 0,
     abandonedSkillStagingBytes: 0,
   };
-}
-
-function missingPath(error: NodeJS.ErrnoException) {
-  if (error.code === "ENOENT") return null;
-  throw error;
-}
-
-async function isRealDirectory(target: string): Promise<boolean> {
-  const stat = await fs.lstat(target).catch(missingPath);
-  return Boolean(stat?.isDirectory() && !stat.isSymbolicLink());
-}
-
-async function removeBackupTree(target: string): Promise<void> {
-  const prepare = async (current: string): Promise<void> => {
-    const stat = await fs.lstat(current).catch(() => null);
-    if (!stat?.isDirectory()) return;
-    await fs.chmod(current, (stat.mode & 0o777) | 0o700);
-    for (const name of await fs.readdir(current)) await prepare(path.join(current, name));
-  };
-  await prepare(target);
-  await fs.rm(target, { recursive: true, force: true });
-}
-
-async function allocatedBytes(target: string): Promise<number> {
-  const stat = await fs.lstat(target).catch(() => null);
-  if (!stat) return 0;
-  let bytes = stat.blocks * 512;
-  if (stat.isDirectory() && !stat.isSymbolicLink()) {
-    for (const entry of await fs.readdir(target).catch(() => [] as string[])) {
-      bytes += await allocatedBytes(path.join(target, entry));
-    }
-  }
-  return bytes;
-}
-
-type RetentionTarget = { path: string; retiring: string; trash: string; local: boolean };
-
-/** The disposable session copies in a root: a remote failover copy and a local provider home. */
-async function retentionTargets(root: string): Promise<RetentionTarget[]> {
-  const backupRoot = path.join(root, "failover-backups");
-  const id = randomUUID();
-  const targets: RetentionTarget[] = [];
-  for (const target of [
-    { path: path.join(backupRoot, "current"), retiring: path.join(backupRoot, `${RETIRING_PREFIX}${id}`),
-      trash: path.join(backupRoot, `${EXPIRED_PREFIX}${id}`), local: false },
-    { path: path.join(root, LOCAL_PROVIDER_HOME), retiring: path.join(root, LOCAL_PROVIDER_HOME_RETIRING),
-      trash: path.join(root, LOCAL_PROVIDER_HOME_EXPIRED), local: true },
-  ]) {
-    if (await isRealDirectory(target.path)) targets.push(target);
-  }
-  return targets;
-}
-
-/** Restores a local provider home whose retirement never committed, and finishes an interrupted removal. */
-async function settleLocalProviderHome(root: string) {
-  const home = path.join(root, LOCAL_PROVIDER_HOME);
-  const retiring = path.join(root, LOCAL_PROVIDER_HOME_RETIRING);
-  if (await isRealDirectory(retiring)) {
-    if (await fs.lstat(home).catch(missingPath)) await removeBackupTree(retiring);
-    else await fs.rename(retiring, home);
-  }
-  const trash = path.join(root, LOCAL_PROVIDER_HOME_EXPIRED);
-  if (await isRealDirectory(trash)) await removeBackupTree(trash);
-}
-
-async function newestModification(targets: RetentionTarget[]): Promise<number> {
-  let newest = Number.NEGATIVE_INFINITY;
-  for (const target of targets) newest = Math.max(newest, (await fs.stat(target.path)).mtime.getTime());
-  return newest;
 }
 
 async function readSessionIdentity(root: string): Promise<SessionIdentity | null> {
@@ -859,36 +799,19 @@ export function nativeHarnessBackupExpirationService(
       }
       if (result.truncated) return result;
       cursor = null;
-      // A test or caller that moves the state base names its store explicitly,
-      // so a sweep never reaches a store outside the state it was given.
-      const skillHomeStoreRoot = options.skillHomeStoreRoot ?? defaults.skillHomeStoreRoot
-        ?? (options.stateBase ?? defaults.stateBase ? null : path.resolve(base, "..", "skill-homes"));
-      if (includeBackups && skillHomeStoreRoot) {
-        try {
-          const swept = await sweepCodexSkillHomes({
-            storeRoot: skillHomeStoreRoot, sessionsRoot: base, now, dryRun, maxRemovals,
-            // ACPX Claude sessions reference skill homes from beside the state base.
-            ...(options.stateBase ?? defaults.stateBase ? {} : { acpxSessionsRoot: path.resolve(base, "..", "acpx", "acpx") }),
-          });
-          result.skillHomesRemoved = swept.removed;
-          result.skillHomeReclaimedBytes = swept.reclaimedBytes;
-        } catch (err) {
-          result.failed++;
-          logger.warn({ err }, "native harness expiration skipped Codex skill homes");
-        }
-      }
-      // Codex sessions live in the state base; ACPX sessions beside it.
-      const skillStagingRoots = options.skillStagingRoots ?? defaults.skillStagingRoots
-        ?? (options.stateBase ?? defaults.stateBase ? [] : [base, path.resolve(base, "..", "acpx", "acpx")]);
-      if (includeBackups && skillStagingRoots.length > 0) {
-        try {
-          const swept = await sweepAbandonedSkillStaging({ sessionRoots: skillStagingRoots, now, dryRun });
-          result.abandonedSkillStagingRemoved = swept.removed;
-          result.abandonedSkillStagingBytes = swept.bytes;
-        } catch (err) {
-          result.failed++;
-          logger.warn({ err }, "native harness expiration skipped abandoned skill staging");
-        }
+      // Shared skill homes and abandoned skill staging. Production reaches tick()
+      // only through the evidence worker, so this runs in its passes and asks it
+      // to come back, also when no other evidence is due.
+      if (evidencePass) {
+        const shared = await sweepSharedSkillStorage({
+          stateBase: base, stateBaseOverridden: Boolean(options.stateBase ?? defaults.stateBase),
+          skillHomeStoreRoot: options.skillHomeStoreRoot ?? defaults.skillHomeStoreRoot,
+          skillStagingRoots: options.skillStagingRoots ?? defaults.skillStagingRoots, now, dryRun, maxRemovals,
+        });
+        const { failed, nextDueAt, ...counts } = shared;
+        Object.assign(result, counts);
+        result.failed += failed;
+        if (nextDueAt !== null) context.dueAt(nextDueAt);
       }
       if (!evidencePass) {
         passActive = false;

@@ -2,13 +2,71 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import { logger } from "../../middleware/logger.js";
 import { readCodexSkillHomeMarker, removeCodexSkillHomeTree } from "../../vendor/paperclip-runner/index.js";
+import { sweepAbandonedSkillStaging } from "./skill-staging-retention.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DIGEST_PATTERN = /^[a-f0-9]{64}$/;
 const SCOPE_PATTERN = /^[a-f0-9]{64}$/;
 const RETIRING_PATTERN = /^\.retiring-([a-f0-9]{64})\./;
 const QUARANTINE_RETENTION_MS = 7 * DAY_MS;
+
+/**
+ * Runs the shared skill-home sweep and the abandoned-staging sweep for one
+ * evidence pass and returns when the next pass should look again. A caller
+ * that moved the state base (tests) names its store and roots explicitly, so a
+ * sweep never reaches storage outside the state it was given.
+ */
+export async function sweepSharedSkillStorage(input: {
+  stateBase: string;
+  stateBaseOverridden: boolean;
+  skillHomeStoreRoot?: string;
+  skillStagingRoots?: string[];
+  now: number;
+  dryRun: boolean;
+  maxRemovals: number;
+}): Promise<{
+  skillHomesRemoved: number;
+  skillHomeReclaimedBytes: number;
+  abandonedSkillStagingRemoved: number;
+  abandonedSkillStagingBytes: number;
+  failed: number;
+  nextDueAt: number | null;
+}> {
+  const acpxSessionsRoot = path.resolve(input.stateBase, "..", "acpx", "acpx");
+  const storeRoot = input.skillHomeStoreRoot
+    ?? (input.stateBaseOverridden ? null : path.resolve(input.stateBase, "..", "skill-homes"));
+  const stagingRoots = input.skillStagingRoots ?? (input.stateBaseOverridden ? [] : [input.stateBase, acpxSessionsRoot]);
+  const result = {
+    skillHomesRemoved: 0, skillHomeReclaimedBytes: 0, abandonedSkillStagingRemoved: 0, abandonedSkillStagingBytes: 0,
+    failed: 0, nextDueAt: storeRoot || stagingRoots.length > 0 ? input.now + DAY_MS : null,
+  };
+  if (storeRoot) {
+    try {
+      const swept = await sweepCodexSkillHomes({
+        storeRoot, sessionsRoot: input.stateBase, now: input.now, dryRun: input.dryRun, maxRemovals: input.maxRemovals,
+        ...(input.stateBaseOverridden ? {} : { acpxSessionsRoot }),
+      });
+      result.skillHomesRemoved = swept.removed;
+      result.skillHomeReclaimedBytes = swept.reclaimedBytes;
+    } catch (err) {
+      result.failed++;
+      logger.warn({ err }, "native harness expiration skipped Codex skill homes");
+    }
+  }
+  if (stagingRoots.length > 0) {
+    try {
+      const swept = await sweepAbandonedSkillStaging({ sessionRoots: stagingRoots, now: input.now, dryRun: input.dryRun });
+      result.abandonedSkillStagingRemoved = swept.removed;
+      result.abandonedSkillStagingBytes = swept.bytes;
+    } catch (err) {
+      result.failed++;
+      logger.warn({ err }, "native harness expiration skipped abandoned skill staging");
+    }
+  }
+  return result;
+}
 
 export type CodexSkillHomeSweepResult = {
   removed: number;
