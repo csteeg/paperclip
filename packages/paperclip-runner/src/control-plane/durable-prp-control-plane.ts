@@ -21,6 +21,7 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  renameSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -29,7 +30,6 @@ import { dirname, resolve } from "node:path";
 import type { Duplex } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { withStagedPrivateWrite } from "./staged-private-write.js";
-import { renamePrivateStateFile } from "./private-state-rename.js";
 import { verifyPrivateRegularFile } from "./private-state-file.js";
 
 import { NativeSessionProtocolIntegrityError } from "../contracts/native-session-backend.js";
@@ -1745,7 +1745,7 @@ export function atomicPrivateWrite(path: string, contents: string): void {
     fsyncSync(descriptor);
     closeSync(descriptor);
     descriptor = null;
-    renamePrivateStateFile(temporary, path);
+    renameSync(temporary, path);
     created = false;
     syncParentDirectory(path);
   } finally {
@@ -1883,7 +1883,7 @@ class DurableCoreStore {
       await withStagedPrivateWrite(this.path, `${JSON.stringify(candidate)}\n`, (temporary) => {
         this.assertWritable();
         if (pending.committed || !isCurrentOwner() || this.#writeRevision !== revision) return;
-        renamePrivateStateFile(temporary, this.path);
+        renameSync(temporary, this.path);
         syncParentDirectory(this.path);
         this.#state = candidate;
         ++this.#writeRevision;
@@ -4892,8 +4892,6 @@ const runnerPlatformEnvironmentKeys = [
   "HOME",
   "CODEX_HOME",
   "SystemRoot",
-  "SystemDrive",
-  "LOCALAPPDATA",
   "WINDIR",
   "PATHEXT",
   "LANG",
@@ -4977,7 +4975,7 @@ function runnerEnvironment(
     PAPERCLIP_RUNNER_BOOTSTRAP_TICKET: ticket,
   };
   for (const key of runnerPlatformEnvironmentKeys) {
-    const value = platformSource[key] ?? (process.platform === "win32" ? platformSource[key.toUpperCase()] : undefined);
+    const value = platformSource[key];
     if (value !== undefined) environment[key] = value;
   }
   // Provider credentials cross this boundary only when the caller supplies an

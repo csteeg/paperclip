@@ -20,7 +20,6 @@ import { notifyScheduledRetryCancellation } from "../scheduled-retry-cancellatio
 import { notifyChatRunMilestones } from "../chat-run-milestone-notifications.js";
 import { notifyExecutionRunWork } from "../execution-control-notifications.js";
 import os from "node:os";
-import { observeWindowsProcessJobIdentity } from "@paperclipai/adapter-utils/windows-process-job";
 import {
   DEFERRED_WAKE_CONTEXT_KEY,
   EXECUTION_PATH_HEARTBEAT_RUN_STATUSES,
@@ -627,9 +626,6 @@ export async function persistHeartbeatRunProcessMetadata(
     () => null,
   );
   const startedAt = new Date(observedStartedAt ?? meta.startedAt);
-  if (process.platform === "win32" && meta.targetKind !== "remote" && Number.isFinite(startedAt.getTime())) {
-    observeWindowsProcessJobIdentity(meta.pid, meta.startedAt, startedAt.toISOString());
-  }
   const processStartedAt = Number.isNaN(startedAt.getTime()) ? new Date() : startedAt;
   return trackRunIntake(runId, "process_identity", PROCESS_IDENTITY_RECORDED, () => db.transaction(async tx => {
     const [binding] = await tx

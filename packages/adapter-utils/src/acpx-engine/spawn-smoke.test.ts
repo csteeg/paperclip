@@ -5,7 +5,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, it, vi } from "vitest";
 import { createAcpxEngineExecutor } from "./execute.js";
-import { hasStoppedWindowsProcessJob } from "../windows-process-job.js";
 
 const repoRoot = fileURLToPath(new URL("../../../..", import.meta.url));
 const fixturePath = path.join(
@@ -31,7 +30,7 @@ afterEach(async () => {
   );
 });
 
-it.each(process.platform === "win32" ? ["absolute", "path", "batch"] : ["absolute"])("spawns a real Node ACP agent with per-session env on this platform (%s)", async commandKind => {
+it("spawns a real Node ACP agent with per-session env on this platform", async () => {
   const root = await fs.mkdtemp(
     path.join(os.tmpdir(), "paperclip-acpx-spawn-smoke-"),
   );
@@ -39,14 +38,6 @@ it.each(process.platform === "win32" ? ["absolute", "path", "batch"] : ["absolut
   const stateDir = path.join(root, "state");
   const logs: string[] = [];
   const execute = createAcpxEngineExecutor();
-  let identity: { pid: number; startedAt: string } | undefined;
-  let agentCommand = `${JSON.stringify(process.execPath.replaceAll("\\", "/"))} ${JSON.stringify(fixturePath.replaceAll("\\", "/"))}`;
-  if (commandKind === "path") agentCommand = `node ${JSON.stringify(fixturePath.replaceAll("\\", "/"))}`;
-  if (commandKind === "batch") {
-    const shim = path.join(root, "provider fixture.CMD");
-    await fs.writeFile(shim, `@echo off\r\n"${process.execPath}" "${fixturePath}" %*\r\n`);
-    agentCommand = `${JSON.stringify(shim.replaceAll("\\", "/"))} --fixture-argument`;
-  }
 
   const result = await execute({
     runId: "spawn-smoke",
@@ -54,7 +45,7 @@ it.each(process.platform === "win32" ? ["absolute", "path", "batch"] : ["absolut
     runtime: {},
     config: {
       agent: "custom",
-      agentCommand,
+      agentCommand: `${JSON.stringify(process.execPath.replaceAll("\\", "/"))} ${JSON.stringify(fixturePath.replaceAll("\\", "/"))}`,
       mode: "oneshot",
       stateDir,
       cwd: repoRoot,
@@ -63,14 +54,9 @@ it.each(process.platform === "win32" ? ["absolute", "path", "batch"] : ["absolut
     context: {},
     onLog: async (_stream: string, text: string) => logs.push(text),
     onMeta: async () => {},
-    onSpawn: async (meta: { pid: number; startedAt: string }) => { identity = meta; },
   } as never);
 
   expect(result.exitCode, JSON.stringify({ result, logs }, null, 2)).toBe(0);
-  if (process.platform === "win32") {
-    expect(identity).toBeDefined();
-    expect(hasStoppedWindowsProcessJob(identity!.pid, new Date(identity!.startedAt))).toBe(true);
-  }
   expect(logs.join(""), logs.join("\n")).toContain("spawn-ok");
   await expect(fs.access(path.join(stateDir, "wrappers"))).rejects.toThrow();
   const stderr = await fs.readFile(

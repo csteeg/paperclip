@@ -1,4 +1,3 @@
-import { setWindowsRuntimeTreeReadOnly } from "./windows-runtime-permissions.js";
 import {
   chmod,
   lstat,
@@ -27,7 +26,6 @@ import {
 } from "../contracts/runtime-context.js";
 import {
   materializeNativeRuntimeSkills,
-  releaseMaterializedNativeRuntimeSkills,
   prepareIsolatedCodexRecoveryHome,
   prepareIsolatedCodexHome,
 } from "./runtime-context-materializer.js";
@@ -49,7 +47,6 @@ async function makeWritable(root: string): Promise<void> {
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map(async (root) => {
-    if (process.platform === "win32") await setWindowsRuntimeTreeReadOnly(root, false);
     await makeWritable(root);
     await rm(root, { recursive: true, force: true });
   }));
@@ -139,17 +136,15 @@ describe("runtime context materialization", () => {
       "utf8",
     )).resolves.toBe("support\n");
     await expect(stat(join(codexHome, "skills", "unassigned"))).rejects.toThrow();
-    if (process.platform === "win32") {
-      await expect(writeFile(join(codexHome, "skills", "assigned", "SKILL.md"), "tampered")).rejects.toThrow();
-      await expect(writeFile(join(codexHome, "skills", "assigned", "injected.md"), "tampered")).rejects.toThrow();
-    } else expect((await stat(join(codexHome, "skills", "assigned", "SKILL.md"))).mode & 0o222).toBe(0);
+    expect(
+      (await stat(join(codexHome, "skills", "assigned", "SKILL.md"))).mode
+      & 0o222,
+    ).toBe(0);
     const config = await readFile(join(codexHome, "config.toml"), "utf8");
     expect(config).toContain("shell_snapshot = false");
     expect(parse(config).mcp_servers).toBeUndefined();
     expect(config).not.toContain("Bearer ");
     expect(config).not.toContain("unassigned");
-    await releaseMaterializedNativeRuntimeSkills(join(codexHome, "skills"));
-    await expect(stat(join(codexHome, "skills"))).rejects.toThrow();
   });
 
   it.each(["launch", "recovery"] as const)("keeps Codex from downloading remote plugins into an isolated home (%s)", async mode => {
@@ -465,7 +460,7 @@ command = "untrusted-command"
     await expect(readFile(join(codexHome, "auth.json"), "utf8")).resolves.toBe(
       JSON.stringify({ OPENAI_API_KEY: "fresh-ephemeral-key" }),
     );
-    if (process.platform !== "win32") expect((await stat(join(codexHome, "auth.json"))).mode & 0o777).toBe(0o600);
+    expect((await stat(join(codexHome, "auth.json"))).mode & 0o777).toBe(0o600);
 
     await prepareIsolatedCodexHome({ context: null, codexHome: emptyCodexHome });
     await expect(stat(join(emptyCodexHome, "auth.json"))).rejects.toThrow();
@@ -535,7 +530,7 @@ requires_openai_auth = false
     expect(await readFile(join(codexHome, "skills", "retained"), "utf8")).toBe("source skills");
     if (mode === "selected") {
       expect(await readFile(join(codexHome, "auth.json"), "utf8")).toBe(selectedAuth);
-      if (process.platform !== "win32") expect((await stat(join(codexHome, "auth.json"))).mode & 0o777).toBe(0o600);
+      expect((await stat(join(codexHome, "auth.json"))).mode & 0o777).toBe(0o600);
     } else await expect(stat(join(codexHome, "auth.json"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 

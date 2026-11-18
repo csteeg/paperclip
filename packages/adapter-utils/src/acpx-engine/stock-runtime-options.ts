@@ -45,15 +45,13 @@ export function stockAcpRuntimeOptions<T extends AcpRuntimeOptions & AcpxAgentSp
   };
   return {
     ...stock,
-    // A host launcher (the Windows process job) can be asynchronous; the
-    // patched ACPX awaits it before waiting for the spawn event.
     spawnAgent: (input) => {
-      const launched = launch({ ...input, options: {
+      const child = launch({ ...input, options: {
         ...input.options,
         ...(spawnCwd === undefined ? {} : { cwd: spawnCwd }),
         ...(agentEnvironment ? { env: { ...agentEnvironment() } } : {}),
       } });
-      return launched instanceof Promise ? launched.then(observe) : observe(launched);
+      return observe(child);
     },
     ...(onAgentSpawn ? {
       processLifecycle: {

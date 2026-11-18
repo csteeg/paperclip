@@ -1,5 +1,3 @@
-import { hasStoppedWindowsProcessJob } from "@paperclipai/adapter-utils/windows-process-job";
-
 type LocalProcessIdentity = {
   processPid: number | null;
   processGroupId: number | null;
@@ -23,10 +21,10 @@ export function hasStoppedLocalProcessTree(
   identity: LocalProcessIdentity,
   probe: (pid: number) => unknown = pid => process.kill(pid, 0),
 ): boolean {
-  if (!Number.isSafeInteger(identity.processPid) || (identity.processPid ?? 0) <= 1 ||
+  if (process.platform === "win32" ||
+      !Number.isSafeInteger(identity.processPid) || (identity.processPid ?? 0) <= 1 ||
+      !Number.isSafeInteger(identity.processGroupId) || (identity.processGroupId ?? 0) <= 1 ||
       !identity.processStartedAt || !Number.isFinite(identity.processStartedAt.getTime())) return false;
-  if (process.platform === "win32") return hasStoppedWindowsProcessJob(identity.processPid!, identity.processStartedAt);
-  if (!Number.isSafeInteger(identity.processGroupId) || (identity.processGroupId ?? 0) <= 1) return false;
   const absent = (pid: number) => {
     try { probe(pid); return false; }
     catch (error) { return (error as NodeJS.ErrnoException | null)?.code === "ESRCH"; }

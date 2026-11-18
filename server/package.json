@@ -50,7 +50,6 @@
     "@1password/sdk": "0.5.0",
     "@agentclientprotocol/claude-agent-acp": "0.73.0",
     "@agentclientprotocol/codex-acp": "1.6.2",
-    "@openai/codex-native": "npm:@openai/codex@0.166.0",
     "@agentclientprotocol/sdk": "1.9.0",
     "@ai-sdk/amazon-bedrock": "5.0.113",
     "@ai-sdk/anthropic": "4.0.78",
@@ -132,8 +131,7 @@
     "@chat-adapter/teams",
     "@chat-adapter/telegram",
     "@discordjs/ws",
-    "acpx",
-    "node-pty"
+    "acpx"
   ],
   "devDependencies": {
     "@opentelemetry/context-async-hooks": "2.10.0",
@@ -197,7 +195,6 @@
     "node": ">=24.11.0"
   },
   "optionalDependencies": {
-    "node-pty": "1.1.0",
     "@github/copilot-darwin-arm64": "1.0.88",
     "@github/copilot-darwin-x64": "1.0.88",
     "@github/copilot-linux-x64": "1.0.88"

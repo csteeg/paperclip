@@ -251,8 +251,6 @@ const SAFE_ENVIRONMENT_KEYS = [
   "PATH",
   "PATHEXT",
   "SystemRoot",
-  "SystemDrive",
-  "LOCALAPPDATA",
   "TEMP",
   "TMP",
   "TMPDIR",
@@ -271,7 +269,7 @@ export function createSanitizedCodexEnvironment(
   source ??= process.env;
   const environment: NodeJS.ProcessEnv = {};
   for (const key of SAFE_ENVIRONMENT_KEYS) {
-    const value = source[key] ?? (process.platform === "win32" ? source[key.toUpperCase()] : undefined);
+    const value = source[key];
     if (value === undefined) continue;
     if (key.includes("PROXY") && proxyContainsCredentials(value)) continue;
     environment[key] = value;

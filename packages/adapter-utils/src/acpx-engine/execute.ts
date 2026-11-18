@@ -49,7 +49,6 @@ import {
   type SandboxAdditionalSource,
 } from "@paperclipai/adapter-utils/execution-target";
 import { captureLocalProcess, capturedProcessExited, killCapturedLocalProcess } from "./local-process-control.js";
-import { recordWindowsProcessJobIdentity, settleWindowsProcessJob, spawnWindowsProcessJob } from "../windows-process-job.js";
 import type { DuplexLossReason } from "../duplex-observability.js";
 import { DUPLEX_CHANNEL_LOST_ERROR_CODE } from "../bridge-transport-contract.js";
 import {
@@ -4642,11 +4641,6 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
         const runtimeStore = createEphemeralSessionEnvironmentStore(persistedRuntimeStore, prepared.env);
         const launchSink = processIdentitySink;
         const runtimeOptions: PaperclipAcpRuntimeOptions = {
-          // Native Windows launches the agent inside a supervised kernel job so
-          // teardown reaches every descendant; remote process sessions never do.
-          spawnAgent: process.platform === "win32" && !prepared.processSessionBridge
-            ? (input) => spawnWindowsProcessJob(input.command, [...input.args], input.options)
-            : undefined,
           cwd: prepared.cwd,
           // Host-only spawn cwd for the relay proxy on the remote process-session
           // lane; `undefined` elsewhere so acpx falls back to `cwd` (byte-identical).
@@ -4687,7 +4681,6 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
             processIdentitySink.onLaunch?.();
             processIdentitySink.latest = meta;
             processIdentitySink.localProcess = prepared.processSessionBridge ? undefined : captureLocalProcess(meta.pid);
-            if (process.platform === "win32" && !prepared.processSessionBridge) recordWindowsProcessJobIdentity(processIdentitySink.localProcess, meta.startedAt);
             await processIdentitySink.current?.({
               pid: meta.pid,
               processGroupId: null,
@@ -6012,7 +6005,6 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
           if (childStderrState) flushChildStderr(childStderrState);
         },
         reproduceResult: async (): Promise<AdapterExecutionResult> => {
-          await settleWindowsProcessJob(processIdentitySink?.localProcess);
           if (!capturedResult) {
             throw new Error("run coordinator reproduced a result before the run recorded one");
           }

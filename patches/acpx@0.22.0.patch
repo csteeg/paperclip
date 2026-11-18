@@ -112,7 +112,7 @@ index dc63642..39e5ca6 100644
  				windowsVerbatimArguments: prepared.windowsVerbatimArguments
 -			});
 +			};
-+			spawnedChild = this.options.spawnAgent ? await this.options.spawnAgent({
++			spawnedChild = this.options.spawnAgent ? this.options.spawnAgent({
 +				command: launch.command,
 +				args: [...launch.args],
 +				options: spawnOptions
@@ -327,7 +327,7 @@ index 861fc88..da53821 100644
 +    command: string;
 +    args: readonly string[];
 +    options: SpawnOptionsWithoutStdio;
-+  }) => ChildProcess | Promise<ChildProcess>;
++  }) => ChildProcess;
 +  /** Synchronous admission guard. Exceptions fail the connection, never an observer. */
 +  protocolGuardFactory?: () => (direction: "inbound" | "outbound", message: unknown) => void;
  };
@@ -485,7 +485,7 @@ index d6d04c0..c8dda13 100644
 +    command: string;
 +    args: readonly string[];
 +    options: SpawnOptionsWithoutStdio;
-+  }) => ChildProcess | Promise<ChildProcess>;
++  }) => ChildProcess;
 +  /** Synchronous admission guard. Exceptions fail the connection, never an observer. */
 +  protocolGuardFactory?: () => (direction: "inbound" | "outbound", message: unknown) => void;
    onPermissionRequest?: AcpPermissionHandler;
