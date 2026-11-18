@@ -205,7 +205,7 @@ describe.skipIf(!postgres.supported || !ssh.supported)("Cloud SSH durable worksp
     vi.spyOn(runLogModule, "getRunLogStore").mockReturnValue(objectLogFixture());
     const companyId = randomUUID(), agentId = randomUUID(), issueId = randomUUID(), userId = `ssh-user-${randomUUID()}`;
     await db.insert(authUsers).values({ id: userId, name: "SSH test user", email: `${userId}@example.test`, createdAt: new Date(), updatedAt: new Date() });
-    await db.insert(companies).values({ id: companyId, name: "Cloud SSH task", issuePrefix: "HSSH", defaultResponsibleUserId: userId });
+    await db.insert(companies).values({ id: companyId, name: "Cloud SSH task", issuePrefix: `H${companyId.replaceAll("-", "").slice(0, 12).toUpperCase()}`, defaultResponsibleUserId: userId });
     await db.insert(companyMemberships).values({ companyId, principalId: userId, principalType: "user", status: "active", membershipRole: "member" });
     const account = await aiConnectionService(db).save(companyId, userId, { provider: "anthropic", method: "api_key",
       ownership: "personal", name: "Selected test account", apiKey: "synthetic-selected-ssh-key", agentIds: [], allAgents: true }, "synthetic-selected-ssh-key");
@@ -223,9 +223,9 @@ fs.writeFileSync('continuation.json', JSON.stringify({resumed}));
 require('fs').writeFileSync('hello_world.txt', 'Hello World\\n');
 console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,result:'Created hello_world.txt',session_id:'12345678-1234-4abc-9def-123456789012',total_cost_usd:0,usage:{input_tokens:1,output_tokens:1}}));
 `, { mode: 0o700 });
-    const storedConfig = await normalizeEnvironmentConfigForPersistence({ db, companyId, environmentName: "Heartbeat SSH",
+    const storedConfig = await normalizeEnvironmentConfigForPersistence({ db, companyId, environmentName: `Heartbeat SSH ${companyId}`,
       driver: "ssh", secretProvider: "local_encrypted", config: { ...config, useHostAuth: false } });
-    const [environment] = await db.insert(environments).values({ driver: "ssh", name: "Heartbeat SSH", config: storedConfig }).returning();
+    const [environment] = await db.insert(environments).values({ driver: "ssh", name: `Heartbeat SSH ${companyId}`, config: storedConfig }).returning();
     await secretService(db).replaceSecretRefsForInstanceTarget({ targetType: "environment", targetId: environment.id },
       await collectEnvironmentSecretRefs({ db, environment: { id: environment.id, driver: "ssh", config: storedConfig } }));
     await db.insert(agents).values({ id: agentId, companyId, name: "Claude SSH task", adapterType: "claude_local", status: "idle",
