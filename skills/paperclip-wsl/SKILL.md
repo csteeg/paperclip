@@ -44,6 +44,8 @@ On Linux, it verifies the checkout, user, instance, native executables and free
 host storage before running the command. Arguments are passed directly,
 including spaces and Unicode. Run Git, installs, builds, database migrations,
 tests and provider processes inside Linux. A Windows editor may edit files.
+When handing off existing edits in a Windows worktree, commit those edits with
+Windows Git. Use Linux Git for the configured Linux checkout.
 
 Use `doc/DEVELOPING.md` for the owning start/stop commands and focused checks.
 Run `preflight --runner` before preparing an instance or starting native agent
