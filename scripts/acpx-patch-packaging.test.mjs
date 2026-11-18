@@ -637,7 +637,7 @@ if (tool === "npm") {
         ? Object.fromEntries([...targets, "linux-x64-musl", "linux-arm64-musl"].map(target => [name + "-" + target, version])) : undefined;
     writePackage(name, { version, optionalDependencies });
   }
-  writePackage("node-pty", { version: pkg.optionalDependencies["node-pty"] });
+  if (pkg.optionalDependencies?.["node-pty"]) writePackage("node-pty", { version: pkg.optionalDependencies["node-pty"] });
   fs.cpSync(path.join(process.env.FAKE_NATIVE_ARTIFACTS, "@openai/codex-linux-x64"), "node_modules/@openai/codex-linux-x64", { recursive: true });
   fs.mkdirSync("node_modules/@openai/codex/vendor", { recursive: true });
   fs.writeFileSync("node_modules/@openai/codex/vendor/codex", "producer fallback fixture");

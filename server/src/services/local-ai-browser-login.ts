@@ -50,7 +50,8 @@ sys.exit(os.waitstatus_to_exitcode(status))
 export function startLocalBrowserLogin(provider: "anthropic" | "openai" | "google", home: string): LocalBrowserLoginState {
   if (provider === "google") return startAntigravityBrowserLogin(home);
   const controller = new AbortController();
-  const state: LocalBrowserLoginState = { abort: () => controller.abort() };
+  let runnerFinished: Promise<void> = Promise.resolve();
+  const state: LocalBrowserLoginState = { abort: async () => { controller.abort(); await runnerFinished; } };
   const args = provider === "anthropic" ? ["setup-token"] : ["login", "--device-auth"];
   let child: ChildProcessWithoutNullStreams | null = null;
   let activeProcessExit: Promise<void> = Promise.resolve();

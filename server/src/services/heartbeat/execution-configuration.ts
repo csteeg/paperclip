@@ -1,4 +1,5 @@
-import { supportsPaperclipRunnerPreconfiguredHome } from "../native-runtime/provider-profile.js";
+import { resolvePaperclipRunnerProviderProfile, supportsPaperclipRunnerPreconfiguredHome } from "../native-runtime/provider-profile.js";
+import { sharedSkillRepositoryLayout } from "../native-runtime/shared-skill-compatibility.js";
 import { agentHarnessType } from "@paperclipai/shared";
 import { observabilitySecretValues } from "@paperclipai/adapter-utils/agent-observability";
 import { agentObservabilityService, unavailableAgentObservability, type ResolvedAgentObservability } from "../agent-observability.js";
@@ -335,6 +336,14 @@ export async function prepareHeartbeatExecutionConfiguration(db: Db, input: Hear
       // pins and the Beta skills preference. Recovery keeps the admitted map.
       if (!hasStoredVersions && pinnedSkillTest) versionSelections.set(pinnedSkillTest.key, pinnedSkillTest.versionId);
       return await withSkillActor(skillActor, () => companySkills.withRuntimeSkillEntries(agent.companyId, {
+        repositoryLayout: sharedSkillRepositoryLayout({
+          native: agent.adapterType === "paperclip_runner" && resolvedInstanceSettings.experimental.enableNativeRunner === true
+            && (!run.runtimeModeResolvedAt || run.runtimeMode === "native"),
+          backend: !persistedNativeExecutionInput && agent.adapterType === "paperclip_runner"
+            ? () => resolvePaperclipRunnerProviderProfile(effectiveResolvedConfig, { companyId: agent.companyId }).backend : null,
+          environmentDriver: selectedEnvironmentForConfig?.driver, homeMode: sourceWorkspaceConfig.homeMode,
+          enabled: process.env.PAPERCLIP_SHARED_SKILL_REPOSITORIES_ENABLED !== "false", persistedExecution: persistedNativeExecutionInput,
+        }),
         versionSelections, ...(reuseAdmittedSkills ? { admittedVersionsOnly: true } : { snapshotLatest: true }),
         ...(hasStoredVersions
           ? { onlyKeys: new Set(Object.keys(storedVersions)) }

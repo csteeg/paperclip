@@ -20,6 +20,12 @@ export interface NativeRuntimeAssetReference {
   totalBytes: number;
 }
 
+export interface NativeRuntimeSkillRepository {
+  bundle: NativeRuntimeAssetReference;
+  entryPath: string;
+  policyPath: string | null;
+}
+
 export interface NativeRuntimeContextSnapshot {
   prompt: { revision: string; text: string; digest: string };
   instructions: {
@@ -28,7 +34,7 @@ export interface NativeRuntimeContextSnapshot {
     /** Server-registered writable copy; excluded from the pinned prompt digest. */
     workingCopy?: { rootPath: string; entryPath: string; kind?: "agent_files" };
   };
-  skills: Array<{ key: string; runtimeName: string; versionId: string | null; bundle: NativeRuntimeAssetReference }>;
+  skills: Array<{ key: string; runtimeName: string; versionId: string | null; bundle: NativeRuntimeAssetReference; repository?: NativeRuntimeSkillRepository }>;
   mcp: { assignmentSetId: string; digest: string; bindingId: string | null };
   connectionInstructions?: { text: string; digest: string };
   aggregateDigest: string;
@@ -70,7 +76,7 @@ const integer = (value: unknown, path: string) => {
 };
 const safeRelativePath = (value: unknown, path: string) => {
   const result = text(value, path).replaceAll("\\", "/");
-  if (result.startsWith("/") || result.includes("\0") || result.split("/").some((part) => !part || part === "." || part === "..")) {
+  if (result.startsWith("/") || result.includes(":") || result.includes("\0") || result.split("/").some((part) => !part || part === "." || part === "..")) {
     throw new NativeRuntimeContextError(`${path} must stay within its bundle root`);
   }
   return result;
@@ -96,6 +102,8 @@ function aggregatePayload(value: Omit<NativeRuntimeContextSnapshot, "aggregateDi
     instructions: { entryPath: value.instructions.entryPath, bundleDigest: value.instructions.bundle.digest },
     skills: [...value.skills].sort((a, b) => a.key.localeCompare(b.key)).map((skill) => ({
       key: skill.key, runtimeName: skill.runtimeName, versionId: skill.versionId, bundleDigest: skill.bundle.digest,
+      ...(skill.repository ? { repository: { bundleDigest: skill.repository.bundle.digest,
+        entryPath: skill.repository.entryPath, policyPath: skill.repository.policyPath } } : {}),
     })),
     // The binding is deliberately run-scoped. Compatibility is determined by the
     // assigned access set so a fresh capability can be rebound without forcing a
@@ -110,6 +118,31 @@ export function canonicalNativeRuntimeContextDigest(value: Omit<NativeRuntimeCon
 }
 
 export function nativeRuntimePromptDigest(): string { return sha256(PAPERCLIP_EXECUTION_PROMPT); }
+
+/** Content identity, not a path or a new grant. Callers retain scope/lease ownership. */
+export function nativeRuntimeContextAssets(context: NativeRuntimeContextSnapshot): NativeRuntimeAssetReference[] {
+  const assets = new Map<string, NativeRuntimeAssetReference>();
+  for (const asset of [context.instructions.bundle, ...context.skills.flatMap(skill =>
+    [skill.bundle, ...(skill.repository ? [skill.repository.bundle] : [])])]) {
+    const previous = assets.get(asset.digest);
+    if (previous && (previous.schema !== asset.schema || previous.manifestDigest !== asset.manifestDigest
+      || previous.fileCount !== asset.fileCount || previous.totalBytes !== asset.totalBytes)) {
+      throw new NativeRuntimeContextError("runtime context contains conflicting asset metadata");
+    }
+    if (!previous) assets.set(asset.digest, asset);
+  }
+  return [...assets.values()];
+}
+
+/** Destination roots are derived transport data; pinned identity stays unchanged. */
+export function mapNativeRuntimeContextAssetRoots(context: NativeRuntimeContextSnapshot,
+  rootPath: (asset: NativeRuntimeAssetReference) => string): NativeRuntimeContextSnapshot {
+  const mapped = new Map(nativeRuntimeContextAssets(context).map(asset => [asset.digest, { ...asset, rootPath: rootPath(asset) }]));
+  const asset = (value: NativeRuntimeAssetReference) => mapped.get(value.digest)!;
+  return { ...context, instructions: { ...context.instructions, bundle: asset(context.instructions.bundle) },
+    skills: context.skills.map(skill => ({ ...skill, bundle: asset(skill.bundle),
+      ...(skill.repository ? { repository: { ...skill.repository, bundle: asset(skill.repository.bundle) } } : {}) })) };
+}
 
 export function parseNativeRuntimeContext(value: unknown): NativeRuntimeContextSnapshot {
   const context = object(value, "input.runtimeContext");
@@ -133,11 +166,18 @@ export function parseNativeRuntimeContext(value: unknown): NativeRuntimeContextS
   const skills = context.skills.map((value, index) => {
     const skill = object(value, `input.runtimeContext.skills[${index}]`);
     exact(skill, GENERATED_RUNTIME_CONTEXT_FIELDS.skill, `input.runtimeContext.skills[${index}]`);
+    const repository = skill.repository === undefined ? undefined : object(skill.repository, `input.runtimeContext.skills[${index}].repository`);
+    if (repository) exact(repository, GENERATED_RUNTIME_CONTEXT_FIELDS.repository, `input.runtimeContext.skills[${index}].repository`);
     return {
       key: text(skill.key, `input.runtimeContext.skills[${index}].key`),
       runtimeName: safeRelativePath(skill.runtimeName, `input.runtimeContext.skills[${index}].runtimeName`),
       versionId: skill.versionId === null ? null : text(skill.versionId, `input.runtimeContext.skills[${index}].versionId`),
       bundle: parseAsset(skill.bundle, `input.runtimeContext.skills[${index}].bundle`),
+      ...(repository ? { repository: {
+        bundle: parseAsset(repository.bundle, `input.runtimeContext.skills[${index}].repository.bundle`),
+        entryPath: safeRelativePath(repository.entryPath, `input.runtimeContext.skills[${index}].repository.entryPath`),
+        policyPath: repository.policyPath === null ? null : safeRelativePath(repository.policyPath, `input.runtimeContext.skills[${index}].repository.policyPath`),
+      } } : {}),
     };
   });
   if (new Set(skills.flatMap((skill) => [skill.key, `runtime:${skill.runtimeName}`])).size !== skills.length * 2) {
@@ -174,6 +214,7 @@ export function parseNativeRuntimeContext(value: unknown): NativeRuntimeContextS
     ...(connectionInstructions ? { connectionInstructions } : {}),
   } satisfies Omit<NativeRuntimeContextSnapshot, "aggregateDigest">;
   const aggregateDigest = digest(context.aggregateDigest, "input.runtimeContext.aggregateDigest");
+  if (skills.some(skill => skill.repository)) nativeRuntimeContextAssets({ ...parsed, aggregateDigest });
   if (aggregateDigest !== canonicalNativeRuntimeContextDigest(parsed)) {
     throw new NativeRuntimeContextError("input.runtimeContext.aggregateDigest does not match the canonical context");
   }
@@ -231,9 +272,8 @@ export interface NativeSkillInput {
 /** Select only explicit task references from assigned names, never comments. */
 export function explicitTaskSkillNames(description: string | null, assignedNames: readonly string[]): string[] {
   if (!description) return [];
-  const names = new Set(Array.from(
-    description.matchAll(/(?:^|[\s(`])[$/]([a-zA-Z0-9_-]+)(?=$|[\s)`,.;:!?])/g),
-    (match) => match[1],
-  ));
-  return [...new Set(assignedNames)].filter((name) => names.has(name));
+  return [...new Set(assignedNames)].filter(name => {
+    const literal = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp("(?:^|[\\s(`])[$/]" + literal + "(?=$|[\\s)`,.;:!?])", "u").test(description);
+  });
 }

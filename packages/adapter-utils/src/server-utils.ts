@@ -12,7 +12,7 @@ import {
 } from "./local-process-sandbox.js";
 import { buildSshSpawnTarget, type SshRemoteExecutionSpec } from "./ssh.js";
 import { redactCommandText } from "./command-redaction.js";
-import { resolveCommandPath, windowsCommandTarget } from "./process-command.js";
+import { windowsCommandTarget } from "./process-command.js";
 import { prepareWindowsTerminalJob } from "./windows-terminal-job.js";
 import { paperclipChatFilePreparationDelivery } from "./chat-file-delivery.js";
 import {
@@ -327,6 +327,7 @@ export interface PaperclipSkillEntry {
   currentVersionId?: string | null;
   sourceStatus?: "available" | "missing";
   missingDetail?: string | null;
+  repository?: { companyId: string; skillId: string; versionId: string; snapshotId: string; entryPath: string };
 }
 
 export interface PaperclipDesiredSkillEntry {
