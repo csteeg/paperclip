@@ -72,9 +72,22 @@
 - A Windows-created native session exposes an existing account-pool boundary:
   history is readable, but continuation refuses before provider startup
   because adopting the current pool requires a session reset. Its original
-  completed task status and paused agent state were restored. The user was
-  asked whether fresh provider sessions where necessary, with full history
-  and file preservation, are acceptable. Cutover awaits that decision.
+  completed task status and paused agent state were restored. The user then
+  explicitly accepted fresh provider sessions where necessary with full history
+  and file preservation. The authorized followup succeeded in 29.632 seconds:
+  it read an old task document through the API, distinguished fresh context
+  from remembered model context, and returned the task to its completed state.
+- Operational cutover to WSL on localhost:3100 is complete. API health and
+  Windows localhost UI HTTP checks pass. The ten originally active agents and
+  twenty originally enabled skill sources are restored; previously paused or
+  terminated agents retain their states. Heartbeats and daily database backups
+  are enabled. Historical-file preservation settings are persisted in the
+  native instance environment and verified after an ordinary managed restart.
+  All forty original attachments passed another exact live-download check.
+- The live health summary contains 33 recovery blockers. Direct comparison
+  with the original PostgreSQL dump proves the same 33 were already blocked
+  on Windows; cutover added none. Existing outcome and ownership gates remain
+  in force. Resumed business work has performed task-read actions.
 - The shared WSL helper passed Windows-to-Linux and Linux preflight, argument
   preservation and conflicting-instance/configuration/database/port rejection.
   Its Runner preflight now checks the owning shared platform contract before
@@ -85,12 +98,36 @@
   update for the repaired integration lockfile. Required CI is not green.
   Existing PRs #18144 and #22033 remain open; neither was closed or overwritten.
 
-The remaining acceptance work is Windows-created session continuation,
-final data reconciliation, trusted lock/CI
-qualification and controlled cutover. A healthy validation server is not
-completion of this migration.
+The operational migration and data reconciliation have passed. Trusted lock/CI
+qualification and interactive browser acceptance remain open; HTTP checks do
+not replace a browser journey. Shared-repository PR #22033 remains separate and
+draft, and these small diagnostic timings do not certify its full-skill speedup.
 
-- This is a plan, not a completed migration or a backup receipt.
+### Operational handoff and return path
+
+Use the ignored WSL profile and shared helper for the live instance:
+
+```sh
+node skills/paperclip-wsl/scripts/paperclip-wsl.mjs preflight --health
+node skills/paperclip-wsl/scripts/paperclip-wsl.mjs exec pnpm dev:once
+node skills/paperclip-wsl/scripts/paperclip-wsl.mjs exec pnpm dev:stop
+```
+
+The start command uses the existing managed development runner. The selected
+instance environment keeps backups and heartbeats enabled while retaining
+historical agent files. No distribution or drive was relocated.
+
+The original Windows source and verified full recovery set remain unchanged.
+A separate native PostgreSQL dump was captured immediately before cutover and
+its SHA-256 and 350 data entries verified. Linux has accepted new writes:
+returning to Windows now requires stopping Linux writers, preserving all new
+database and filesystem state, and restoring/reconciling that state through the
+existing backup and path-mapping process. Merely restarting the frozen Windows
+database would discard new Linux work. An actual reverse cutover has not been
+performed. Removing either source or recovery data requires separate consent.
+
+- The sections below retain the original planning facts; private execution
+  receipts and the checkpoint above record the actual cutover and limits.
 - Source configuration currently identifies `C:\.paperclip\instances\default`, embedded PostgreSQL under its `db` directory, local storage under `data/storage`, the original `secrets/master.key`, and port 3100.
 - The current integration worktree points to a separate test instance on D:. Do not mistake it for the user's source instance.
 - Ubuntu is installed. The separate `PaperclipSkillQualification-20261117` distro is a qualification environment, not the production migration destination.

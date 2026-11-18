@@ -75,13 +75,35 @@
     "reason": "The existing connection-pool policy requires resetting this old task session before adopting its current pool. The old session used another account-selection mode.",
     "originalDoneStatusAndAgentPauseRestored": true,
     "existingAccountPolicyPreserved": true,
-    "userDecisionPending": "Whether preserved history and files with a fresh provider session where necessary are acceptable, or exact provider-session continuation is required."
+    "freshProviderSessionsExplicitlyAcceptedByUser": true,
+    "authorizedFreshFollowupStatus": "succeeded",
+    "authorizedFreshFollowupTotalMs": 29632,
+    "historicalDocumentReadThroughApi": true,
+    "providerReportedFreshContextRatherThanClaimingOldModelMemory": true
+  },
+  "operationalCutover": {
+    "status": "live_on_wsl",
+    "port": 3100,
+    "apiHealth": "ok",
+    "windowsLocalhostUiHttpStatus": 200,
+    "originallyActiveAgentsRestored": 10,
+    "originallyEnabledSkillSourcesRestored": 20,
+    "previouslyPausedOrTerminatedAgentsPreserved": true,
+    "heartbeatAndDailyDatabaseBackupsEnabled": true,
+    "historicalFilePreservationSettingsPersistedAcrossNormalRestart": true,
+    "all40OriginalAttachmentsReverifiedThroughLiveEndpoint": true,
+    "sourceRecoveryBlockers": 33,
+    "currentRecoveryBlockers": 33,
+    "newRecoveryBlockersSinceWindowsSource": 0,
+    "browserInteractionQualified": false,
+    "currentHeadCiQualified": false
   },
   "limits": [
     "Small diagnostic tasks, not the original thirteen-asset skill assignment.",
     "The earlier 216.32 seconds measured skill preparation. It cannot be compared directly with these first-tool or total-run times.",
     "The Codex continuation is a session created in WSL. It does not prove continuation of a Windows-created session.",
     "Two intermediate continuation attempts failed before provider dispatch with workspace_git_source_unproven. A never-dispatched retry was cancelled and reconciled through the supported evidence API. These are not passes.",
-    "Final live endpoint cutover, historical Windows-session continuation, final migration reconciliation and trusted integration-lock/CI qualification remain open."
+    "Exact Windows provider-session continuation is not universal. The user accepted fresh provider sessions where needed; an actual old task then completed its diagnostic followup using preserved history.",
+    "Trusted integration-lock/CI qualification and interactive browser acceptance remain open. API/UI HTTP checks and data reconciliation passed."
   ]
 }
