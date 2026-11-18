@@ -38,11 +38,22 @@
   heartbeats. It removed 3,727 cached evidence files in the Linux copy. The
   server was stopped; all those files were restored from the unchanged source
   and verified. Subsequent validation explicitly disables those retention jobs.
-- The existing Ubuntu is 22.04 with glibc 2.35. Runner requires glibc 2.39.
-  Both native harness probes refused this unsupported environment before
-  starting providers. Ubuntu reports 24.04.5 LTS as the available upgrade.
-  Permission for that distribution-wide upgrade is pending. No Runner
-  platform gate was weakened and no final endpoint cutover has occurred.
+- The user approved both sequential OS upgrades. Ubuntu was upgraded from
+  22.04 through 24.04 to 26.04.1 LTS and restarted. Package audit is clean;
+  glibc is 2.43 and Runner preflight passes. WSL was updated to 3.0.5 to
+  provide the unified cgroup hierarchy required by the official upgrader.
+  The original Docker container resumed healthy. Optional obsolete-package
+  removal was declined to preserve existing tools. No drive was relocated.
+- Cold server imports exposed a separate libc-probe timeout bug. A real-child
+  regression reproduced it; the bounded asynchronous timeout fix passed all
+  16 platform tests on both Ubuntu 24.04 and 26.04. It is pushed to the native
+  runtime branch and existing PR #18144 as commit `6cd3585a9f`.
+- The saved Codex account and selected model passed a real hello on Ubuntu
+  24.04 in 4,976 ms. Claude's saved subscription resolved, but its CLI was
+  absent from the service PATH. On 26.04 the existing pinned SDK's native
+  Claude 2.1.286 binary is exposed through the scoped tool directory, without
+  another installation. Post-upgrade account probes and full runs remain
+  acceptance work; hello timing is not a complete agent-start benchmark.
 - The shared WSL helper passed Windows-to-Linux and Linux preflight, argument
   preservation and conflicting-instance/configuration/database/port rejection.
   Its Runner preflight now checks the owning shared platform contract before
@@ -53,7 +64,7 @@
   update for the repaired integration lockfile. Required CI is not green.
   Existing PRs #18144 and #22033 remain open; neither was closed or overwritten.
 
-The remaining acceptance work is the Ubuntu upgrade after approval, real new and
+The remaining acceptance work is post-upgrade account checks, real new and
 resumed Codex/Claude runs, final data reconciliation, trusted lock/CI
 qualification and controlled cutover. A healthy validation server is not
 completion of this migration.
