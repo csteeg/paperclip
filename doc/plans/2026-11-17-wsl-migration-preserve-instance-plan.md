@@ -98,9 +98,19 @@
   update for the repaired integration lockfile. Required CI is not green.
   Existing PRs #18144 and #22033 remain open; neither was closed or overwritten.
 
-The operational migration and data reconciliation have passed. Trusted lock/CI
-qualification and interactive browser acceptance remain open; HTTP checks do
-not replace a browser journey. Shared-repository PR #22033 remains separate and
+The Windows Edge extension exposed a browser-access gap after cutover:
+`local_trusted` rejected the Windows-to-WSL relay with `Board access required`,
+and the UI incorrectly presented organization onboarding. HTTP 200 for the UI
+had not proved authenticated application access. The native instance now uses
+the supported `authenticated` private mode, still bound to loopback, with the
+same signing secret, existing users, memberships and sessions. After an owned
+hot-restart handoff, the existing browser session automatically authenticated
+as Chris; CareConnections and CAR-300's original content and history loaded,
+without creating an organization or weakening the local-process boundary.
+
+The operational migration, data reconciliation and existing-browser login/task
+journey have passed. Trusted lock/CI qualification remains open; this browser
+check does not qualify every UI flow. Shared-repository PR #22033 remains separate and
 draft, and these small diagnostic timings do not certify its full-skill speedup.
 
 ### Operational handoff and return path
