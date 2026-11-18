@@ -161,6 +161,17 @@ it before the removal. Leftover `.staging-*` and `.retiring-*` directories older
 a day and quarantined homes older than seven days are removed. The dry-run setting
 above applies.
 
+### Abandoned skill staging
+
+A launch copies assigned skills into `.paperclip-skills-staging-<UUID>` next to the
+provider's skills directory and renames it when the copy is complete. A launch that
+is cancelled or killed during the copy leaves that partly sealed directory behind.
+The next launch of the same provider home removes staging older than an hour before
+it copies skills. The same sweep removes staging older than a day in every provider
+home of `durable-sessions/<scope>/` (Codex) and `runtime/paperclip-runner/acpx/acpx/<session>/`
+(ACPX, for example `claude-home`), so homes that never launch again are cleaned too.
+The dry-run setting above applies.
+
 ### Continuity-break archives and quarantined session state
 
 The same sweep also removes two kinds of evidence that native sessions leave behind
