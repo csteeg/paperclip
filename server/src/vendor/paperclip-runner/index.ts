@@ -96,6 +96,7 @@ export const RUNNER_TOOL_SCOPE_TOKEN_HEADER = runner.RUNNER_TOOL_SCOPE_TOKEN_HEA
 export const DurablePrpControlPlane = runner.DurablePrpControlPlane;
 export const readCodexSkillHomeMarker = runner.readCodexSkillHomeMarker;
 export const removeCodexSkillHomeTree = runner.removeCodexSkillHomeTree;
+export const removeAbandonedSkillStaging = runner.removeAbandonedSkillStaging;
 export const providerFailureFromError = runner.providerFailureFromError;
 export const isPrpAutomaticallyContinuedBlocker = runner.isPrpAutomaticallyContinuedBlocker;
 export const safeErrorCauseCode = runner.safeErrorCauseCode;

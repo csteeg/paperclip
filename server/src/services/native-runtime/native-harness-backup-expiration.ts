@@ -18,6 +18,7 @@ import {
 import { logger } from "../../middleware/logger.js";
 import { assessSessionRetention } from "./native-session-retention-blockers.js";
 import { sweepCodexSkillHomes } from "./codex-skill-home-retention.js";
+import { sweepAbandonedSkillStaging } from "./skill-staging-retention.js";
 import { nativeHarnessStateBase } from "./native-harness-backup-stamp.js";
 import { nativeSessionScopeDigestIsBusy } from "./native-session-executor.js";
 import type { createDeliveryWorkCoordinator } from "../delivery-work-coordinator.js";
@@ -69,6 +70,8 @@ export type NativeHarnessBackupExpirationOptions = {
   stateBase?: string;
   /** Shared Codex skill homes; defaults to the sibling of the default state base. */
   skillHomeStoreRoot?: string;
+  /** Session roots whose provider homes may hold abandoned skill staging. */
+  skillStagingRoots?: string[];
   shouldContinue?: () => boolean;
   isSessionBusy?: (scopeDigest: string) => boolean;
   storage?: StorageService;
@@ -92,6 +95,8 @@ export type NativeHarnessBackupExpirationResult = {
   skipped: Record<string, number>;
   skillHomesRemoved: number;
   skillHomeReclaimedBytes: number;
+  abandonedSkillStagingRemoved: number;
+  abandonedSkillStagingBytes: number;
 };
 
 type EvidenceContext = {
@@ -130,6 +135,8 @@ function emptyResult(): NativeHarnessBackupExpirationResult {
     skipped: {},
     skillHomesRemoved: 0,
     skillHomeReclaimedBytes: 0,
+    abandonedSkillStagingRemoved: 0,
+    abandonedSkillStagingBytes: 0,
   };
 }
 
@@ -866,6 +873,19 @@ export function nativeHarnessBackupExpirationService(
         } catch (err) {
           result.failed++;
           logger.warn({ err }, "native harness expiration skipped Codex skill homes");
+        }
+      }
+      // Codex sessions live in the state base; ACPX sessions beside it.
+      const skillStagingRoots = options.skillStagingRoots ?? defaults.skillStagingRoots
+        ?? (options.stateBase ?? defaults.stateBase ? [] : [base, path.resolve(base, "..", "acpx", "acpx")]);
+      if (includeBackups && skillStagingRoots.length > 0) {
+        try {
+          const swept = await sweepAbandonedSkillStaging({ sessionRoots: skillStagingRoots, now, dryRun });
+          result.abandonedSkillStagingRemoved = swept.removed;
+          result.abandonedSkillStagingBytes = swept.bytes;
+        } catch (err) {
+          result.failed++;
+          logger.warn({ err }, "native harness expiration skipped abandoned skill staging");
         }
       }
       if (!evidencePass) {
