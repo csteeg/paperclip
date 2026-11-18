@@ -18711,8 +18711,10 @@ async function createRunnerdBackendWithinSessionClaim(
         onSpawn: input.onSpawn,
         ...(input.execution.provider.kind === "codex" ? { disableCodexWebSearch: "webSearch" in input.execution.provider && input.execution.provider.webSearch === "disabled" } : {}),
         homeMode: preconfiguredHome ? "preconfigured" : "isolated",
-        // The runner decides per platform; Windows ignores HOME and keeps copying.
-        ...(input.execution.provider.kind === "codex" && !preconfiguredHome && !remoteTarget
+        // The runner decides per platform and agent (Codex, ACPX Claude, OpenCode);
+        // Windows and other ACPX agents keep copying skills.
+        ...((input.execution.provider.kind === "codex" || input.execution.provider.kind === "acpx"
+          || input.execution.provider.kind === "opencode") && !preconfiguredHome && !remoteTarget
           ? { codexSkillHomeStoreRoot: codexSkillHomeStoreRoot() } : {}),
         ...accountingTransportOptions,
         onCredentialsUpdated: credentialUpdates?.onCredentialsUpdated,

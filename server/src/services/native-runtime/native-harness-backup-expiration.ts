@@ -867,6 +867,8 @@ export function nativeHarnessBackupExpirationService(
         try {
           const swept = await sweepCodexSkillHomes({
             storeRoot: skillHomeStoreRoot, sessionsRoot: base, now, dryRun, maxRemovals,
+            // ACPX Claude sessions reference skill homes from beside the state base.
+            ...(options.stateBase ?? defaults.stateBase ? {} : { acpxSessionsRoot: path.resolve(base, "..", "acpx", "acpx") }),
           });
           result.skillHomesRemoved = swept.removed;
           result.skillHomeReclaimedBytes = swept.reclaimedBytes;

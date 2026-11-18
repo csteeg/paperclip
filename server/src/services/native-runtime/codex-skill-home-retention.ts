@@ -35,16 +35,31 @@ async function modifiedAt(target: string): Promise<number | null> {
   return (await fs.lstat(target).catch(missing))?.mtimeMs ?? null;
 }
 
-/** Digests named by a session's `codex-home/paperclip-skill-home.json`. */
-async function referencedDigests(sessionsRoot: string): Promise<Set<string>> {
-  const names = await fs.readdir(sessionsRoot).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === "ENOENT") return [] as string[];
+async function childNames(directory: string): Promise<string[]> {
+  return fs.readdir(directory).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT" || error.code === "ENOTDIR") return [] as string[];
     throw error;
   });
+}
+
+/**
+ * Digests named by `paperclip-skill-home.json` markers: native Codex
+ * (`<scope>/codex-home`), OpenCode (`<scope>/opencode/<session>`) and ACPX
+ * Claude (`<acpx session>/claude-home`).
+ */
+async function referencedDigests(sessionsRoot: string, acpxSessionsRoot?: string): Promise<Set<string>> {
+  const markerDirectories: string[] = [];
+  for (const scope of (await childNames(sessionsRoot)).filter((name) => SCOPE_PATTERN.test(name))) {
+    markerDirectories.push(path.join(sessionsRoot, scope, "codex-home"));
+    const openCode = path.join(sessionsRoot, scope, "opencode");
+    for (const session of await childNames(openCode)) markerDirectories.push(path.join(openCode, session));
+  }
+  if (acpxSessionsRoot) {
+    for (const session of await childNames(acpxSessionsRoot)) markerDirectories.push(path.join(acpxSessionsRoot, session, "claude-home"));
+  }
   const digests = new Set<string>();
-  for (const name of names) {
-    if (!SCOPE_PATTERN.test(name)) continue;
-    const digest = await readCodexSkillHomeMarker(path.join(sessionsRoot, name, "codex-home"));
+  for (const directory of markerDirectories) {
+    const digest = await readCodexSkillHomeMarker(directory);
     if (digest) digests.add(digest);
   }
   return digests;
@@ -59,6 +74,8 @@ export async function sweepCodexSkillHomes(
   input: {
     storeRoot: string;
     sessionsRoot: string;
+    /** ACPX session roots (`runtime/paperclip-runner/acpx/acpx`). */
+    acpxSessionsRoot?: string;
     now: number;
     graceMs?: number;
     dryRun?: boolean;
@@ -75,7 +92,7 @@ export async function sweepCodexSkillHomes(
     throw error;
   });
   if (!names) return result;
-  let referenced = await referencedDigests(input.sessionsRoot);
+  let referenced = await referencedDigests(input.sessionsRoot, input.acpxSessionsRoot);
 
   for (const name of names) {
     const target = path.join(input.storeRoot, name);
@@ -119,7 +136,7 @@ export async function sweepCodexSkillHomes(
     const retiring = path.join(input.storeRoot, `.retiring-${digest}.${randomUUID()}`);
     await fs.rename(home, retiring);
     await dependencies.afterRetire?.(digest);
-    referenced = await referencedDigests(input.sessionsRoot);
+    referenced = await referencedDigests(input.sessionsRoot, input.acpxSessionsRoot);
     if (referenced.has(digest)) {
       // A launch referenced it meanwhile. If that launch already republished it,
       // its fresh copy wins and this one is discarded.

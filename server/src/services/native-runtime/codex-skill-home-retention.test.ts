@@ -75,6 +75,23 @@ describe("Codex skill home retention", () => {
     expect(await exists(path)).toBe(true);
   });
 
+  it("keeps homes that only an ACPX Claude session or an OpenCode session references", async () => {
+    const { root, storeRoot, sessionsRoot } = await fixture();
+    const acpxSessionsRoot = join(root, "acpx", "acpx");
+    const claudeHome = await home(storeRoot, digest("a"), NOW - 72 * HOUR);
+    const openCodeHome = await home(storeRoot, digest("b"), NOW - 72 * HOUR);
+    await mkdir(join(acpxSessionsRoot, "session-1", "claude-home"), { recursive: true });
+    await writeFile(join(acpxSessionsRoot, "session-1", "claude-home", "paperclip-skill-home.json"),
+      JSON.stringify({ schema: "paperclip.codex-skill-home-ref.v1", digest: digest("a") }));
+    await mkdir(join(sessionsRoot, digest("1"), "opencode", "session-dir"), { recursive: true });
+    await writeFile(join(sessionsRoot, digest("1"), "opencode", "session-dir", "paperclip-skill-home.json"),
+      JSON.stringify({ schema: "paperclip.codex-skill-home-ref.v1", digest: digest("b") }));
+    const result = await sweepCodexSkillHomes({ storeRoot, sessionsRoot, acpxSessionsRoot, now: NOW });
+    expect(result).toMatchObject({ removed: 0, kept: 2 });
+    expect(await exists(claudeHome)).toBe(true);
+    expect(await exists(openCodeHome)).toBe(true);
+  });
+
   it("keeps an unreferenced home used within the grace period", async () => {
     const { storeRoot, sessionsRoot } = await fixture();
     const path = await home(storeRoot, digest("a"), NOW - 2 * HOUR);
