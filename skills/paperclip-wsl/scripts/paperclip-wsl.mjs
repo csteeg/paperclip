@@ -38,13 +38,24 @@ try {
     for (const [key, expected] of [["PAPERCLIP_HOME", config.paperclipHome], ["PAPERCLIP_INSTANCE_ID", config.instanceId]]) {
       if (process.env[key] && process.env[key] !== expected) fail(`${key} selects another instance`);
     }
-    const settings = JSON.parse(fs.readFileSync(path.join(instance, "config.json"), "utf8"));
+    const selectedConfig = path.join(instance, "config.json");
+    if (process.env.PAPERCLIP_CONFIG && path.resolve(repository, process.env.PAPERCLIP_CONFIG) !== selectedConfig) fail("PAPERCLIP_CONFIG selects another instance");
+    for (const key of ["DATABASE_URL", "DATABASE_MIGRATION_URL"]) {
+      if (process.env[key] !== undefined) fail(`${key} overrides the selected instance; configure its config file instead`);
+    }
+    if (process.env.PORT !== undefined && Number(process.env.PORT) !== config.port) fail("PORT differs from the selected instance");
+    const settings = JSON.parse(fs.readFileSync(selectedConfig, "utf8"));
     if (settings.server?.port !== config.port) fail("instance port differs from the local profile");
     const dataPaths = [settings.database?.embeddedPostgresDataDir, settings.storage?.localDisk?.baseDir, settings.secrets?.localEncrypted?.keyFilePath].filter(Boolean);
     if (dataPaths.some((value) => !nativePath(value))) fail("instance still contains Windows data paths");
     const bins = config.binPaths ?? [path.dirname(config.node), "/usr/local/bin", "/usr/bin", "/bin"];
     if (!Array.isArray(bins) || bins.some((value) => !nativePath(value))) fail("tool directories must be native Linux paths");
-    const environment = { ...process.env, PATH: bins.join(":"), PAPERCLIP_HOME: config.paperclipHome, PAPERCLIP_INSTANCE_ID: config.instanceId };
+    for (const [key, expected] of [
+      ["PAPERCLIP_STORAGE_LOCAL_DIR", settings.storage?.localDisk?.baseDir],
+      ["PAPERCLIP_SECRETS_MASTER_KEY_FILE", settings.secrets?.localEncrypted?.keyFilePath],
+      ["PAPERCLIP_DB_BACKUP_DIR", settings.database?.backup?.dir],
+    ]) if (process.env[key] !== undefined && (!expected || path.resolve(repository, process.env[key]) !== path.resolve(expected))) fail(`${key} differs from the selected instance`);
+    const environment = { ...process.env, PATH: bins.join(":"), PAPERCLIP_HOME: config.paperclipHome, PAPERCLIP_INSTANCE_ID: config.instanceId, PAPERCLIP_CONFIG: selectedConfig };
     for (const key of ["CARGO_HOME", "RUSTUP_HOME"]) if (config[key]) { if (!nativePath(config[key])) fail(`invalid ${key}`); environment[key] = config[key]; }
     const capacity = fs.statfsSync(config.capacityPath ?? config.paperclipHome);
     const availableBytes = capacity.bavail * capacity.bsize;
