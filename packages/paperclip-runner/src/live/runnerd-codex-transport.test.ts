@@ -3333,6 +3333,30 @@ it("preserves OpenCode runtime bindings when a durable runner is respawned", () 
   );
 });
 
+it.skipIf(process.platform === "win32").each([
+  ["claude", {}, "/state/skill-homes"],
+  ["codex", {}, undefined],
+  ["claude", { runnerFilesystemRoot: "/remote/root" }, undefined],
+  ["claude", { homeMode: "preconfigured" as const }, undefined],
+] as const)("passes the skill home store to ACPX %s only when it can share skills (%o)", (agent, extra, expected) => {
+  const environment = createCapabilityRunnerdProviderEnvironment({
+    provider: "acpx",
+    options: {
+      provider: "acpx", acpxAgent: agent, codexSkillHomeStoreRoot: "/state/skill-homes", ...extra,
+      environment: { PATH: "/bin" },
+    },
+    identity: {
+      runnerInstanceId: "runner-1", environmentLeaseId: "lease-1", runId: "run-1",
+      normalizedSessionId: "session-1", turnId: "turn-1", itemId: "item-1",
+    },
+    codexHome: "/isolated/codex-home",
+    runtimeContextPath: "/isolated/runtime-context.json",
+    hasRuntimeContext: true,
+    acpxSidecarPath: "/package/dist/cli/acpx-runtime-sidecar.cjs",
+  });
+  expect(environment.PAPERCLIP_SKILL_HOME_STORE_ROOT).toBe(expected);
+});
+
 it("passes the configured Codex API key only through the provider process environment", () => {
   const environment = createCapabilityRunnerdProviderEnvironment({
     provider: "codex",

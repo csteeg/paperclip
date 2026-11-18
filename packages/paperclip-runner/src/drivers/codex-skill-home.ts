@@ -17,7 +17,9 @@ import {
  * CODEX_HOME. A published home is never edited: a skill change yields a new digest.
  */
 export const CODEX_SKILL_HOME_LAYOUT = "paperclip.codex-skill-home.v2";
-const CLAUDE_SKILL_PLUGIN = { name: "paperclip", version: "2.0.0", description: "Skills assigned by Paperclip" };
+/** Claude shows plugin skills as `<plugin name>:<skill>`. */
+export const CLAUDE_SKILL_PLUGIN_NAME = "paperclip";
+const CLAUDE_SKILL_PLUGIN = { name: CLAUDE_SKILL_PLUGIN_NAME, version: "2.0.0", description: "Skills assigned by Paperclip" };
 
 /** The local plugin directory Claude loads a skill home from. */
 export function claudeSkillPluginDirectory(home: string): string {

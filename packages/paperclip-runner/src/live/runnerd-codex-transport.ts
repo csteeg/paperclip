@@ -3931,6 +3931,10 @@ function createCapabilityRunnerdProviderEnvironmentBase(input: {
         input.options.acpxAgent ?? "codex",
       ).env,
       ...(credentialBinding === undefined ? {} : { [ACPX_CREDENTIAL_BINDING_ENV]: credentialBinding }),
+      // Claude loads the shared skill home as a local plugin (runtime-host.ts).
+      ...(input.options.acpxAgent === "claude"
+        && usesCodexSkillHome({ ...input.options, provider: "codex" })
+        ? { PAPERCLIP_SKILL_HOME_STORE_ROOT: input.options.codexSkillHomeStoreRoot! } : {}),
       ...(input.options.acpxAgent === "grok" && input.options.environment?.PAPERCLIP_ACPX_GROK_AUTH_JSON_SECRET
         ? { PAPERCLIP_ACPX_GROK_AUTH_JSON_SECRET: input.options.environment.PAPERCLIP_ACPX_GROK_AUTH_JSON_SECRET } : {}),
       ...(input.options.acpxAgent === "antigravity" && input.options.environment?.PAPERCLIP_ACPX_ANTIGRAVITY_AUTH_JSON_SECRET
