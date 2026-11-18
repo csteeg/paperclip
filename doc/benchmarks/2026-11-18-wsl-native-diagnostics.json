@@ -51,6 +51,32 @@
     "independentFinalStaticReview": "No important findings",
     "currentHeadCiQualified": false
   },
+  "migrationReconciliation": {
+    "sourceTables": 350,
+    "sourceRows": 523003,
+    "originalBusinessRecordIdsMissing": 0,
+    "originalIdsComparedDirectlyWithNativeRecoveryDump": true,
+    "additionalDatabaseRestoreNeededForComparison": false,
+    "expiredTechnicalRowsRemovedByNormalApplicationLifecycle": {
+      "issueCreateIdempotencyKeys": 10,
+      "toolGatewayRateLimitCounters": 10,
+      "toolMcpGatewayTokens": 24
+    },
+    "eachMissingTechnicalRowIndividuallyVerifiedExpired": true,
+    "originalSourceAndRecoveryArchivePreserved": true,
+    "originalAttachmentsDownloadedAndHashVerified": 40,
+    "originalAttachmentBytes": 9050634,
+    "filledTableWithoutPrimaryKeyFullRowHashUnchanged": true
+  },
+  "oldWindowsSessionAttempt": {
+    "historicalEventsReadable": true,
+    "providerStarted": false,
+    "errorCode": "configuration_incomplete",
+    "reason": "The existing connection-pool policy requires resetting this old task session before adopting its current pool. The old session used another account-selection mode.",
+    "originalDoneStatusAndAgentPauseRestored": true,
+    "existingAccountPolicyPreserved": true,
+    "userDecisionPending": "Whether preserved history and files with a fresh provider session where necessary are acceptable, or exact provider-session continuation is required."
+  },
   "limits": [
     "Small diagnostic tasks, not the original thirteen-asset skill assignment.",
     "The earlier 216.32 seconds measured skill preparation. It cannot be compared directly with these first-tool or total-run times.",

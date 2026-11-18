@@ -61,6 +61,20 @@
   #18144 now includes it at `01a14e65f2`; the native branch has `36b302f2e`.
   First-tool and total-run measurements, failed attempts and comparison limits
   are recorded in `doc/benchmarks/2026-11-18-wsl-native-diagnostics.json`.
+- Post-validation reconciliation compares original IDs directly with the
+  native recovery dump, without restoring another database. No original
+  business-record IDs are missing. The 54 absent technical rows are each
+  verified expired: ten create-idempotency keys, ten rate-limit counters and
+  24 gateway tokens. The source and recovery archive retain them. All 40
+  original attachments download through the application and match stored
+  byte counts and SHA-256. The filled table without a primary key retains
+  its complete source row hash.
+- A Windows-created native session exposes an existing account-pool boundary:
+  history is readable, but continuation refuses before provider startup
+  because adopting the current pool requires a session reset. Its original
+  completed task status and paused agent state were restored. The user was
+  asked whether fresh provider sessions where necessary, with full history
+  and file preservation, are acceptable. Cutover awaits that decision.
 - The shared WSL helper passed Windows-to-Linux and Linux preflight, argument
   preservation and conflicting-instance/configuration/database/port rejection.
   Its Runner preflight now checks the owning shared platform contract before
