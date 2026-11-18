@@ -53,7 +53,7 @@
   update for the repaired integration lockfile. Required CI is not green.
   Existing PRs #18144 and #22033 remain open; neither was closed or overwritten.
 
-The remaining acceptance work is the approved Ubuntu upgrade, real new and
+The remaining acceptance work is the Ubuntu upgrade after approval, real new and
 resumed Codex/Claude runs, final data reconciliation, trusted lock/CI
 qualification and controlled cutover. A healthy validation server is not
 completion of this migration.
