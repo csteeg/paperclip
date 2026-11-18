@@ -1,0 +1,61 @@
+{
+  "environment": {
+    "os": "Ubuntu 26.04.1 LTS",
+    "glibc": "2.43",
+    "wsl": "3.0.5",
+    "node": "24.22.3",
+    "sourceBase": "7d66ad205d38743435a875a8e56d62c7fe0c0f9f",
+    "libcProbeFix": "24a3c1a9a",
+    "workspaceFragmentFix": "36b302f2e",
+    "existingPrHead": "01a14e65f20f00ae9dd2e1e5f3969e4c604d1706"
+  },
+  "clock": "Milliseconds from heartbeat-run creation to first tool.execution.started event or finishedAt; includes admission and preparation. Not from server process creation.",
+  "observations": [
+    {
+      "harness": "native Codex",
+      "kind": "fresh diagnostic",
+      "firstToolMs": 25230,
+      "totalRunMs": 84899,
+      "providerRunStatus": "succeeded",
+      "taskStatus": "blocked",
+      "reason": "The diagnostic incorrectly requested a host checkout hidden by the provider sandbox. Its artifact records preflight not_run; this is not a passing task."
+    },
+    {
+      "harness": "native Claude",
+      "kind": "fresh diagnostic",
+      "firstToolMs": 27059,
+      "totalRunMs": 70402,
+      "providerRunStatus": "succeeded",
+      "taskStatus": "done",
+      "artifactDownloadMatchesLocalSizeAndSha256": true,
+      "checks": ["canonical WSL skill read", "host Runner preflight", "native platform and Node probes", "registered JSON deliverable"]
+    },
+    {
+      "harness": "native Codex",
+      "kind": "same diagnostic session resumed after server restart and workspace fragment fix",
+      "firstToolMs": 18837,
+      "totalRunMs": 91386,
+      "providerRunStatus": "succeeded",
+      "taskStatus": "done",
+      "artifactDownloadMatchesLocalSizeAndSha256": true,
+      "checks": ["attached canonical skill snapshot read and hashed", "supplied controller preflight distinguished from agent probes", "native platform and Node probes", "registered JSON deliverable"]
+    }
+  ],
+  "accountHelloProbes": { "codexMs": 7313, "claudeMs": 8226, "bothPassedWithExistingAccounts": true },
+  "verification": {
+    "platformTestsPassed": 16,
+    "gitSourceAndExpirationTestsPassed": 124,
+    "realChildLibcRegressionRedGreen": true,
+    "emptyGitFragmentRegressionRedGreen": true,
+    "bareStoreAndAncestorReviewRegressionsRedGreen": true,
+    "independentFinalStaticReview": "No important findings",
+    "currentHeadCiQualified": false
+  },
+  "limits": [
+    "Small diagnostic tasks, not the original thirteen-asset skill assignment.",
+    "The earlier 216.32 seconds measured skill preparation. It cannot be compared directly with these first-tool or total-run times.",
+    "The Codex continuation is a session created in WSL. It does not prove continuation of a Windows-created session.",
+    "Two intermediate continuation attempts failed before provider dispatch with workspace_git_source_unproven. A never-dispatched retry was cancelled and reconciled through the supported evidence API. These are not passes.",
+    "Final live endpoint cutover, historical Windows-session continuation, final migration reconciliation and trusted integration-lock/CI qualification remain open."
+  ]
+}

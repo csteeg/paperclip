@@ -52,8 +52,15 @@
   24.04 in 4,976 ms. Claude's saved subscription resolved, but its CLI was
   absent from the service PATH. On 26.04 the existing pinned SDK's native
   Claude 2.1.286 binary is exposed through the scoped tool directory, without
-  another installation. Post-upgrade account probes and full runs remain
-  acceptance work; hello timing is not a complete agent-start benchmark.
+  another installation. Post-upgrade account probes pass for both harnesses.
+  A fresh Claude task and a resumed Codex diagnostic task finish and publish
+  JSON deliverables whose downloaded bytes, sizes and hashes are verified.
+- The Codex continuation exposed empty protected Git directories being
+  mistaken for repositories. A reproduced regression, four reproduced review
+  negatives and 124 focused passing tests cover the final fix. Existing PR
+  #18144 now includes it at `01a14e65f2`; the native branch has `36b302f2e`.
+  First-tool and total-run measurements, failed attempts and comparison limits
+  are recorded in `doc/benchmarks/2026-11-18-wsl-native-diagnostics.json`.
 - The shared WSL helper passed Windows-to-Linux and Linux preflight, argument
   preservation and conflicting-instance/configuration/database/port rejection.
   Its Runner preflight now checks the owning shared platform contract before
@@ -64,8 +71,8 @@
   update for the repaired integration lockfile. Required CI is not green.
   Existing PRs #18144 and #22033 remain open; neither was closed or overwritten.
 
-The remaining acceptance work is post-upgrade account checks, real new and
-resumed Codex/Claude runs, final data reconciliation, trusted lock/CI
+The remaining acceptance work is Windows-created session continuation,
+final data reconciliation, trusted lock/CI
 qualification and controlled cutover. A healthy validation server is not
 completion of this migration.
 
