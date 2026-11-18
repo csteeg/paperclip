@@ -12,7 +12,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -24,6 +24,7 @@ import {
   type NativeRuntimeContextSnapshot,
 } from "../contracts/runtime-context.js";
 import {
+  claudeSkillPluginDirectory,
   codexSkillHomeDigest,
   ensureCodexSkillHome,
   readCodexSkillHomeMarker,
@@ -129,6 +130,16 @@ describe("Codex skill home store", () => {
     expect(await homeEntries(storeRoot)).toEqual([first.digest]);
   });
 
+  it("publishes a Claude plugin manifest next to the skills", async () => {
+    const { storeRoot, assigned } = await fixture();
+    const { home } = await ensureCodexSkillHome({ storeRoot, context: assigned });
+    expect(JSON.parse(await readFile(join(home, ".agents", ".claude-plugin", "plugin.json"), "utf8")))
+      .toEqual({ name: "paperclip", version: "2.0.0", description: "Skills assigned by Paperclip" });
+    expect(claudeSkillPluginDirectory(home)).toBe(join(home, ".agents"));
+    const record = JSON.parse(await readFile(join(storeRoot, `${basename(home)}.stat.json`), "utf8"));
+    expect(record.files.map((entry: unknown[]) => entry[0])).toContain(".agents/.claude-plugin/plugin.json");
+  });
+
   it("uses a new home for a new bundle digest", async () => {
     const { root, storeRoot, assigned } = await fixture();
     const first = await ensureCodexSkillHome({ storeRoot, context: assigned });
@@ -161,6 +172,9 @@ describe("Codex skill home store", () => {
     ["a missing file", async (home: string) => {
       await rm(join(home, ".agents", "skills", "beta", "scripts", "run.sh"));
     }],
+    ["an edited Claude plugin manifest", async (home: string) => {
+      await writeFile(join(home, ".agents", ".claude-plugin", "plugin.json"), JSON.stringify({ name: "other" }));
+    }],
     ["a file replaced by a symlink", async (home: string) => {
       const target = join(home, ".agents", "skills", "alpha", "SKILL.md");
       await rm(target);
@@ -184,7 +198,7 @@ describe("Codex skill home store", () => {
     const first = await ensureCodexSkillHome({ storeRoot, context: assigned });
     const record = JSON.parse(await readFile(join(storeRoot, `${first.digest}.stat.json`), "utf8"));
     expect(record.files.map((entry: unknown[]) => entry[0])).toEqual([
-      ".agents/skills/alpha/SKILL.md", ".agents/skills/alpha/scripts/run.sh",
+      ".agents/.claude-plugin/plugin.json", ".agents/skills/alpha/SKILL.md", ".agents/skills/alpha/scripts/run.sh",
       ".agents/skills/beta/SKILL.md", ".agents/skills/beta/scripts/run.sh", "manifest.json",
     ]);
     // A home whose stat record is lost is still verified by content and gets a new record.

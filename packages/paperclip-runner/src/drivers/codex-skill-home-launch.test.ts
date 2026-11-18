@@ -14,6 +14,7 @@ import {
 import { codexSkillReadRoots, createRunnerdCodexAppServerArgs } from "../live/runner-provider-launch.js";
 import { resolveRunnerdCodexSkillInputs } from "../live/runnerd-codex-transport.js";
 import {
+  prepareSharedSkillHome,
   readCodexSkillHomeMarker,
   removeCodexSkillHomeTree,
   resolveRecordedCodexSkillHome,
@@ -114,6 +115,19 @@ describe("Codex launches with a shared skill home", () => {
     const codexHome = join(root, "a");
     await expect(prepareIsolatedCodexHome({ context: assigned, codexHome, skillHomeStoreRoot: storeRoot })).rejects.toThrow();
     await expect(readCodexSkillHomeMarker(codexHome)).resolves.toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("prepares a shared skill home for any provider home and removes its old copy", async () => {
+    const { root, storeRoot, assigned } = await fixture();
+    const claudeHome = join(root, "claude-home");
+    await mkdir(join(claudeHome, "skills", "alpha"), { recursive: true });
+    await writeFile(join(claudeHome, "skills", "alpha", "SKILL.md"), "# stale\n");
+    const { home, digest } = await prepareSharedSkillHome({ providerHome: claudeHome, storeRoot, context: assigned });
+    expect(home).toBe(join(storeRoot, digest));
+    expect(await exists(join(claudeHome, "skills", "alpha"))).toBe(false);
+    await expect(readCodexSkillHomeMarker(claudeHome)).resolves.toBe(digest);
+    expect(await exists(join(home, ".agents", "skills", "alpha", "SKILL.md"))).toBe(true);
+    expect(await exists(join(storeRoot, `${digest}.last-used`))).toBe(true);
   });
 
   it("reuses the recorded home during recovery", async () => {

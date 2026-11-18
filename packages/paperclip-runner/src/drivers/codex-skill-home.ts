@@ -4,7 +4,11 @@ import { chmod, lstat, mkdir, readdir, readFile, rename, rm, writeFile } from "n
 import { basename, join } from "node:path";
 
 import type { NativeRuntimeContextSnapshot } from "../contracts/runtime-context.js";
-import { materializeNativeRuntimeSkills } from "./runtime-context-materializer.js";
+import {
+  materializeNativeRuntimeSkills,
+  releaseMaterializedNativeRuntimeSkills,
+  removeAbandonedSkillStaging,
+} from "./runtime-context-materializer.js";
 
 /**
  * A skill home is a sealed, content-addressed directory that a Codex app-server
@@ -12,7 +16,32 @@ import { materializeNativeRuntimeSkills } from "./runtime-context-materializer.j
  * same assigned skills share one copy instead of each copying into its
  * CODEX_HOME. A published home is never edited: a skill change yields a new digest.
  */
-export const CODEX_SKILL_HOME_LAYOUT = "paperclip.codex-skill-home.v1";
+export const CODEX_SKILL_HOME_LAYOUT = "paperclip.codex-skill-home.v2";
+const CLAUDE_SKILL_PLUGIN = { name: "paperclip", version: "2.0.0", description: "Skills assigned by Paperclip" };
+
+/** The local plugin directory Claude loads a skill home from. */
+export function claudeSkillPluginDirectory(home: string): string {
+  return join(home, ".agents");
+}
+
+/**
+ * Points a provider home at the shared skill home for `context`: removes the
+ * provider's own skills copy and abandoned staging, records the reference
+ * before publishing (so cleanup sees it), then publishes or reuses the home.
+ */
+export async function prepareSharedSkillHome(input: {
+  providerHome: string;
+  storeRoot: string;
+  context: NativeRuntimeContextSnapshot;
+  skillsDirectory?: string;
+}): Promise<{ home: string; digest: string }> {
+  await releaseMaterializedNativeRuntimeSkills(join(input.providerHome, input.skillsDirectory ?? "skills"));
+  await removeAbandonedSkillStaging(input.providerHome, { olderThanMs: 60 * 60 * 1000 });
+  await writeCodexSkillHomeMarker(input.providerHome, codexSkillHomeDigest(input.context));
+  const ensured = await ensureCodexSkillHome({ storeRoot: input.storeRoot, context: input.context });
+  await touchCodexSkillHome(input.storeRoot, ensured.digest);
+  return { home: ensured.home, digest: ensured.digest };
+}
 const MARKER_SCHEMA = "paperclip.codex-skill-home-ref.v1";
 const MARKER_FILE = "paperclip-skill-home.json";
 const MANIFEST_FILE = "manifest.json";
@@ -209,6 +238,11 @@ async function publishCodexSkillHome(
   await mkdir(staging, { mode: 0o700 });
   try {
     await materializeNativeRuntimeSkills(context, join(staging, ".agents", "skills"));
+    // Claude loads `.agents` as a local plugin; its skills appear as `paperclip:<name>`.
+    const pluginManifest = join(staging, ".agents", ".claude-plugin");
+    await mkdir(pluginManifest, { mode: 0o700 });
+    await writeFile(join(pluginManifest, "plugin.json"), JSON.stringify(CLAUDE_SKILL_PLUGIN), { mode: 0o444, flag: "wx" });
+    await chmod(pluginManifest, 0o555);
     const manifest = await buildManifest(staging, digest);
     await writeFile(join(staging, MANIFEST_FILE), JSON.stringify(manifest), { mode: 0o444, flag: "wx" });
     await chmod(join(staging, ".agents", "skills"), 0o555);
