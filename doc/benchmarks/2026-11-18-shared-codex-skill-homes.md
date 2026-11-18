@@ -37,8 +37,14 @@ reuse times above apply. On the measured instance, 38 ACPX Claude sessions held
 The patched `claude-agent-acp` was started over ACP stdio in WSL, in isolated mode
 with an empty `CLAUDE_CONFIG_DIR/skills`. With `PAPERCLIP_CLAUDE_SKILL_PLUGIN_DIR`
 pointing at a published skill home's `.agents`, its `available_commands_update`
-listed `paperclip:alpha` (49 commands); without it, no `alpha` command (48). No
-Claude or OpenCode model turn was run.
+listed `paperclip:alpha` (49 commands); without it, no `alpha` command (48).
+
+Real Claude turn (Claude Agent SDK 0.3.286 on WSL Linux, Claude login, isolated
+`settingSources: ["user"]`, empty `CLAUDE_CONFIG_DIR/skills`, the published skill
+home's `.agents` as local plugin, prompt `/paperclip:alpha`): Claude read
+`<skill home>/.agents/skills/alpha/scripts/run.sh` and answered with its phrase. Files
+under the skill home changed during the turn: 0. No OpenCode model turn was run (no
+OpenCode provider key on the test machine).
 
 ## Real turn through the shared HOME
 
