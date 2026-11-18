@@ -95,7 +95,10 @@
     "sourceRecoveryBlockers": 33,
     "currentRecoveryBlockers": 33,
     "newRecoveryBlockersSinceWindowsSource": 0,
-    "browserInteractionQualified": false,
+    "browserInteractionQualified": true,
+    "browserInteractionScope": "Existing Windows Edge session authenticated as Chris and loaded CareConnections CAR-300 content and history through the browser extension; organization onboarding absent.",
+    "deploymentMode": "authenticated",
+    "browserAccessFix": "Use existing cookie authentication on private loopback instead of implicit local_trusted identity across the WSL relay. Existing accounts, memberships and signing secret preserved.",
     "currentHeadCiQualified": false
   },
   "limits": [
@@ -104,6 +107,6 @@
     "The Codex continuation is a session created in WSL. It does not prove continuation of a Windows-created session.",
     "Two intermediate continuation attempts failed before provider dispatch with workspace_git_source_unproven. A never-dispatched retry was cancelled and reconciled through the supported evidence API. These are not passes.",
     "Exact Windows provider-session continuation is not universal. The user accepted fresh provider sessions where needed; an actual old task then completed its diagnostic followup using preserved history.",
-    "Trusted integration-lock/CI qualification and interactive browser acceptance remain open. API/UI HTTP checks and data reconciliation passed."
+    "Trusted integration-lock/CI qualification remains open. Existing-session browser login and CAR-300 rendering passed; other browser flows were not requalified."
   ]
 }
