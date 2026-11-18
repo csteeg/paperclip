@@ -678,7 +678,7 @@ describe("ACPX runtime host", () => {
       agent: "claude" as const,
       model: "claude-sonnet-5",
       permissionMode: "deny-all" as const,
-      environment: { ...fixture.options.environment, PAPERCLIP_SKILL_HOME_STORE_ROOT: storeRoot },
+      environment: { PAPERCLIP_SKILL_HOME_STORE_ROOT: storeRoot },
       runtimeContext: context,
     }, dependencies);
     try {
