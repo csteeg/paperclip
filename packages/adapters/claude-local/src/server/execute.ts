@@ -117,32 +117,13 @@ import {
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const executeClaudeAcp = createClaudeAcpExecutor();
 
-async function hasLocalClaudeSessionTranscript(input: {
-  configDir: string;
-  cwd: string;
-  sessionId: string;
-}): Promise<boolean | null> {
-  // Claude Code stores CLI transcripts under the effective config directory,
-  // keyed by its encoded project cwd and session id. Only call this for local
-  // execution; a host-side miss says nothing about a remote execution host.
-  return probeClaudeTranscript(input);
-}
-
-async function stageManagedUserSkills(configDir: string, skills: Awaited<ReturnType<typeof readPaperclipRuntimeSkillEntries>>, onLog: AdapterExecutionContext["onLog"]): Promise<void> {
+async function stageManagedUserSkills(configDir: string, skills: Awaited<ReturnType<typeof readPaperclipRuntimeSkillEntries>>): Promise<void> {
   if (!skills.length) return;
-  const resolved = await fs.realpath(configDir).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === "ENOENT") return null;
-    throw error;
-  });
-  if (!resolved) {
-    await onLog("stderr", "[paperclip] Selected Paperclip skills were not copied because the Claude configuration directory is unavailable.\n");
-    return;
-  }
+  const resolved = await fs.realpath(configDir);
   const home = path.dirname(resolved);
   const temp = await fs.realpath(os.tmpdir());
   if (path.basename(resolved) !== "provider" || !path.basename(home).startsWith("paperclip-ai-") || path.dirname(home) !== temp) {
-    await onLog("stderr", "[paperclip] Selected Paperclip skills were not copied outside a Paperclip-managed temporary Claude configuration.\n");
-    return;
+    throw new Error("Refusing to stage selected skills outside a Paperclip-managed temporary Claude configuration");
   }
   const skillsHome = path.join(resolved, "skills");
   const existingHome = await fs.lstat(skillsHome).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return null; throw error; });
@@ -152,20 +133,21 @@ async function stageManagedUserSkills(configDir: string, skills: Awaited<ReturnT
     if (skill.runtimeName === "." || skill.runtimeName === ".." || path.basename(skill.runtimeName) !== skill.runtimeName || /[\\/]/.test(skill.runtimeName)) throw new Error("Invalid managed Claude skill name");
     const target = path.join(skillsHome, skill.runtimeName);
     const existing = await fs.lstat(target).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return null; throw error; });
-    if (existing) {
-      const sentinel = existing.isDirectory() && !existing.isSymbolicLink()
-        ? await fs.readFile(path.join(target, ".paperclip-materialized-skill.json"), "utf8").then((raw) => {
-          try { return JSON.parse(raw) as { version?: number }; } catch { return null; }
-        }, () => null)
-        : null;
-      if (sentinel?.version !== 1) {
-        await onLog("stderr", `[paperclip] Skipped selected skill "${skill.runtimeName}": the existing Claude skill was not created by Paperclip.\n`);
-        continue;
-      }
-    }
+    if (existing) throw new Error(`Managed Claude skill destination already exists: ${skill.runtimeName}`);
     const result = await materializePaperclipSkillCopy(await fs.realpath(skill.source), target);
     if (result.skippedSymlinks.length) throw new Error(`Managed Claude skill contains unsupported symbolic links: ${skill.runtimeName}`);
   }
+}
+
+async function hasLocalClaudeSessionTranscript(input: {
+  configDir: string;
+  cwd: string;
+  sessionId: string;
+}): Promise<boolean | null> {
+  // Claude Code stores CLI transcripts under the effective config directory,
+  // keyed by its encoded project cwd and session id. Only call this for local
+  // execution; a host-side miss says nothing about a remote execution host.
+  return probeClaudeTranscript(input);
 }
 
 interface ClaudeExecutionInput {
@@ -683,12 +665,8 @@ async function executeWithCleanup(ctx: AdapterExecutionContext): Promise<Adapter
       await onLog("stdout", `[paperclip] Imported ${managedClaudePluginRuntime.skillCount} personal Claude skills.\n`);
     }
   }
-  if (config.managedAiConnection && (!executionTargetIsRemote || adapterExecutionTargetUsesManagedHome(executionTarget))
-    && !hasExplicitClaudeConfigDir && managedAiHomeOverrides.home !== true) {
-    await stageManagedUserSkills(sharedClaudeConfigDir, mountableSkillEntries, onLog);
-  } else if (config.managedAiConnection && mountableSkillEntries.length
-    && (hasExplicitClaudeConfigDir || managedAiHomeOverrides.home === true)) {
-    await onLog("stderr", "[paperclip] Selected Paperclip skills were not copied into the explicitly configured Claude home.\n");
+  if (config.managedAiConnection && (!executionTargetIsRemote || adapterExecutionTargetUsesManagedHome(executionTarget))) {
+    await stageManagedUserSkills(sharedClaudeConfigDir, mountableSkillEntries);
   }
   const networkScope = parseLocalProcessNetworkScope(config.networkScope);
   const filesystemScope = parseLocalProcessFilesystemScope(config.filesystemScope);
@@ -783,9 +761,8 @@ async function executeWithCleanup(ctx: AdapterExecutionContext): Promise<Adapter
     ? () => preparedExecutionTargetRuntime.restoreWorkspace((line) => onLog("stdout", line))
     : null;
   let paperclipBridge: Awaited<ReturnType<typeof startAdapterExecutionTargetPaperclipBridge>> = null;
-  let managedRoutingDir: string | null = null;
-  let managedRoutingSettingsPath: string | null = null;
   let sshSessionState: Awaited<ReturnType<typeof prepareSshConversationState>> | null = null;
+  let managedRoutingDir: string | null = null;
   try {
     if (preparedExecutionTargetRuntime?.workspaceRemoteDir) {
       effectiveExecutionCwd = preparedExecutionTargetRuntime.workspaceRemoteDir;
@@ -851,12 +828,6 @@ async function executeWithCleanup(ctx: AdapterExecutionContext): Promise<Adapter
         },
       });
       remoteClaudeConfigDir = sshSessionState.home;
-    }
-    if (config.managedAiConnection && executionTargetIsRemote) {
-      env.CLAUDE_CODE_PLUGIN_CACHE_DIR = path.posix.join(
-        remoteClaudeConfigDir ?? path.posix.join(remoteClaudeRuntimeRoot ?? effectiveExecutionCwd, "config"),
-        "plugins",
-      );
     }
     if (executionTarget?.kind === "remote" && executionTarget.transport === "ssh" && executionTarget.spec.useHostAuth === false && config.managedAiConnection && remoteClaudeRuntimeRoot) Object.assign(env, managedRemoteHomeEnvironment(remoteClaudeRuntimeRoot));
     if (config.managedAiConnection && executionTargetIsRemote) {
@@ -926,14 +897,15 @@ async function executeWithCleanup(ctx: AdapterExecutionContext): Promise<Adapter
     const runtimeRemoteExecution = parseObject(runtimeSessionParams.remoteExecution);
     const runtimePromptBundleKey = asString(runtimeSessionParams.promptBundleKey, "");
     const runtimeMcpServerIdentity = asString(runtimeSessionParams.mcpServerIdentity, "");
-  const claudeProjectSettingsAllowed = Boolean(config.managedAiConnection) && !executionTargetIsRemote &&
-    parseObject(context.paperclipWorkspace).claudeProjectSettingsAllowed === true;
-  const claudeProjectTrustIdentity = claudeProjectSettingsAllowed
-    ? asString(parseObject(context.paperclipWorkspace).claudeProjectTrustIdentity, "")
-    : "";
-  const matchingProjectTrust = (runtimeSessionParams.claudeProjectSettingsAllowed === true) === claudeProjectSettingsAllowed &&
-    (!claudeProjectSettingsAllowed || (claudeProjectTrustIdentity.length > 0 &&
-      runtimeSessionParams.claudeProjectTrustIdentity === claudeProjectTrustIdentity));
+    const claudeProjectSettingsAllowed = Boolean(config.managedAiConnection) && !executionTargetIsRemote &&
+      parseObject(context.paperclipWorkspace).claudeProjectSettingsAllowed === true;
+    const claudeProjectTrustIdentity = claudeProjectSettingsAllowed
+      ? asString(parseObject(context.paperclipWorkspace).claudeProjectTrustIdentity, "")
+      : "";
+    let managedRoutingSettingsPath: string | null = null;
+    const matchingProjectTrust = (runtimeSessionParams.claudeProjectSettingsAllowed === true) === claudeProjectSettingsAllowed &&
+      (!claudeProjectSettingsAllowed || (claudeProjectTrustIdentity.length > 0 &&
+        runtimeSessionParams.claudeProjectTrustIdentity === claudeProjectTrustIdentity));
     const hasMatchingPromptBundle =
       runtimePromptBundleKey.length === 0 || runtimePromptBundleKey === promptBundle.bundleKey;
     const hasMatchingMcpServers =
@@ -952,35 +924,35 @@ async function executeWithCleanup(ctx: AdapterExecutionContext): Promise<Adapter
       runtimeSessionId.length > 0 &&
       isValidUuid &&
       hasMatchingPromptBundle &&
-    matchingProjectTrust &&
+      matchingProjectTrust &&
       // Each CLI invocation loads --mcp-config, including --resume invocations.
       // Refreshing tools does not invalidate the saved conversation.
       hasMatchingSessionCwd &&
       hasMatchingExecutionTarget;
-  const localResumeCandidate = canResumeSession && !executionTargetIsRemote;
-  if (localResumeCandidate) await ctx.onCancellationReady?.();
-  let sessionId = canResumeSession ? runtimeSessionId : null;
-  const localClaudeEnv = { ...process.env, ...env };
-  const localClaudeConfigDir = resolveTranscriptConfigDir(localClaudeEnv, effectiveExecutionCwd);
-  if (sessionId && !executionTargetIsRemote) {
-    const transcriptAvailable = await hasLocalClaudeSessionTranscript({
-      configDir: localClaudeConfigDir,
-      cwd: effectiveExecutionCwd,
-      sessionId,
-    });
-    if (transcriptAvailable === false) {
-      await onLog(
-        "stdout",
-        `[paperclip] Claude session "${sessionId}" has no transcript in the active local config directory; starting a fresh session without a resume attempt.\n`,
-      );
-      sessionId = null;
-    } else if (transcriptAvailable === null) {
-      await onLog(
-        "stderr",
-        `[paperclip] Could not inspect the local Claude transcript for session "${sessionId}"; preserving the normal resume attempt.\n`,
-      );
+    const localResumeCandidate = canResumeSession && !executionTargetIsRemote;
+    if (localResumeCandidate) await ctx.onCancellationReady?.();
+    let sessionId = canResumeSession ? runtimeSessionId : null;
+    const localClaudeEnv = { ...process.env, ...env };
+    const localClaudeConfigDir = resolveTranscriptConfigDir(localClaudeEnv, effectiveExecutionCwd);
+    if (sessionId && !executionTargetIsRemote) {
+      const transcriptAvailable = await hasLocalClaudeSessionTranscript({
+        configDir: localClaudeConfigDir,
+        cwd: effectiveExecutionCwd,
+        sessionId,
+      });
+      if (transcriptAvailable === false) {
+        await onLog(
+          "stdout",
+          `[paperclip] Claude session "${sessionId}" has no transcript in the active local config directory; starting a fresh session without a resume attempt.\n`,
+        );
+        sessionId = null;
+      } else if (transcriptAvailable === null) {
+        await onLog(
+          "stderr",
+          `[paperclip] Could not inspect the local Claude transcript for session "${sessionId}"; preserving the normal resume attempt.\n`,
+        );
+      }
     }
-  }
     if (runtimeSessionId && !isValidUuid) {
       await onLog(
         "stdout",
@@ -1032,37 +1004,37 @@ async function executeWithCleanup(ctx: AdapterExecutionContext): Promise<Adapter
     const passesConfiguredModel = Boolean(
       model && (!isBedrockAuth(modelEnv) || isBedrockModelId(model)),
     );
-  const windowsLocalResume = process.platform === "win32" && localResumeCandidate;
-  const cancelledBeforeProviderStart = (): AdapterExecutionResult => ({
-    exitCode: null,
-    signal: null,
-    timedOut: false,
-    errorCode: "cancelled",
-    errorMessage: "Claude execution was cancelled before provider startup",
-    executionRecovery: { kind: "bootstrap", providerWorkStarted: false },
-    resultJson: {
-      executionCancellation: { state: "acknowledged", acknowledgedAt: new Date().toISOString() },
-    },
-  });
-  const cancelledAfterProviderStop = (): AdapterExecutionResult => ({
-    exitCode: null,
-    signal: null,
-    timedOut: false,
-    errorCode: "cancelled",
-    errorMessage: "Claude execution was cancelled",
-    resultJson: {
-      executionCancellation: { state: "acknowledged", acknowledgedAt: new Date().toISOString() },
-    },
-  });
-  let attemptSpawned = false;
+    const windowsLocalResume = process.platform === "win32" && localResumeCandidate;
+    const cancelledBeforeProviderStart = (): AdapterExecutionResult => ({
+      exitCode: null,
+      signal: null,
+      timedOut: false,
+      errorCode: "cancelled",
+      errorMessage: "Claude execution was cancelled before provider startup",
+      executionRecovery: { kind: "bootstrap", providerWorkStarted: false },
+      resultJson: {
+        executionCancellation: { state: "acknowledged", acknowledgedAt: new Date().toISOString() },
+      },
+    });
+    const cancelledAfterProviderStop = (): AdapterExecutionResult => ({
+      exitCode: null,
+      signal: null,
+      timedOut: false,
+      errorCode: "cancelled",
+      errorMessage: "Claude execution was cancelled",
+      resultJson: {
+        executionCancellation: { state: "acknowledged", acknowledgedAt: new Date().toISOString() },
+      },
+    });
+    let attemptSpawned = false;
 
     const buildClaudeArgs = (
       resumeSessionId: string | null,
       attemptInstructionsFilePath: string | undefined,
     ) => {
       const args = ["--print", "--output-format", "stream-json", "--verbose"];
-    if (config.managedAiConnection) args.push("--setting-sources", claudeProjectSettingsAllowed ? "user,project" : "user");
-    if (managedRoutingSettingsPath) args.push("--settings", managedRoutingSettingsPath);
+      if (config.managedAiConnection) args.push("--setting-sources", claudeProjectSettingsAllowed ? "user,project" : "user");
+      if (managedRoutingSettingsPath) args.push("--settings", managedRoutingSettingsPath);
       if (resumeSessionId) args.push("--resume", resumeSessionId);
       args.push(...buildClaudeExecutionPermissionArgs({
         dangerouslySkipPermissions,
@@ -1109,8 +1081,8 @@ async function executeWithCleanup(ctx: AdapterExecutionContext): Promise<Adapter
     };
 
     const runAttempt = async (resumeSessionId: string | null) => {
-    attemptSpawned = false;
-    if (localResumeCandidate && ctx.signal?.aborted) throw ctx.signal.reason ?? new Error("Claude execution cancelled");
+      attemptSpawned = false;
+      if (localResumeCandidate && ctx.signal?.aborted) throw ctx.signal.reason ?? new Error("Claude execution cancelled");
       await hydrateFreshSessionHandoff(ctx, { resumedSession: Boolean(resumeSessionId) });
       const renderedBootstrapPrompt =
         !resumeSessionId && bootstrapPromptTemplate.trim().length > 0
@@ -1192,22 +1164,22 @@ async function executeWithCleanup(ctx: AdapterExecutionContext): Promise<Adapter
         stdin: prompt,
         timeoutSec,
         graceSec,
-      onSpawn: localResumeCandidate
-        ? async (meta) => { attemptSpawned = true; await onSpawn?.(meta); }
-        : onSpawn,
+        onSpawn: localResumeCandidate
+          ? async (meta) => { attemptSpawned = true; await onSpawn?.(meta); }
+          : onSpawn,
         onRuntimeProgress: ctx.onRuntimeProgress,
         onLog: accountingLog,
         runLogTail: paperclipBridge?.runLogTail,
         settleRunDisposition: paperclipBridge?.settleRunDisposition,
         terminalResultCleanup: {
           graceMs: terminalResultCleanupGraceMs,
-        windowsProcessTreeGuard: Boolean(resumeSessionId) || windowsLocalResume,
+          windowsProcessTreeGuard: Boolean(resumeSessionId) || windowsLocalResume,
           hasTerminalResult: ({ stdout }) => parseClaudeStreamJson(stdout).resultJson !== null,
         },
         localProcessSandbox,
-      ...(localResumeCandidate
-        ? { signal: ctx.signal }
-        : {}),
+        ...(localResumeCandidate
+          ? { signal: ctx.signal }
+          : {}),
       });
       await accountingLog.flush();
 
@@ -1392,8 +1364,8 @@ async function executeWithCleanup(ctx: AdapterExecutionContext): Promise<Adapter
           cwd,
           promptBundleKey: promptBundle.bundleKey,
           mcpServerIdentity: runtimeMcpIdentity,
-        claudeProjectSettingsAllowed,
-        ...(claudeProjectTrustIdentity ? { claudeProjectTrustIdentity } : {}),
+          claudeProjectSettingsAllowed,
+          ...(claudeProjectTrustIdentity ? { claudeProjectTrustIdentity } : {}),
           ...(executionTargetIsRemote
             ? {
                 remoteExecution: adapterExecutionTargetSessionIdentity(runtimeExecutionTarget),
@@ -1723,26 +1695,26 @@ async function executeWithCleanup(ctx: AdapterExecutionContext): Promise<Adapter
   } finally {
     try {
       try {
-      await providerStop.collectBeforeRestore();
-    } finally {
-      try {
-        if (paperclipBridge) {
-          await paperclipBridge.stop();
-        }
+        await providerStop.collectBeforeRestore();
       } finally {
         try {
-          await sshSessionState?.cleanup();
+          if (paperclipBridge) {
+            await paperclipBridge.stop();
+          }
         } finally {
-          if (restoreRemoteWorkspace) {
-            await onLog(
-              "stdout",
-              `[paperclip] Restoring workspace changes from ${describeAdapterExecutionTarget(executionTarget)}.\n`,
-            ).catch(() => undefined);
-            await restoreRemoteWorkspace();
+          try {
+            await sshSessionState?.cleanup();
+          } finally {
+            if (restoreRemoteWorkspace) {
+              await onLog(
+                "stdout",
+                `[paperclip] Restoring workspace changes from ${describeAdapterExecutionTarget(executionTarget)}.\n`,
+              ).catch(() => undefined);
+              await restoreRemoteWorkspace();
+            }
           }
         }
       }
-    }
     } finally {
       if (managedRoutingDir) await fs.rm(managedRoutingDir, { recursive: true, force: true });
     }
