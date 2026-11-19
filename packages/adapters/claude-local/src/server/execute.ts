@@ -859,6 +859,12 @@ async function executeWithCleanup(ctx: AdapterExecutionContext): Promise<Adapter
       );
     }
     if (executionTarget?.kind === "remote" && executionTarget.transport === "ssh" && executionTarget.spec.useHostAuth === false && config.managedAiConnection && remoteClaudeRuntimeRoot) Object.assign(env, managedRemoteHomeEnvironment(remoteClaudeRuntimeRoot));
+    if (config.managedAiConnection && executionTargetIsRemote) {
+      env.CLAUDE_CODE_PLUGIN_CACHE_DIR = path.posix.join(
+        remoteClaudeConfigDir ?? path.posix.join(remoteClaudeRuntimeRoot ?? effectiveExecutionCwd, "config"),
+        "plugins",
+      );
+    }
     if (remoteClaudeConfigDir && remoteClaudeConfigSeedDir && remoteClaudeRuntimeRoot) {
       env.CLAUDE_CONFIG_DIR = remoteClaudeConfigDir;
       loggedEnv.CLAUDE_CONFIG_DIR = remoteClaudeConfigDir;
