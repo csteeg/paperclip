@@ -299,6 +299,12 @@ changes how an installed version is judged; the source approval decides only wha
 scans and refreshes include. Trust
 allows importing the files only; it does not grant scripts any execution rights. Company skill policy can restrict the
 `skills.override_security` action further; legacy broad skill grants do not cover it.
+The skill library keeps the whole pinned repository for reading, versioning and
+copies, but an agent receives only an imported skill's own folder: its original
+`SKILL.md` and the files below that directory, as the Agent Skills standard
+describes. A skill that uses another skill's or the repository's shared files must
+carry them in its own folder; assigning the other skill does not make relative
+paths such as `../other-skill/` resolve.
 Authored and unproven legacy versions retain an independent recovery copy. Unused Git
 packages with an exact restore recipe may expire; later use requires access to that
 original repository and commit.
