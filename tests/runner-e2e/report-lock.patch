@@ -1,5 +1,5 @@
 diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
-index e15e6dd853..2c3f75e984 100644
+index e15e6dd853..6b4c7039d9 100644
 --- a/pnpm-lock.yaml
 +++ b/pnpm-lock.yaml
 @@ -5,8 +5,8 @@ settings:
@@ -13,8 +13,12 @@ index e15e6dd853..2c3f75e984 100644
    rollup: '>=4.59.0'
    react: ^19.2.8
    react-dom: ^19.2.8
-@@ -19,7 +19,7 @@ patchedDependencies:
-     hash: wnht4big7mwol7j2skbsa5mefq
+@@ -16,10 +16,10 @@ overrides:
+ 
+ patchedDependencies:
+   '@agentclientprotocol/claude-agent-acp@0.73.0':
+-    hash: wnht4big7mwol7j2skbsa5mefq
++    hash: hl6cqyd6fxw2eohhjdcbufnxn4
      path: patches/@agentclientprotocol__claude-agent-acp@0.73.0.patch
    '@agentclientprotocol/codex-acp@1.6.2':
 -    hash: 2iynuypg76nxmydiylgtffhr7e
@@ -22,24 +26,33 @@ index e15e6dd853..2c3f75e984 100644
      path: patches/@agentclientprotocol__codex-acp@1.6.2.patch
    '@chat-adapter/discord@4.39.0':
      hash: nywlhls7dd4npegrgax7jqdbxa
-@@ -43,7 +43,7 @@ patchedDependencies:
-     hash: 7cirnxnu5r6knlf33oxlyqv52u
+@@ -40,7 +40,7 @@ patchedDependencies:
+     hash: vbylpnnxt5av2zdnuqmf6hjyjy
+     path: patches/@discordjs__ws@1.2.3.patch
+   acpx@0.22.0:
+-    hash: 7cirnxnu5r6knlf33oxlyqv52u
++    hash: h7o3n6r5hw3lrovobwzcojs3im
      path: patches/acpx@0.22.0.patch
    embedded-postgres@18.1.0-beta.16:
--    hash: 55uhvnotpqyiy37rn3pqpukhei
-+    hash: kdcv7jktfkjeobz3aaelnxgkqa
-     path: patches/embedded-postgres@18.1.0-beta.16.patch
-   postgres@3.4.9:
-     hash: 7s673zkrux4f7d7y4kyzk7opyu
-@@ -142,7 +142,7 @@ importers:
-         version: 0.45.2(@opentelemetry/api@1.9.1)(kysely@0.29.5)(pg@8.18.0)(postgres@3.4.9(patch_hash=7s673zkrux4f7d7y4kyzk7opyu))
-       embedded-postgres:
-         specifier: ^18.1.0-beta.16
--        version: 18.1.0-beta.16(patch_hash=55uhvnotpqyiy37rn3pqpukhei)
-+        version: 18.1.0-beta.16(patch_hash=kdcv7jktfkjeobz3aaelnxgkqa)
+     hash: 55uhvnotpqyiy37rn3pqpukhei
+@@ -164,7 +164,7 @@ importers:
+         version: link:../shared
+       acpx:
+         specifier: 0.22.0
+-        version: 0.22.0(patch_hash=7cirnxnu5r6knlf33oxlyqv52u)
++        version: 0.22.0(patch_hash=h7o3n6r5hw3lrovobwzcojs3im)
        picocolors:
          specifier: ^1.1.1
          version: 1.1.1
+@@ -186,7 +186,7 @@ importers:
+     dependencies:
+       '@agentclientprotocol/claude-agent-acp':
+         specifier: ^0.73.0
+-        version: 0.73.0(patch_hash=wnht4big7mwol7j2skbsa5mefq)(@anthropic-ai/sdk@0.129.0(zod@4.6.7))(@modelcontextprotocol/sdk@1.31.0(zod@4.6.7))
++        version: 0.73.0(patch_hash=hl6cqyd6fxw2eohhjdcbufnxn4)(@anthropic-ai/sdk@0.129.0(zod@4.6.7))(@modelcontextprotocol/sdk@1.31.0(zod@4.6.7))
+       '@anthropic-ai/sdk':
+         specifier: 0.129.0
+         version: 0.129.0(zod@4.6.7)
 @@ -211,7 +211,7 @@ importers:
      dependencies:
        '@agentclientprotocol/codex-acp':
@@ -49,17 +62,12 @@ index e15e6dd853..2c3f75e984 100644
        '@paperclipai/adapter-utils':
          specifier: workspace:*
          version: link:../../adapter-utils
-@@ -414,7 +414,7 @@ importers:
-         version: 0.45.2(@opentelemetry/api@1.9.1)(kysely@0.29.5)(pg@8.18.0)(postgres@3.4.9(patch_hash=7s673zkrux4f7d7y4kyzk7opyu))
-       embedded-postgres:
-         specifier: ^18.1.0-beta.16
--        version: 18.1.0-beta.16(patch_hash=55uhvnotpqyiy37rn3pqpukhei)
-+        version: 18.1.0-beta.16(patch_hash=kdcv7jktfkjeobz3aaelnxgkqa)
-       postgres:
-         specifier: ^3.4.9
-         version: 3.4.9(patch_hash=7s673zkrux4f7d7y4kyzk7opyu)
-@@ -514,13 +514,16 @@ importers:
-         version: 0.73.0(patch_hash=wnht4big7mwol7j2skbsa5mefq)(@anthropic-ai/sdk@0.129.0(zod@4.6.7))(@modelcontextprotocol/sdk@1.31.0(zod@4.6.7))
+@@ -511,19 +511,19 @@ importers:
+     dependencies:
+       '@agentclientprotocol/claude-agent-acp':
+         specifier: 0.73.0
+-        version: 0.73.0(patch_hash=wnht4big7mwol7j2skbsa5mefq)(@anthropic-ai/sdk@0.129.0(zod@4.6.7))(@modelcontextprotocol/sdk@1.31.0(zod@4.6.7))
++        version: 0.73.0(patch_hash=hl6cqyd6fxw2eohhjdcbufnxn4)(@anthropic-ai/sdk@0.129.0(zod@4.6.7))(@modelcontextprotocol/sdk@1.31.0(zod@4.6.7))
        '@agentclientprotocol/codex-acp':
          specifier: 1.6.2
 -        version: 1.6.2(patch_hash=2iynuypg76nxmydiylgtffhr7e)
@@ -72,14 +80,19 @@ index e15e6dd853..2c3f75e984 100644
 -        version: 0.160.0
 +        specifier: 0.170.0
 +        version: 0.170.0
-+      '@openai/codex-native':
-+        specifier: npm:@openai/codex@0.166.0
-+        version: '@openai/codex@0.166.0'
        acpx:
          specifier: 0.22.0
-         version: 0.22.0(patch_hash=7cirnxnu5r6knlf33oxlyqv52u)
-@@ -907,7 +910,7 @@ importers:
-         version: 0.73.0(patch_hash=wnht4big7mwol7j2skbsa5mefq)(@anthropic-ai/sdk@0.129.0(zod@4.6.7))(@modelcontextprotocol/sdk@1.31.0(zod@4.6.7))
+-        version: 0.22.0(patch_hash=7cirnxnu5r6knlf33oxlyqv52u)
++        version: 0.22.0(patch_hash=h7o3n6r5hw3lrovobwzcojs3im)
+       ajv:
+         specifier: ^8.20.0
+         version: 8.20.0
+@@ -904,10 +904,10 @@ importers:
+         version: 0.5.0
+       '@agentclientprotocol/claude-agent-acp':
+         specifier: 0.73.0
+-        version: 0.73.0(patch_hash=wnht4big7mwol7j2skbsa5mefq)(@anthropic-ai/sdk@0.129.0(zod@4.6.7))(@modelcontextprotocol/sdk@1.31.0(zod@4.6.7))
++        version: 0.73.0(patch_hash=hl6cqyd6fxw2eohhjdcbufnxn4)(@anthropic-ai/sdk@0.129.0(zod@4.6.7))(@modelcontextprotocol/sdk@1.31.0(zod@4.6.7))
        '@agentclientprotocol/codex-acp':
          specifier: 1.6.2
 -        version: 1.6.2(patch_hash=2iynuypg76nxmydiylgtffhr7e)
@@ -87,26 +100,16 @@ index e15e6dd853..2c3f75e984 100644
        '@agentclientprotocol/sdk':
          specifier: 1.9.0
          version: 1.9.0(zod@4.6.7)
-@@ -959,6 +962,9 @@ importers:
-       '@modelcontextprotocol/sdk':
-         specifier: ^1.31.0
-         version: 1.31.0(zod@4.6.7)
-+      '@openai/codex-native':
-+        specifier: npm:@openai/codex@0.166.0
-+        version: '@openai/codex@0.166.0'
-       '@openrouter/ai-sdk-provider':
-         specifier: 3.1.0
-         version: 3.1.0(ai@7.0.130(zod@4.6.7))(zod@4.6.7)
-@@ -1066,7 +1072,7 @@ importers:
-         version: 0.45.2(@opentelemetry/api@1.9.1)(kysely@0.29.5)(pg@8.18.0)(postgres@3.4.9(patch_hash=7s673zkrux4f7d7y4kyzk7opyu))
-       embedded-postgres:
-         specifier: ^18.1.0-beta.16
--        version: 18.1.0-beta.16(patch_hash=55uhvnotpqyiy37rn3pqpukhei)
-+        version: 18.1.0-beta.16(patch_hash=kdcv7jktfkjeobz3aaelnxgkqa)
-       express:
-         specifier: ^5.1.0
-         version: 5.2.1
-@@ -1523,49 +1529,49 @@ packages:
+@@ -1030,7 +1030,7 @@ importers:
+         version: 8.18.0
+       acpx:
+         specifier: 0.22.0
+-        version: 0.22.0(patch_hash=7cirnxnu5r6knlf33oxlyqv52u)
++        version: 0.22.0(patch_hash=h7o3n6r5hw3lrovobwzcojs3im)
+       ai:
+         specifier: 7.0.130
+         version: 7.0.130(zod@4.6.7)
+@@ -1523,49 +1523,49 @@ packages:
    '@antfu/install-pkg@2.1.0':
      resolution: {integrity: sha512-sdg9NxU3zR4Mnawfbc/x6GB5Wf17WYud5qOuEuxXjaKpYpMkISSJEjItGebXJ2bQ4DIcly4NYH23mtkGJjvKUw==}
  
@@ -175,53 +178,12 @@ index e15e6dd853..2c3f75e984 100644
      peerDependencies:
        '@anthropic-ai/sdk': '>=0.93.0'
        '@modelcontextprotocol/sdk': ^1.29.0
-@@ -3504,43 +3510,84 @@ packages:
+@@ -3504,43 +3504,43 @@ packages:
    '@octokit/types@18.0.0':
      resolution: {integrity: sha512-l6bAF43PNxkJp6g+W4PjoUSSkxHomXw2nOum5CTftJz1NlV3vu93NImgOYtLf6CbBUb5j+fiuzW0PPQ5JTSvZA==}
  
 -  '@openai/codex@0.160.0':
 -    resolution: {integrity: sha512-kEtVGzjRAYAMOwJxN39bGcna7LT3IDQgq64NNJ/dDTfu4OzZaocJcyNb5/gGJ/IVF/Vj7oK7E2m3nmTan7lpjg==}
-+  '@openai/codex@0.166.0':
-+    resolution: {integrity: sha512-2Szlp1l1cz5TX1ccpX4Zok3DZrot9xeZe0km+6/1v8JmqxADwyJxKBJah4dBymkwtS25j/u6dipJusTOI97Z8Q==}
-+    engines: {node: '>=16'}
-+    hasBin: true
-+
-+  '@openai/codex@0.166.0-darwin-arm64':
-+    resolution: {integrity: sha512-5fWH6qqUInACcRADIewjlnRxDb4QLe0uriwehiZz0+viuAAB8I+WWefqw4xwHvyKaxeiGX4uK56+vrgfvFk3FQ==}
-+    engines: {node: '>=16'}
-+    cpu: [arm64]
-+    os: [darwin]
-+
-+  '@openai/codex@0.166.0-darwin-x64':
-+    resolution: {integrity: sha512-Vj5wXJPizKmrzNtnRNQf9PP6FJkG3iJU/UO3NE4WvkENZGoQfmImdwf4MVRI5NgwjSuC6LT0HbBRHPVVnwGHuw==}
-+    engines: {node: '>=16'}
-+    cpu: [x64]
-+    os: [darwin]
-+
-+  '@openai/codex@0.166.0-linux-arm64':
-+    resolution: {integrity: sha512-w0ScAsBr9aZKtIFrh6HN6KU2yjKKeSCzYfbb7DB0Ccj4BYPzeZtUeQprbycLCwuX3AFQdbdjapmLho2iot74jQ==}
-+    engines: {node: '>=16'}
-+    cpu: [arm64]
-+    os: [linux]
-+
-+  '@openai/codex@0.166.0-linux-x64':
-+    resolution: {integrity: sha512-CxDm3+D1cpbGJeHrdzINoG+3wn9BVncP4qpZaaNYkxe8iPtRJOYyCJnnPoVjWRIBvI9vPKbRoifsMSA5xDaUpw==}
-+    engines: {node: '>=16'}
-+    cpu: [x64]
-+    os: [linux]
-+
-+  '@openai/codex@0.166.0-win32-arm64':
-+    resolution: {integrity: sha512-LWO1cyGlxbKgeUM7QJ1a6QMSsJi++3PqgIi6BmIUBoj/kzZqRIR69UDMQgeU/9izzJFYMSbwt++lHnUFyjQXlA==}
-+    engines: {node: '>=16'}
-+    cpu: [arm64]
-+    os: [win32]
-+
-+  '@openai/codex@0.166.0-win32-x64':
-+    resolution: {integrity: sha512-NS8Ps5oG5r19pCrMCUXwUqOui6odnUIoBlQkrjCJ+h1k6KiwCzC/+mI9d3nSZCqFoVONPBTmqyq8NYq3YaFGyA==}
-+    engines: {node: '>=16'}
-+    cpu: [x64]
-+    os: [win32]
-+
 +  '@openai/codex@0.170.0':
 +    resolution: {integrity: sha512-dwoughgqjiik++CFaNkjQ5y6pJO6LUzu5P1z8Hy4LUeJ+aIYcX/QO1P5rOQnHmBG4agOM7Y+hc4LtVo/a4GFiw==}
      engines: {node: '>=16'}
@@ -274,7 +236,7 @@ index e15e6dd853..2c3f75e984 100644
      engines: {node: '>=16'}
      cpu: [x64]
      os: [win32]
-@@ -8257,7 +8304,6 @@ packages:
+@@ -8257,7 +8257,6 @@ packages:
  
    opencode-ai@1.18.34:
      resolution: {integrity: sha512-9WUS2T0t4HHDVzXvuwTHF0nvhXvZ9mQ0r+ozCvKdJu0LVoQpOzqAW4qWTC3ygNc5Oedcc7j+Oct24JYlQYnySA==}
@@ -282,8 +244,12 @@ index e15e6dd853..2c3f75e984 100644
      os: [darwin, linux, win32]
      hasBin: true
  
-@@ -9659,16 +9705,16 @@ snapshots:
-   '@agentclientprotocol/claude-agent-acp@0.73.0(patch_hash=wnht4big7mwol7j2skbsa5mefq)(@anthropic-ai/sdk@0.129.0(zod@4.6.7))(@modelcontextprotocol/sdk@1.31.0(zod@4.6.7))':
+@@ -9656,19 +9655,19 @@ snapshots:
+ 
+   '@adobe/css-tools@4.5.0': {}
+ 
+-  '@agentclientprotocol/claude-agent-acp@0.73.0(patch_hash=wnht4big7mwol7j2skbsa5mefq)(@anthropic-ai/sdk@0.129.0(zod@4.6.7))(@modelcontextprotocol/sdk@1.31.0(zod@4.6.7))':
++  '@agentclientprotocol/claude-agent-acp@0.73.0(patch_hash=hl6cqyd6fxw2eohhjdcbufnxn4)(@anthropic-ai/sdk@0.129.0(zod@4.6.7))(@modelcontextprotocol/sdk@1.31.0(zod@4.6.7))':
      dependencies:
        '@agentclientprotocol/sdk': 1.4.0(zod@4.4.3)
 -      '@anthropic-ai/claude-agent-sdk': 0.3.286(@anthropic-ai/sdk@0.129.0(zod@4.6.7))(@modelcontextprotocol/sdk@1.31.0(zod@4.6.7))(zod@4.4.3)
@@ -302,7 +268,7 @@ index e15e6dd853..2c3f75e984 100644
        diff: 9.0.0
        open: 11.0.1
        vscode-jsonrpc: 9.0.1
-@@ -9761,44 +9807,44 @@ snapshots:
+@@ -9761,44 +9760,44 @@ snapshots:
        package-manager-detector: 1.9.0
        tinyexec: 1.3.1
  
@@ -364,38 +330,11 @@ index e15e6dd853..2c3f75e984 100644
  
    '@anthropic-ai/sdk@0.129.0(zod@4.6.7)':
      dependencies:
-@@ -12062,31 +12108,58 @@ snapshots:
+@@ -12062,31 +12061,31 @@ snapshots:
      dependencies:
        '@octokit/openapi-types': 29.0.1
  
 -  '@openai/codex@0.160.0':
-+  '@openai/codex@0.166.0':
-+    optionalDependencies:
-+      '@openai/codex-darwin-arm64': '@openai/codex@0.166.0-darwin-arm64'
-+      '@openai/codex-darwin-x64': '@openai/codex@0.166.0-darwin-x64'
-+      '@openai/codex-linux-arm64': '@openai/codex@0.166.0-linux-arm64'
-+      '@openai/codex-linux-x64': '@openai/codex@0.166.0-linux-x64'
-+      '@openai/codex-win32-arm64': '@openai/codex@0.166.0-win32-arm64'
-+      '@openai/codex-win32-x64': '@openai/codex@0.166.0-win32-x64'
-+
-+  '@openai/codex@0.166.0-darwin-arm64':
-+    optional: true
-+
-+  '@openai/codex@0.166.0-darwin-x64':
-+    optional: true
-+
-+  '@openai/codex@0.166.0-linux-arm64':
-+    optional: true
-+
-+  '@openai/codex@0.166.0-linux-x64':
-+    optional: true
-+
-+  '@openai/codex@0.166.0-win32-arm64':
-+    optional: true
-+
-+  '@openai/codex@0.166.0-win32-x64':
-+    optional: true
-+
 +  '@openai/codex@0.170.0':
      optionalDependencies:
 -      '@openai/codex-darwin-arm64': '@openai/codex@0.160.0-darwin-arm64'
@@ -436,12 +375,12 @@ index e15e6dd853..2c3f75e984 100644
      optional: true
  
    '@openclaw/fs-safe-darwin-arm64@0.27.2':
-@@ -15214,7 +15287,7 @@ snapshots:
+@@ -14410,7 +14409,7 @@ snapshots:
  
-   elkjs@0.9.3: {}
+   acorn@8.18.0: {}
  
--  embedded-postgres@18.1.0-beta.16(patch_hash=55uhvnotpqyiy37rn3pqpukhei):
-+  embedded-postgres@18.1.0-beta.16(patch_hash=kdcv7jktfkjeobz3aaelnxgkqa):
+-  acpx@0.22.0(patch_hash=7cirnxnu5r6knlf33oxlyqv52u):
++  acpx@0.22.0(patch_hash=h7o3n6r5hw3lrovobwzcojs3im):
      dependencies:
-       async-exit-hook: 2.0.1
-       pg: 8.18.0
+       '@agentclientprotocol/sdk': 1.9.0(zod@4.6.7)
+       '@openclaw/fs-safe': 0.27.2
