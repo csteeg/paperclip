@@ -12,7 +12,7 @@ Related: [production checklist](../plans/2026-11-17-google-workspace-production-
 [code-fix plan](../plans/2026-11-17-google-workspace-code-fixes.md),
 [connector doc](../connections/GOOGLE-WORKSPACE.md).
 
-Last updated: November 17, 2026 (late evening).
+Last updated: November 18, 2026.
 
 ## Decisions
 
@@ -32,6 +32,14 @@ Last updated: November 17, 2026 (late evening).
 | Nov 17 | **`delete_event` never deletes a whole recurring series in this release** | A series ID is refused; the agent must pass one occurrence's ID. |
 | Nov 17 | **A health probe may only use a request the granted scopes permit** | Each service lists cheap reads with the scopes that allow each; the probe uses the first one the grant allows. |
 | Nov 17 | **Read & write Calendar also requests free/busy** | See "Scopes". |
+| Nov 17 | **Tool labels must be truthful, even where Google's differ** | Every update tool is marked destructive: Calendar `update_event`, Docs `update_doc`, Slides `update_presentation`, Sheets `update_spreadsheet`. Google marks them non-destructive. Approval and confirmation follow our label. |
+| Nov 17 | **Docs and Slides edits go through a closed list of request types** | Each request type is allowed or refused by name. A type not on the list, including one Google adds later, is refused and nothing is sent. |
+| Nov 17 | **No tool may reach a file other than the one named** | Request types that read another file (smart-chip links, linked Sheets charts, imported slides, Drive audio and video) are refused. Image links on `drive.google.com` or `docs.google.com` are refused. Drive tools use only the file ID the caller passed. |
+| Nov 17 | **Docs and Slides edits require the revision that was read** | `requiredRevisionId` is mandatory. If the file changed since the read, nothing is changed and the agent is told to read it again. |
+| Nov 17 | **Sheet tabs and ranges may be deleted inside a spreadsheet** | Through `update_spreadsheet`, because the approver sees each request type (`deleteSheet`, `deleteDimension`, and so on). No tool deletes, creates or shares a whole spreadsheet. |
+| Nov 17 | **Deleting a whole recurring series is refused** | Same rule as the `delete_event` decision above. |
+| Nov 17 | **A service is switched to REST only after a live test on the staging tester** | One service at a time. |
+| Nov 17 | **The gateway sets the REST result size limit** | The REST tools enforce the number the gateway passes: the gateway's MCP response limit less framing, 999,885 bytes. A result Google's MCP server could deliver is also delivered over REST. See the folder README's "Result size". |
 
 ## What has shipped
 
@@ -46,8 +54,12 @@ Last updated: November 17, 2026 (late evening).
 | [#22017](https://github.com/paperclipai/paperclip/pull/22017) | Nine Calendar tools in the REST tool set (Calendar 9 of 9). | `c41ca4a992` |
 | [#22016](https://github.com/paperclipai/paperclip/pull/22016) | Per-service transport switch (`GOOGLE_WORKSPACE_TOOL_TRANSPORT`) and in-process dispatch to the REST tools. Every service is still on Google's MCP. Discovery and health run a scope-aware probe for a service on REST. | `c652c813bc` |
 | [#22014](https://github.com/paperclipai/paperclip/pull/22014) | The remaining six Gmail read tools in the REST tool set (Gmail 9 of 9). | `1d3b4201e3` |
+| [#22026](https://github.com/paperclipai/paperclip/pull/22026) | Read & write Calendar also requests `calendar.events.freebusy`, and the planning docs were brought up to date. | `7f1f0eef67` |
+| [#22027](https://github.com/paperclipai/paperclip/pull/22027) | Six Sheets tools in the REST tool set (Sheets 6 of 6). | `c366a606b1` |
+| [#22029](https://github.com/paperclipai/paperclip/pull/22029) | Docs and Slides tools in the REST tool set (Docs 2 of 2, Slides 2 of 2). Also marks Calendar `update_event` destructive. | `f61b919701` |
+| [#22028](https://github.com/paperclipai/paperclip/pull/22028) | Eight Drive tools in the REST tool set (Drive 8 of 8). Also limits the Gmail host to its API path prefix (before, any path was accepted there) and requires a path prefix for every allowed host. | `ceaf574421` |
 
-In progress: the Drive, Docs and Slides, and Sheets REST tools.
+The REST tool set now covers all 36 actions. No service is switched to it.
 
 ### REST tools status
 
@@ -55,60 +67,121 @@ In progress: the Drive, Docs and Slides, and Sheets REST tools.
 | --- | --- | --- |
 | Gmail | 9 of 9 | No |
 | Calendar | 9 of 9 | No |
-| Drive | 0 of 8 | No |
-| Docs | 0 of 2 | No |
-| Sheets | 0 of 6 | No |
-| Slides | 0 of 2 | No |
+| Drive | 8 of 8 | No |
+| Docs | 2 of 2 | No |
+| Sheets | 6 of 6 | No |
+| Slides | 2 of 2 | No |
 
 "Switched on" means the service is `paperclip_rest` in
 `GOOGLE_WORKSPACE_TOOL_TRANSPORT`. Today every service is `google_mcp`.
 
+### Known differences from Google's tools
+
+From the folder README (`server/src/google-workspace-rest-tools/README.md`).
+
+| Service | Difference |
+| --- | --- |
+| Gmail | A reply draft is threaded but does not quote the original message. |
+| Gmail | `get_draft`, `list_threads` and `search_messages` are not in Google's reference; their inputs and results are inferred from sibling tools. |
+| Docs | The format of `read_doc`'s `content` has not been compared with an answer from Google's server. |
+| Sheets | Whether Google's `get_values` returns formatted values and its `update_values` writes raw values is inferred, not verified. |
+| Sheets | `get_spreadsheet` refuses `commentsIncluded: true`, and `update_spreadsheet` refuses comment requests: comments are not in the Sheets API. |
+| Drive | `read_file_content` cannot extract text from PDF, Office or image files; they return `textFormattingNotSupported`. |
+| Drive | Whether `copy_file` under `drive.file` can copy a file the app never created or opened is not verified. |
+
 ## Still open
 
+- **Images by public web address in Docs and Slides.** An edit may insert an
+  image from any public link, and Google then fetches that address. The
+  address is chosen by the agent, so it can carry data out (a leak path).
+  Allowed today. Recommendation: refuse it before Docs or Slides is switched
+  to REST.
 - **What we send to the reviewers.** Not decided: the new staging tester or
   something else. Whatever it is must use the separate Google app (below).
-- **How the staging tester reaches the separate Google app.** The broker
-  cannot point one workspace at a different Google client (see
-  "Environments"). Recommendation: add a per-workspace client override to the
-  broker so reviewers see the real flow.
-- **Reviewer login on staging.** The scoped reviewer password login is
-  hard-coded to the production tester. The client override above does not fix
-  this; how to enable the login on staging is still undecided.
+- **Reviewer login on staging.** The broker now allows the scoped reviewer
+  password login on the staging tester host. Its secret is not set yet; no
+  broker change is needed.
 - **AI-agent client and REST.** Whether an OAuth client marked for AI agents
-  may call the REST APIs rather than MCP. To check before the staging tester is
-  wired.
+  may call the REST APIs rather than MCP. The tester's client is marked for
+  AI agents and is wired, but it has only been used through MCP. Check on the
+  tester before any service is switched to REST.
 - **Three Gmail tools are inferred.** Google's MCP reference does not list
   `get_draft`, `list_threads` and `search_messages`; their schemas copy the
   sibling tools (#22014).
-- **Privacy policy.** paperclipai/paperclip-website PR 197 is a draft waiting
-  on Dotta's sign-off. It does not yet mention the OpenRouter model used by
-  the optional injection-screening check; it must (see "Privacy policy").
+- **Privacy policy.** paperclipai/paperclip-website PR 197 merged on
+  November 17 and the page shows "Last updated: November 17, 2026". Its
+  no-training promise is narrower than before: it now covers only the model
+  providers Paperclip selects and configures. That needs legal review; it is
+  not required for Google approval. Whether it covers the OpenRouter model
+  used by the optional injection-screening check is not confirmed (see
+  "Privacy policy").
+- **Lockfile on master.** `pnpm-lock.yaml` is behind `server/package.json`
+  (`posthog-node` is missing), so a frozen install fails. Checked November 17
+  at `ceaf574421`.
 - **The "no review correspondence" rule.** Narrow it or keep it (see "Google
   review history").
 - Which security lab to use, and the budget.
+
+## Next steps
+
+1. Deploy the Cloud broker changes to production. They are merged and live
+   on staging (see "Cloud broker"); the production deploy is manual and
+   waits for Dotta.
+2. Confirm the consent screen on the staging tester with a fresh Google
+   account, and set the reviewer login secret.
+3. Finish live acceptance on the staging tester.
+4. Switch services to REST one at a time, each after its live test.
+5. Revoke at Google when the last connection is removed.
+6. Security scans.
+7. Run the same data cleanup when a task or a company is deleted.
 
 ## Environments
 
 | Name | Address | Notes |
 | --- | --- | --- |
 | Earlier tester | `googletester.paperclip.app` (company prefix `GOO`) | On **production**. Used for earlier tests. Hard to deploy to; do not build on it further. |
-| New tester | `googletester.staging.paperclip.app` | **To be created** on staging. Engineering qualification happens here. |
+| New tester | `googletester.staging.paperclip.app` (company prefix `GOO`) | **Created November 18** on staging. Engineering qualification happens here. State below. |
 | Test 02 | In the private handoff | Staging stack used for the October proof. Holds Dotta's own Gmail grant, so not for reviewers. |
 | Reviewer destination | Undecided | See "Still open". |
 
-Creating the staging tester (as reported by the Nov 17 read-only audit; not yet
-done):
+Staging tester state (November 18):
 
-1. On the staging account site, create an organization with the slug
-   `googletester`. That gives `googletester.staging.paperclip.app`.
-2. Pin its app version with the Cloud repository's deploy-stack command.
-3. Turn on `enableGoogleWorkspaceConnector`.
+- Organization slug `googletester`; the stack id is in staging fleet admin.
+  Agent `Workspace Tester` runs OpenCode on DeepSeek V4.1 Flash 1017 through
+  a company OpenRouter connection (a dedicated key with a spending limit).
+- `enableGoogleWorkspaceConnector` is on through a fleet-admin override.
+- It runs an app build from before the disconnect-revoke change, because no
+  Cloud composition existed yet for a newer commit. Redeploy, then test
+  disconnect.
+- **Passed, on staging's default Google client and Google's MCP transport:**
+  picker and disclosure, a 10-scope request, consent, connection test calls
+  (list labels, search, read the synthetic email in full, create a draft),
+  "Delete data", and a real agent task that found the synthetic email by its
+  marker, returned the full body and left an unsent draft (about 2 minutes).
+- **On the separate Google app since November 18.** That app is External, In
+  Production, with the six REST APIs enabled and the staging broker callback
+  registered on its one web client. The staging environment lists the
+  tester's stack for the alternate client, for the Workspace group only, so
+  the per-service Gmail and Search profiles are unavailable on the tester.
+  After the switch the old grant asked for a reconnect, as designed; after
+  reconnecting, an agent task read the synthetic email again. Google did not
+  show a consent screen on reconnect (the account had approved this app
+  before), so the app name on the consent screen is still to be confirmed
+  with a fresh Google account.
+- Never set the alternate stack list before its client secret exists: the
+  Google bootstrap step then fails and blocks every staging deploy.
+- Reviewer password login for this host is supported by the broker but its
+  secret is not set yet.
 
-Two obstacles (reported):
+Found while testing:
 
-- The broker cannot point one workspace at the separate Google app. Every
-  workspace in an environment uses that environment's one Google client.
-- The scoped reviewer password login is hard-coded to the production tester.
+- Google's live MCP server offered 34 of our 36 allowlisted actions on the
+  tester; `gmail__list_threads` and `gmail__search_messages` were missing.
+  `gmail__get_draft` was offered live even though Google's published
+  reference does not list it, so the reference and the live server differ.
+- Write actions default to "Allowed" with no approval step. Dotta to decide.
+- The connection audit page shows internal tool names and raw ids.
+- The REST tools have not been run against real Google yet.
 
 Reviewer login: Google's reviewers could not use our normal sign-in, so we
 gave them **a custom password** for the Paperclip login. Any reviewer
@@ -177,17 +250,22 @@ Known mismatches to clean up (after #22001 the app side matches the 14):
 
 ## Cloud broker (paperclip-cloud)
 
-As reported by a read-only audit on November 17. Not re-verified here.
+First reported by a read-only audit on November 17. The changes listed below
+were then built and merged on November 17 and 18. They are live on **staging
+only**; production still runs the old broker.
 
 - The profile registry is at `src/connections/providers.ts`.
 - One Google client per environment, shared by all profile groups. Staging's
   client differs from production's.
 - `workspace.all` is enabled on staging only.
 - There is no `gmail.archive` profile.
-- A revoke endpoint exists, but every Google profile has revocation turned off.
-- There is no per-workspace client override.
+- Revocation is on for Google profiles, with a ledger of provider grants.
+- A per-stack alternate Google client exists (for the tester). It is chosen
+  only from the enrolled stack id.
+- The scoped reviewer password login allows the production and the staging
+  tester hosts.
 
-Changes needed in the broker:
+Changes made in the broker (staging):
 
 | Change | Why |
 | --- | --- |
@@ -220,7 +298,7 @@ nested run answers and migrated log originals.
 | Raw provider traces | Full traffic | No. Admin opt-in, encrypted, expire within 24 hours. |
 | Feedback exports already sent | Run logs the user chose to share | No. Already outside Paperclip. |
 | Optional model check for injection screening | If a company turns it on, the full tool result is sent to an OpenRouter model | Not stored by Paperclip. |
-| Connection removal | Deletes tokens locally | Does not revoke at Google. |
+| Connection removal | Deletes tokens locally | Asks Paperclip Cloud to revoke at Google; it does so only when no other connection could share the grant. Customer-owned clients stay local. |
 
 What "Delete data" keeps: the record that each call happened (time, tool,
 agent, outcome, size, fingerprint), and activity entries with counts only.
@@ -261,21 +339,18 @@ review correspondence in a public repository. We kept the summary.
   published at <https://paperclip.ing/privacy>. Last updated July 23, 2026.
 - It already has what Google looks for first: a Google user data section
   (4.1) with the Limited Use statement and links to Google's policy.
-- The draft edits are in paperclipai/paperclip-website PR 197 (draft, awaiting
-  Dotta's sign-off on the wording). It must also:
-  - cover the OpenRouter model used by the optional injection-screening check;
-  - match the picker's statement that results stay in task and run history
-    until deleted.
-- Gaps found November 17, to be fixed by that PR:
-  - It does not say that Google content is sent to AI model providers to carry
-    out tasks. It only names "cloud hosting and infrastructure providers".
-  - It says connected-account data is kept only while the connection is active.
-    In the product, email and file content that an agent read stays in task and
-    run history after disconnect.
-  - It says "read or send access to Gmail". We create drafts and do not send.
-  - It names `connect.paperclip.ing` as the sign-in path; check that this
-    matches the current flow.
-  - It gives no steps or timeline for deleting data.
+- The edits are in paperclipai/paperclip-website PR 197, merged November 17.
+  The published page now says that Google content is sent to the AI model
+  provider configured for an agent, that agents create Gmail drafts and do not
+  send, that content read by agents stays in tasks and runs until deleted, and
+  how to delete data (full deletion within 30 days of a request).
+- Still to check:
+  - The no-training promise now covers only providers Paperclip selects and
+    configures. Legal review needed.
+  - Whether it covers the OpenRouter model used by the optional
+    injection-screening check.
+  - It names `my.paperclip.app` as the Google connection service on Paperclip
+    Cloud; check that this matches the current flow.
 
 ## Other things to remember
 

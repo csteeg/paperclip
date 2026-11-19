@@ -3,7 +3,7 @@
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { CONNECTABLE_APP_DEFINITIONS, GOOGLE_WORKSPACE_CONNECTOR_PROFILES, getAppStoreDefinition, pluginAppSlug } from "@paperclipai/shared";
+import { CONNECTABLE_APP_DEFINITIONS, GOOGLE_WORKSPACE_CONNECTOR_PROFILES, getAppStoreDefinition, pluginAppDefinition, pluginAppSlug, setPluginAppDefinitions } from "@paperclipai/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, type RequestOptions } from "@/api/client";
 import { aiConnectionsApi } from "@/api/ai-connections";
@@ -458,6 +458,76 @@ describe("AppsConnect — Connect with a link (M4 frame)", () => {
     expect(connectAppMock).toHaveBeenCalledWith("company-1", expect.objectContaining({ galleryKey: "1password",
       connectionMethodKey: "service-account", credentialValues: { "credentials.authorization": "ops_disposable-fixture" } }));
     expect(startOAuthMock).not.toHaveBeenCalled();
+  });
+
+  it("sends a plugin connector's settings from its settings schema", async () => {
+    const app = pluginAppDefinition("example.records", {
+      schemaVersion: 1, slug: "records", name: "Records", description: "Look up records", categories: ["data"],
+      branding: { logoUrl: "/brands/apps/api-key-generic.svg" }, urlPatterns: [],
+      methods: [{ key: "api-key", label: "API key", transport: "plugin", auth: "api_key", ownershipModes: ["customer"],
+        whenToUse: "Use an API key.", guidanceMd: "Paste a key.", riskTier: "S2",
+        credentialFields: [{ key: "apiKey", label: "API key", type: "password", required: true, placeholder: "key", secret: true }],
+        settingsSchema: { type: "object", properties: { workspace: { type: "string", title: "Workspace" } }, required: ["workspace"] },
+        tools: { kind: "static", list: [{ name: "lookup", risk: "read", parametersSchema: { type: "object" } }] } }],
+    });
+    setPluginAppDefinitions([app]);
+    try {
+      listGalleryMock.mockResolvedValue({ apps: [app] });
+      await render(undefined, false, <ConnectionSetupFlow serviceSlug={app.slug} />);
+      const key = container.querySelector<HTMLInputElement>('input[type="password"]')!;
+      const workspace = [...container.querySelectorAll<HTMLInputElement>('input:not([type="password"])')].find(input => !input.disabled)!;
+      expect(buttonByText("Connect")?.disabled).toBe(true);
+      await act(async () => setInputValue(key, "records-key"));
+      await act(async () => setInputValue(workspace, "acme"));
+      await act(async () => buttonByText("Connect")?.click());
+      await flushReact();
+      expect(connectAppMock).toHaveBeenCalledWith("company-1", expect.objectContaining({ galleryKey: app.slug,
+        connectionMethodKey: "api-key", settings: { workspace: "acme" }, credentialValues: { "credentials.apiKey": "records-key" } }));
+    } finally {
+      setPluginAppDefinitions([]);
+    }
+  });
+
+  it.each([
+    { auth: "none" as const, credentialValues: {} },
+    { auth: "api_key" as const, credentialValues: { "credentials.apiKey": "records-key" } },
+  ])("asks which one agent uses a plugin connector with agent grants ($auth)", async ({ auth, credentialValues }) => {
+    const app = pluginAppDefinition("example.records", {
+      schemaVersion: 1, slug: "records", name: "Records", description: "Look up records", categories: ["data"],
+      branding: { logoUrl: "/brands/apps/api-key-generic.svg" }, urlPatterns: [],
+      methods: [{ key: "agent", label: "Agent", transport: "plugin", auth, grantKinds: ["agent"], ownershipModes: ["customer"],
+        whenToUse: "One agent uses it.", guidanceMd: "Pick the agent.", riskTier: "S1",
+        ...(auth === "api_key"
+          ? { credentialFields: [{ key: "apiKey", label: "API key", type: "password" as const, required: true, placeholder: "key", secret: true }] }
+          : {}),
+        tools: { kind: "static", list: [{ name: "lookup", risk: "read", parametersSchema: { type: "object" } }] } }],
+    });
+    setPluginAppDefinitions([app]);
+    try {
+      listGalleryMock.mockResolvedValue({ apps: [app] });
+      await render(undefined, false, <ConnectionSetupFlow serviceSlug={app.slug} />);
+      // The stated default must not promise every agent, and the picker is
+      // already open because the connection needs its one agent.
+      expect(container.textContent).not.toContain("available to all agents");
+      expect(container.textContent).toContain("Which agent uses this connection?");
+      expect(container.textContent).not.toContain("GitHub");
+      expect(container.textContent).not.toContain("No identity required");
+      expect(buttonByText("Connect")?.disabled).toBe(true);
+      const key = container.querySelector<HTMLInputElement>('input[type="password"]');
+      if (auth === "api_key") await act(async () => setInputValue(key!, "records-key"));
+      await act(async () => buttonByText("Select agents")!.click());
+      await flushReact();
+      await act(async () => document.body.querySelector<HTMLElement>('[aria-label="Allow Ada"]')!.click());
+      await flushReact();
+      expect(container.textContent).toContain("available only to the chosen agent");
+      await act(async () => buttonByText("Connect")?.click());
+      await flushReact();
+      expect(connectAppMock).toHaveBeenCalledWith("company-1", expect.objectContaining({ galleryKey: app.slug,
+        connectionMethodKey: "agent", grantKind: "agent", subjectAgentId: "agent-1",
+        ...(auth === "api_key" ? { credentialValues } : {}) }));
+    } finally {
+      setPluginAppDefinitions([]);
+    }
   });
 
   it("opens the saved AI sign-in and reuses a completed account", async () => {

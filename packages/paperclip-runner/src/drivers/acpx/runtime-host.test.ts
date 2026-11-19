@@ -20,7 +20,7 @@ import {
   type NativeRuntimeContextSnapshot,
 } from "../../contracts/runtime-context.js";
 import { releaseMaterializedNativeRuntimeSkills } from "../runtime-context-materializer.js";
-import { openCodexAcpxRuntime } from "./acpx-runtime-adapter.js";
+import { openQualifiedAcpxRuntime } from "./acpx-runtime-adapter.js";
 import { removeCodexSkillHomeTree } from "../codex-skill-home.js";
 import { acpxSidecarErrorCode } from "../../cli/acpx-sidecar-input.js";
 import { stageManagedCodexCredential } from "./codex-credentials.js";
@@ -1056,7 +1056,7 @@ describe("ACPX runtime host", () => {
       // staged credential to that pending admission. Abort before entering the
       // adapter so its pre-entry path must publish a completed cleanup proof.
       controller.abort(cancellation);
-      return openCodexAcpxRuntime(options, { createRuntime });
+      return openQualifiedAcpxRuntime(options, { createRuntime });
     });
 
     await expect(

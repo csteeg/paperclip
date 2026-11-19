@@ -310,13 +310,13 @@ export function createOAuthClientProtocol({ fetchRemoteHttpUrl, assertOAuthEndpo
     refreshToken?: string | null;
     /** RFC 8707 resource indicator: the MCP server this token is for. */
     resource?: string | null;
+    serverUrl?: string | null;
     /**
      * RFC 7523 signed client assertion (`private_key_jwt`). When present it is
      * the only client authentication sent: the client is identified by the
      * assertion's `sub`, so no client_id or secret goes in the request.
      */
     clientAssertion?: string | null;
-    serverUrl?: string | null;
   }) {
     const body = new URLSearchParams();
     if (input.grantType === "client_credentials") {

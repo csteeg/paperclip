@@ -8,6 +8,7 @@ import { retryTransientLockContention } from "../transient-lock-contention.js";
 import { nativeLeaseHolder, notifyNativeTokenLeaseClaimed } from "./native-token-lease-settlement.js";
 import { captureRemoteNativeProviderArtifacts, shareNativeProviderArtifactCapture } from "./native-provider-artifact-capture.js";
 import { NativeSessionDiagnostics, nativeSessionDiagnostics, type NativeDiagnosticLease } from "./native-session-diagnostics.js";
+import { NATIVE_SANDBOX_DISK_FULL, NATIVE_SANDBOX_DISK_FULL_ACTION, nativeSandboxDiskFullSourceCode } from "./native-sandbox-disk-full.js";
 import { recordAgentProviderRateLimits } from "../agent-provider-rate-limits.js";
 import { nativePostResultFailureCategory, type NativePostResultFailureCategory } from "./native-post-result-failure.js";
 import { logger } from "../../middleware/logger.js";
@@ -81,6 +82,13 @@ import { museRunnerBroker } from "../muse-runner-broker.js";
 import { nativeCaseHandoffResult } from "./native-case-handoff.js";
 import { assertExternalNativeRunAuthority } from "./external-native-authority.js";
 import { stageRemoteLaunchAssets } from "./remote-launch-assets.js";
+import {
+  createRemoteRunnerDiskReserve,
+  isSandboxDiskFullError,
+  remoteRunnerDiskReservePath,
+  remoteStagingFailure,
+  sandboxDiskFullFailure,
+} from "./remote-runner-disk-reserve.js";
 import {
   NATIVE_CONTINUITY_STATE_ENTRIES, NATIVE_SESSION_ROOT_HELD_ENTRIES, describeUnexpectedNativeSessionRootEntries,
   isKnownNativeSessionRootEntry,
@@ -9151,6 +9159,7 @@ export function nativeSessionFailureDisposition(
   attempt: number,
   now = new Date(),
   sourceFailureCode?: ReturnType<typeof nativeSessionFailureSourceCode>,
+  options: { freshBootstrap?: boolean } = {},
 ) {
   const permanentFailure =
     // A same-run retry would meet the same unretired owner on the same sandbox;
@@ -9163,7 +9172,7 @@ export function nativeSessionFailureDisposition(
     sourceFailureCode === "native_provider_approval_required" ||
     sourceFailureCode === "native_event_replay_conflict" ||
     sourceFailureCode === "runner_remote_provider_artifact_incompatible" ||
-    sourceFailureCode === "runner_remote_provider_verification_unavailable" ||
+    sourceFailureCode === "runner_remote_provider_verification_unavailable" && !options.freshBootstrap ||
     sourceFailureCode === "native_provider_terminal_failed" ||
     sourceFailureCode === NATIVE_PROVIDER_STATE_INCOMPATIBLE ||
     sourceFailureCode === NATIVE_PROVIDER_SIDE_EFFECT_PENDING ||
@@ -9175,7 +9184,8 @@ export function nativeSessionFailureDisposition(
     sourceFailureCode === "native_provider_auth_failed" ||
     sourceFailureCode === NATIVE_PROVIDER_SESSION_CLOSED ||
     sourceFailureCode === NATIVE_PROVIDER_STARTUP_REJECTED ||
-    sourceFailureCode === NATIVE_CONTROLLER_JOURNAL_BEHIND_RUNNER;
+    sourceFailureCode === NATIVE_CONTROLLER_JOURNAL_BEHIND_RUNNER ||
+    sourceFailureCode === NATIVE_SANDBOX_DISK_FULL;
   const permissionDeclined = sourceFailureCode === "native_permission_declined";
   const exhausted = permanentFailure || permissionDeclined || attempt >= 3;
   return {
@@ -9353,7 +9363,11 @@ function runnerClosedTurnStartSession(error: unknown, depth = 0): boolean {
   return runnerClosedTurnStartSession(value.cause, depth + 1);
 }
 
-export function nativeSessionFailureSourceCode(
+export function nativeSessionFailureSourceCode(error: unknown, runnerSandboxDiskFull = false) {
+  return nativeSandboxDiskFullSourceCode(classifyNativeSessionFailure(error), error, runnerSandboxDiskFull);
+}
+
+function classifyNativeSessionFailure(
   error: unknown,
 ):
   | "native_permission_declined"
@@ -9676,7 +9690,9 @@ export async function nativeProviderRecoveryEvidence(input: {
     NATIVE_PROVIDER_STARTUP_REJECTED,
     "provider_session_open_timeout",
     "local_runtime_api_listener_unavailable",
-  ]).has(input.sourceFailureCode) || (input.sourceFailureCode === "runner_ingress_startup_failed"
+  ]).has(input.sourceFailureCode)
+    || input.sourceFailureCode === "runner_remote_provider_verification_unavailable" && !!input.bootstrap
+    || (input.sourceFailureCode === "runner_ingress_startup_failed"
     && !checkpointExists && !providerEventsExist && !!run?.nativeIssueId && !!run.nativeSessionId && !!run.runnerInstanceId
     && await nativeRunnerNeverAuthenticated(input.db, { companyId: run.companyId, issueId: run.nativeIssueId, runId: run.id },
       { runId: run.id, normalizedSessionId: run.nativeSessionId, runnerInstanceId: run.runnerInstanceId }));
@@ -11118,6 +11134,9 @@ async function executePaperclipNativeSessionAttempt(
   cleanupOnly = false,
   ownDiagnosticLease?: (lease: NativeDiagnosticLease) => void,
 ): Promise<AdapterExecutionResult> {
+  const attemptDiagnosticLeases: NativeDiagnosticLease[] = [];
+  const ownRunDiagnosticLease = ownDiagnosticLease;
+  ownDiagnosticLease = lease => { attemptDiagnosticLeases.push(lease); ownRunDiagnosticLease?.(lease); };
   if (input.execution.provider.kind === "acpx" && input.execution.provider.agent === "antigravity") {
     const candidate = resolveAntigravityCandidateAdmission({
       companyId: input.execution.binding.companyId, model: input.execution.provider.model,
@@ -13442,7 +13461,8 @@ async function executePaperclipNativeSessionAttempt(
         throw error;
       }
       const now = new Date();
-      const startupClassifiedFailureCode = nativeSessionFailureSourceCode(error);
+      const startupClassifiedFailureCode = nativeSessionFailureSourceCode(error,
+        attemptDiagnosticLeases.some(lease => lease.sandboxDiskFullObserved()));
       // A timed-out session.open may still have opened a provider session
       // before its runner stopped. The same-run retry must not reuse it.
       const classifiedFailureCode = startupClassifiedFailureCode === "provider_session_open_timeout" &&
@@ -13495,6 +13515,7 @@ async function executePaperclipNativeSessionAttempt(
         attempt,
         now,
         sourceFailureCode,
+        { freshBootstrap: bootstrap !== undefined },
       ), {
         attempt, now, adoptedRunnerUnanswered,
         replacing: input.restartRecovery?.kind === "reattach_remote_runner" && input.restartRecovery.replaceUnansweredRunner === true,
@@ -13662,6 +13683,8 @@ async function executePaperclipNativeSessionAttempt(
                     ? RUNNER_TASK_ADMISSION_REJECTED_ACTION
                   : sourceFailureCode === "runner_ingress_access_rejected"
                     ? "The computer provider rejected access. Restore the environment's credentials or permissions before retrying. Automatic retries are stopped."
+                  : sourceFailureCode === NATIVE_SANDBOX_DISK_FULL
+                    ? NATIVE_SANDBOX_DISK_FULL_ACTION
                   : sourceFailureCode === "native_provider_terminal_failed"
                     ? "The provider session is permanently unusable. Verify stopped execution, completed actions, and task context before starting a linked continuation."
                   : sourceFailureCode === "native_governed_wait_settlement_pending"
@@ -13941,6 +13964,8 @@ async function executePaperclipNativeSessionAttempt(
                 ? RUNNER_TASK_ADMISSION_REJECTED_ACTION
               : sourceFailureCode === "runner_ingress_access_rejected"
                 ? "The computer provider rejected access. Restore the environment's credentials or permissions before retrying. Automatic retries are stopped."
+              : sourceFailureCode === NATIVE_SANDBOX_DISK_FULL
+                ? NATIVE_SANDBOX_DISK_FULL_ACTION
               : sourceFailureCode === "native_provider_terminal_failed"
                 ? "Verify that the failed provider stopped and reconcile its action outcomes. A linked continuation can proceed only after these checks succeed."
               : sourceFailureCode === "native_provider_model_rejected" && !recoveryEvidence.providerSessionEstablished
@@ -14852,7 +14877,7 @@ export async function stageRemoteRunnerFile(input: {
     bypassSession: true,
   });
   if (result.exitCode !== 0 || result.timedOut) {
-    throw new Error("runner_remote_staging_failed");
+    throw remoteStagingFailure("runner_remote_staging_failed", result);
   }
 }
 
@@ -14972,7 +14997,7 @@ export async function stageRemoteRunnerDirectory(input: {
     bypassSession: true,
   });
   if (result.exitCode !== 0 || result.timedOut) {
-    throw new Error("runner_remote_directory_staging_failed");
+    throw remoteStagingFailure("runner_remote_directory_staging_failed", result);
   }
 }
 
@@ -16126,6 +16151,8 @@ export function createRemoteRunnerProcessLauncher(input: {
   stateDirectory: string;
   diagnosticsDirectory: string;
   runnerInstanceId: string;
+  /** Managed sandboxes only; never on a user's own host. Outside every saved directory. */
+  diskReservePath?: string;
   ensureArtifact?: (spec: RunnerProcessLaunchSpec) => Promise<void>;
   requireProcessStartFingerprint?: boolean;
   onSpawn?: (meta: {
@@ -16138,7 +16165,11 @@ export function createRemoteRunnerProcessLauncher(input: {
   onRunnerProcessSpawned?: () => void;
 }): (spec: RunnerProcessLaunchSpec) => RunnerProcessHandle {
   const runner = input.runner;
+  const reserve = input.diskReservePath ? createRemoteRunnerDiskReserve(runner, input.diskReservePath) : null;
+  let launches = 0;
   return (spec) => {
+    // Every later launch replaces a runner that was lost, possibly to a full disk.
+    const relaunch = launches++ > 0;
     let exitConfirmed = false;
     // Set immediately before the launch RPC. Until then no sandbox command
     // could have started runnerd, so a staging failure proves no process.
@@ -16211,15 +16242,30 @@ export function createRemoteRunnerProcessLauncher(input: {
       };
     };
     const completion = (async () => {
+      if (relaunch) await reserve?.release();
       if (input.ensureArtifact) {
-        if (input.trace) {
-          await input.trace.measure(
-            "runner.runtime.stage",
-            () => input.ensureArtifact!(spec),
-            { parentName: "runner.session.startup" },
-          );
-        } else {
-          await input.ensureArtifact(spec);
+        const stage = () => input.trace
+          ? input.trace.measure("runner.runtime.stage", () => input.ensureArtifact!(spec),
+            { parentName: "runner.session.startup" })
+          : input.ensureArtifact!(spec);
+        let restaged = false;
+        for (;;) {
+          try {
+            await stage();
+            break;
+          } catch (error) {
+            if (!isSandboxDiskFullError(error)) throw error;
+            const released = reserve && !restaged ? await reserve.release() : "not_held";
+            if (released === "released") {
+              restaged = true;
+              continue;
+            }
+            // The reserve may still be held, so recovery may try again.
+            if (released === "failed") throw error;
+            // Nothing Paperclip owns is left to free, and no runner is
+            // running to free space, so retrying cannot succeed.
+            throw sandboxDiskFullFailure(error);
+          }
         }
       }
       if (pendingSignal) return cancelledBeforeDispatch();
@@ -16339,6 +16385,9 @@ export function createRemoteRunnerProcessLauncher(input: {
         endedAtMs: Date.now(),
         attributes: { identitySource: "remote_marker", detached: true },
       });
+      // Off the startup path. A relaunch leaves the reserve released, so one
+      // run cannot take space back from an agent that already filled the disk.
+      if (!relaunch) reserve?.hold();
 
       let supervisionUnknownSince: number | null = null;
       while (true) {
@@ -16678,6 +16727,7 @@ async function prepareRemoteExternalRunner({ input, target, runner, root, identi
   const launch = createRemoteRunnerProcessLauncher({ target, runner, remoteBinary,
     processIdentityPath: posix.join(runnerStateDirectory, "runner-process.identity"), stateDirectory: runnerStateDirectory,
     diagnosticsDirectory: posix.join(remoteRoot, "diagnostics"), runnerInstanceId: input.runnerInstanceId,
+    diskReservePath: remoteRunnerDiskReservePath(target),
     requireProcessStartFingerprint: true,
     onSpawn: async meta => { await input.onSpawn?.(meta); identityReady(); },
     onLog: input.onLog, trace: input.trace, onRunnerProcessSpawned: () => spawned() });
@@ -18575,6 +18625,7 @@ async function createRunnerdBackendWithinSessionClaim(
           stateDirectory: remoteStateDirectory,
           diagnosticsDirectory: posix.join(remoteSessionRoot!, "diagnostics"),
           runnerInstanceId: input.runnerInstanceId,
+          diskReservePath: remoteRunnerDiskReservePath(remoteTarget),
           ensureArtifact: spec => {
             const sourceRun = spec.nativeRunner && spec.nativeRunner.identity.runId !== input.execution.binding.runId;
             const isolatedCodex = input.execution.provider.kind === "codex"

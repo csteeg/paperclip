@@ -69,7 +69,7 @@ export type {
 
 export type ToolActorType = "agent" | "user" | "system" | "plugin";
 export type ToolConnectionTransport =
-  "mcp_remote" | "rest_api" | "local_stdio" | "chat_sdk" | "runtime_auth" | "voice";
+  "mcp_remote" | "rest_api" | "local_stdio" | "chat_sdk" | "runtime_auth" | "voice" | "plugin";
 export type ToolConnectionPurpose = "tool" | "channel" | "ai";
 export type ToolConnectionAuthKind = "oauth" | "api_key" | "none";
 export type ToolConnectionOwnership =
@@ -437,7 +437,31 @@ export interface ToolConnectionRemovalSummary {
     appSubjectCleanup: "not_applicable" | "manage_in_vercel";
     manageUrl: string;
   } | null;
+  providerAccess?: ManagedGoogleAccessRemoval | null;
 }
+
+export type ManagedGoogleRevocationOutcome =
+  | "revoked"
+  | "other_connections_remain"
+  | "provider_revocation_failed"
+  | "binding_not_known"
+  | "provider_revocation_disabled"
+  | "revocation_in_progress"
+  | "revocation_not_available"
+  | "broker_unavailable"
+  | "broker_error"
+  | "credential_unavailable"
+  | "unexpected_error";
+
+export interface ManagedGoogleAccessRemoval {
+  provider: "google";
+  result: "ended" | "ended_unconfirmed" | "other_connections_remain" | "not_ended";
+  outcomes: ManagedGoogleRevocationOutcome[];
+}
+
+export type ConnectionGrantRevocationResult = ConnectionGrant & {
+  providerAccess?: ManagedGoogleAccessRemoval | null;
+};
 
 export interface ToolConnectionRemovalResult {
   connection: ToolConnection;
@@ -1524,6 +1548,7 @@ export type ToolAccessReasonCode =
   | "deny_default"
   | "deny_company_boundary"
   | "deny_disabled_connection"
+  | "deny_connection_not_installed"
   | "deny_disabled_application"
   | "deny_archived_application"
   | "deny_missing_tool"
