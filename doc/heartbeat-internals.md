@@ -76,6 +76,18 @@ Runs fall into four tiers, started in this order:
 3. **Recovery** and 4. **old recovery backlog.** System recovery wakes, even on
    a person's tree.
 
+A clean continuation is not system recovery. It is an `issue_continuation_needed`
+run queued because its source run hit the tool-call loop limit
+(`livenessContinuationReason: agent_tool_call_loop`), when the source run
+succeeded, is not itself such a continuation, and the run is not a failure retry
+(no `retryOfRunId`, `retryReason` or `previousRunId`). It takes its task's tier,
+so a person's task that continues its own work stays with that person's work.
+Its start still uses up the recovery share, so recovery-reason starts do not
+increase. Later hops of a loop chain and every failure retry stay in the
+recovery tiers. The provenance check is in `queued-run-provenance.ts`. The
+dispatch query and the place-in-line query both read its
+`QUEUED_RUN_ORDER_CONTEXT_KEYS`, so they see the same context fields.
+
 Within a tier, runs are ordered by readiness (in progress first), then task
 priority, then age, oldest first. A newer run on a person's tree never passes
 another person's equally ranked task that has waited longer.
@@ -331,9 +343,22 @@ Previous-release stamps keep their exact hash and existing same-boot behavior.
 They do not gain cross-boot proof retrospectively. Native coordinator records
 without the additional JSON evidence retain their existing recovery behavior.
 
-Queue admission and wakeup dispatch are in `server/src/services/heartbeat/queue.ts`.
-It owns wake coalescing and batching, queued-run claims, daily heartbeat caps,
-concurrency and priority checks, timer admission, and native status wake intents.
+Heartbeat coordinates wakeup dispatch, queued-run claims, daily heartbeat caps,
+concurrency and priority checks, timer admission, and native status wake intents
+in `server/src/services/heartbeat/queue.ts`. The wake-queue module owns the
+company and issue lock, the admission transaction, and the handoff after commit
+for both fresh task runs and wakes arriving behind an active execution. Wake-queue
+checks conversation eligibility before locking the task. The locked task supplies
+the attribution fields used to select the responsible user for a fresh run.
+Wake-queue reads recovery state inside the admission transaction. It checks
+continuation eligibility before allowing a wake to join active work, then
+settles any explicit continuation before allowing a fresh run. Wake-queue
+saves blocked comments in the admission transaction and updates the same receipt
+if its retry is still blocked. Heartbeat uses the same transaction for its other
+eligibility gates and specialized receipt handling. Wake-queue selects eligible
+saved comment receipts in request order and binds them to the new run. Chat authorization and its admission callback run in
+the same transaction. Authorization contention defers the wake and rolls back
+without publishing buffered effects.
 `createHeartbeatQueue` binds these operations without querying or starting work.
 The service supplies lifecycle effects, execution callbacks, worktree gates, and
 its process-wide execution and wakeup promise sets. Forwarding callbacks preserve
