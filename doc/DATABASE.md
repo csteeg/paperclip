@@ -462,18 +462,18 @@ Current fork-local migrations (SQL bytes are final once a database has applied t
 
 | File | Origin |
 | --- | --- |
-| `8801_skill_source_security_override` | skill source security override (PR 20846 `0499`) |
-| `8802_messy_talkback` | managed Claude project sources (PR 19216 `0504`) |
-| `8803_flaky_arclight` | provider pool (PR 19481 `0505`) |
-| `8804_project_provider_authorizations` | Azure DevOps skill sources (PR 20533 `0506`) |
-| `8805_multiple_agent_chat_conversations` | multiple agent chats (PR 19425 `0503`) |
-| `8806_project_repository_checkout` | project repository checkout scope (PR 21367 `0507`) |
+| `8801_skill_source_security_override` | skill source security override (PR 20846 `0500`) |
+| `8802_messy_talkback` | managed Claude project sources (PR 19216 `0505`) |
+| `8803_flaky_arclight` | provider pool (PR 19481 `0506`) |
+| `8804_project_provider_authorizations` | Azure DevOps skill sources (PR 20533 `0507`) |
+| `8805_multiple_agent_chat_conversations` | multiple agent chats (PR 19425 `0504`) |
+| `8806_project_repository_checkout` | project repository checkout scope (PR 21367 `0508`) |
 | `8807_project_repository_checkout_none` | project repository checkout scope, `none` value (develop only; the pull request branch has no copy) |
-| `8808_skill_version_security_approval` | skill version security approval (PR 20846 `0500`) |
-| `8809_skill_source_security_override_summary` | skill source override summary (PR 20846 `0501`) |
-| `8810_skill_version_security_approval_index` | concurrent index for the approvals table (PR 20846 `0502`); listed in `MIGRATIONS_WITH_TOP_LEVEL_STATEMENTS` in `packages/db/src/client.ts` |
+| `8808_skill_version_security_approval` | skill version security approval (PR 20846 `0501`) |
+| `8809_skill_source_security_override_summary` | skill source override summary (PR 20846 `0502`) |
+| `8810_skill_version_security_approval_index` | concurrent index for the approvals table (PR 20846 `0503`); listed in `MIGRATIONS_WITH_TOP_LEVEL_STATEMENTS` in `packages/db/src/client.ts` |
 
-The upstream number in parentheses is the byte-identical copy in the pull request branch. Upstream master currently ends at `0498`; the open fork pull requests hold `0499`-`0507`.
+The upstream number in parentheses is the byte-identical copy in the pull request branch. Upstream master currently ends at `0499`; the open fork pull requests hold `0500`-`0508`.
 
 Migration `0471` keeps the existing conversation as the default for its company, agent and user and permits additional conversations. The partial unique index still protects concurrent creation of the default conversation.
 
