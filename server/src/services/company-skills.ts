@@ -3693,10 +3693,10 @@ export function companySkillService(db: Db, options: { actor?: AuthorizationActo
     const fromSkillDirectory = skillRelativeToRepositoryPath(path.posix.dirname(entrypoint));
     // The generated agents/openai.yaml is a copy of the skill directory's policy file; the generated SKILL.md is not an original.
     const policyCopy = path.posix.join(path.posix.dirname(entrypoint), "agents/openai.yaml");
-    const toRepositoryPath = packageMode === "repository"
-      ? (filePath: string) => filePath.startsWith(repositoryPrefix) ? filePath.slice(repositoryPrefix.length)
-        : filePath === "agents/openai.yaml" ? policyCopy : `${repositoryPrefix}${filePath}`
-      : (filePath: string) => filePath === "SKILL.md" ? entrypoint : fromSkillDirectory(filePath);
+    // Agents receive a repository skill's own folder too, so installed paths are
+    // relative to the skill directory in both modes.
+    void policyCopy; void repositoryPrefix;
+    const toRepositoryPath = (filePath: string) => filePath === "SKILL.md" ? entrypoint : fromSkillDirectory(filePath);
     const accept = securityOverrideAcceptor([versionApprovalGrant(record)], record.commitSha, toRepositoryPath);
     if (!accept || packageMode !== "repository") return accept;
     // The generated SKILL.md repeats the original entrypoint's frontmatter. Accept its findings only while it is
@@ -3725,8 +3725,9 @@ export function companySkillService(db: Db, options: { actor?: AuthorizationActo
         const version = await readVersionMetadata(companyId, skill.id, versionId);
         if (!version) throw unprocessable("Installed skill version is unavailable.");
         const sourceLocator = await materializeVersionSnapshot(companyId, skill, version);
+        // Audit what agents get: a repository skill delivers only its own folder.
         const fileInventory = version.repositorySnapshotId || version.packageSnapshotId
-          ? await packageRuntime.inventory(version) : await packages.versionFiles(version);
+          ? await packageRuntime.agentInventory(version) : await packages.versionFiles(version);
         return auditInstalledSkillBytes({
           ...skill,
           sourceType: "local_path",
