@@ -17781,7 +17781,8 @@ describeEmbeddedPostgres("tool access service", () => {
       "mcp-key",
     );
 
-    // The one-time MCP version probe and the catalog listing, plus one GitHub REST lookup of the token's account.
+    // The one-time MCP version probe and the catalog listing, plus one GitHub
+    // REST lookup of the token's account.
     expect(fetchMock.mock.calls.filter(([url]) => String(url) !== "https://api.github.com/user")).toHaveLength(3);
     expect(fetchMock).toHaveBeenCalledWith(
       PUBLIC_MCP_FIXTURE_URL,
