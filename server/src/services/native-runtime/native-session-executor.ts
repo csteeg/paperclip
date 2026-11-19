@@ -18,7 +18,6 @@ import { NATIVE_CLEANUP_SETTLING_MESSAGE, NATIVE_COMPLETED_TURN_CLEANUP_MESSAGE,
 import { prepareCursorCloudRuntime } from "./cursor-cloud-runtime.js";
 import { LocalRuntimeApiListenerClosedError, resolveLocalRuntimeApiUrl } from "../../runtime-api.js";
 import { providerFailureFromError } from "../../vendor/paperclip-runner/index.js";
-import { projectNativeRuntimeContextForRunner } from "./runtime-context-projection.js";
 import { nativeCancellationHasUnsettledOwner, notifyNativeCancellation, waitForNativeCancellation } from "./native-cancellation-delivery.js";
 import { readClaimedNativeStopRecovery } from "./native-cancellation-request.js";
 import { publishNativeHarnessBackup } from "./native-harness-backup-publication.js";
@@ -17382,7 +17381,32 @@ async function createRunnerdBackendWithinSessionClaim(
   const sourceRuntimeContext = runtimeContextSource?.described ?? null;
   const remoteRuntimeContext: NativeRuntimeContextSnapshot | null =
     remoteRunnerFilesystemRoot && sourceRuntimeContext
-      ? projectNativeRuntimeContextForRunner(sourceRuntimeContext, remoteRunnerFilesystemRoot)
+      ? {
+          ...sourceRuntimeContext,
+          instructions: {
+            ...sourceRuntimeContext.instructions,
+            bundle: {
+              ...sourceRuntimeContext.instructions.bundle,
+              rootPath: posix.join(
+                remoteRunnerFilesystemRoot,
+                "context",
+                "instructions",
+              ),
+            },
+          },
+          skills: sourceRuntimeContext.skills.map((skill, index) => ({
+            ...skill,
+            bundle: {
+              ...skill.bundle,
+              rootPath: posix.join(
+                remoteRunnerFilesystemRoot,
+                "context",
+                "skills",
+                `${index}-${skill.bundle.digest.slice(0, 12)}`,
+              ),
+            },
+          })),
+        }
       : sourceRuntimeContext;
   let remotePrepared = false;
   let remoteHarnessStatePrepared = false;

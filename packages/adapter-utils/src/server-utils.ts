@@ -327,7 +327,6 @@ export interface PaperclipSkillEntry {
   currentVersionId?: string | null;
   sourceStatus?: "available" | "missing";
   missingDetail?: string | null;
-  repository?: { companyId: string; skillId: string; versionId: string; snapshotId: string; entryPath: string };
 }
 
 export interface PaperclipDesiredSkillEntry {

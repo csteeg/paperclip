@@ -42,7 +42,6 @@ export type {
   NativeExecutionInputV9,
   NativeExecutionInputV10,
   NativeExecutionInputV11,
-  NativeExecutionInputV12,
   MuseBindingSnapshot,
   DotBindingSnapshot,
   ExternalProviderPort,
@@ -156,9 +155,6 @@ export const opencodeRuntimeSessionDirectoryName =
   runner.opencodeRuntimeSessionDirectoryName;
 export const canonicalNativeRuntimeContextDigest =
   runner.canonicalNativeRuntimeContextDigest;
-export const nativeRuntimeContextAssets = runner.nativeRuntimeContextAssets;
-export const mapNativeRuntimeContextAssetRoots = runner.mapNativeRuntimeContextAssetRoots;
-export const NativeRuntimeContextError = runner.NativeRuntimeContextError;
 export const createNativeSessionBackend = runner.createNativeSessionBackend;
 export const describeRunnerdNativeSessionBackend = runner.describeRunnerdNativeSessionBackend;
 export const createPaperclipRunnerAuthorizedToolSet =

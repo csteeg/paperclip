@@ -102,7 +102,6 @@ import type {
 } from "../contracts/native-execution.js";
 import {
   prepareIsolatedCodexHome,
-  nativeRuntimeContextReadOnlyRoots,
   prepareIsolatedCodexRecoveryHome,
   releaseMaterializedNativeRuntimeSkills,
 } from "../drivers/runtime-context-materializer.js";
@@ -7238,7 +7237,13 @@ class DurablePrpCodexTransport implements CodexAppServerTransport {
             readOnlyRoots: [
               ...trustedRuntimeReadOnlyRoots(this.options.environment),
               ...(runtimeContext
-                ? nativeRuntimeContextReadOnlyRoots(runtimeContext, codexHome)
+                ? [
+                    resolve(codexHome, "skills"),
+                    runtimeContext.instructions.bundle.rootPath,
+                    ...runtimeContext.skills.map(
+                      (skill) => skill.bundle.rootPath,
+                    ),
+                  ]
                 : []),
             ],
           });
@@ -7424,7 +7429,6 @@ class DurablePrpCodexTransport implements CodexAppServerTransport {
       if (this.#sourceRecoveryIdentity !== null) {
         await prepareIsolatedCodexRecoveryHome({
           ...auth,
-          context: this.options.runnerFilesystemRoot ? undefined : sourceRuntimeContext,
           observability: this.options.observability,
         });
       } else {
@@ -9896,7 +9900,7 @@ export const runnerdRecoveryInternals = Object.freeze({
 
 /** Map controller asset paths to the assigned copy on the provider filesystem. */
 export function resolveRunnerdCodexSkillInputs(
-  inputs: ReadonlyArray<{ name?: unknown; path?: unknown }>,
+  inputs: Record<string, unknown>[],
   context: NativeRuntimeContextSnapshot | null,
   codexHome: string,
   preparedContext?: NativeRuntimeContextSnapshot,
@@ -9906,8 +9910,8 @@ export function resolveRunnerdCodexSkillInputs(
   return inputs.map((input) => {
     const assigned = context?.skills.find((skill) => skill.runtimeName === input.name);
     if (
-      !assigned || !/^[\p{L}\p{N}_-]+(?:\/[\p{L}\p{N}_-]+)*$/u.test(assigned.runtimeName)
-      || input.path !== (assigned.repository ? resolve(assigned.repository.bundle.rootPath, assigned.repository.entryPath) : resolve(assigned.bundle.rootPath, "SKILL.md"))
+      !assigned || !/^[a-zA-Z0-9_-]+$/.test(assigned.runtimeName)
+      || input.path !== resolve(assigned.bundle.rootPath, "SKILL.md")
       || seen.has(assigned.runtimeName)
     ) {
       throw new Error("Explicit skill input must reference a unique assigned runtime skill");
@@ -9918,9 +9922,8 @@ export function resolveRunnerdCodexSkillInputs(
     return {
       type: "skill",
       name: assigned.runtimeName,
-      path: preparedSkill ? (preparedSkill.repository ? resolve(preparedSkill.repository.bundle.rootPath, preparedSkill.repository.entryPath) : resolve(preparedSkill.bundle.rootPath, "SKILL.md"))
-        : assigned.repository ? resolve(codexHome, "repositories", assigned.repository.bundle.digest, assigned.repository.entryPath)
-          : resolve(codexHome, "skills", assigned.runtimeName, "SKILL.md"),
+      path: preparedSkill ? resolve(preparedSkill.bundle.rootPath, "SKILL.md")
+        : resolve(codexHome, "skills", assigned.runtimeName, "SKILL.md"),
     };
   });
 }
