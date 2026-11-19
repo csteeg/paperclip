@@ -17,6 +17,7 @@ import {
 } from "@paperclipai/db";
 import { logger } from "../../middleware/logger.js";
 import { assessSessionRetention } from "./native-session-retention-blockers.js";
+import { sweepSharedSkillStorage } from "./codex-skill-home-retention.js";
 import { nativeHarnessStateBase } from "./native-harness-backup-stamp.js";
 import { nativeSessionScopeDigestIsBusy } from "./native-session-executor.js";
 import type { createDeliveryWorkCoordinator } from "../delivery-work-coordinator.js";
@@ -66,6 +67,10 @@ export type NativeHarnessBackupExpirationOptions = {
   maxRemovals?: number;
   now?: Date;
   stateBase?: string;
+  /** Shared skill homes; defaults to the sibling of the default state base. */
+  skillHomeStoreRoot?: string;
+  /** Session roots whose provider homes may hold abandoned skill staging. */
+  skillStagingRoots?: string[];
   shouldContinue?: () => boolean;
   isSessionBusy?: (scopeDigest: string) => boolean;
   storage?: StorageService;
@@ -87,6 +92,10 @@ export type NativeHarnessBackupExpirationResult = {
   failed: number;
   truncated: boolean;
   skipped: Record<string, number>;
+  skillHomesRemoved: number;
+  skillHomeReclaimedBytes: number;
+  abandonedSkillStagingRemoved: number;
+  abandonedSkillStagingBytes: number;
 };
 
 type EvidenceContext = {
@@ -123,6 +132,10 @@ function emptyResult(): NativeHarnessBackupExpirationResult {
     failed: 0,
     truncated: false,
     skipped: {},
+    skillHomesRemoved: 0,
+    skillHomeReclaimedBytes: 0,
+    abandonedSkillStagingRemoved: 0,
+    abandonedSkillStagingBytes: 0,
   };
 }
 
@@ -845,6 +858,20 @@ export function nativeHarnessBackupExpirationService(
       }
       if (result.truncated) return result;
       cursor = null;
+      // Shared skill homes and abandoned skill staging. Production reaches tick()
+      // only through the evidence worker, so this runs in its passes and asks it
+      // to come back, also when no other evidence is due.
+      if (evidencePass) {
+        const shared = await sweepSharedSkillStorage({
+          stateBase: base, stateBaseOverridden: Boolean(options.stateBase ?? defaults.stateBase),
+          skillHomeStoreRoot: options.skillHomeStoreRoot ?? defaults.skillHomeStoreRoot,
+          skillStagingRoots: options.skillStagingRoots ?? defaults.skillStagingRoots, now, dryRun, maxRemovals,
+        });
+        const { failed, nextDueAt, ...counts } = shared;
+        Object.assign(result, counts);
+        result.failed += failed;
+        if (nextDueAt !== null) context.dueAt(nextDueAt);
+      }
       if (!evidencePass) {
         passActive = false;
         return result;

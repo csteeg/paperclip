@@ -234,6 +234,8 @@ export interface RunnerProviderLaunchEnvironment {
   root: string;
   cwd: string;
   codexHome: string;
+  /** Shared skill home for Codex launches that use one; see codex-skill-home.ts. */
+  skillHome?: string | null;
   providerNodeCommand: string;
   codexCommand?: string;
   opencodeProxyPath: string;
@@ -260,7 +262,7 @@ export function createRunnerProviderLaunch(
   const requestedModel = requirements.model ?? "";
   const includeCodexCollaborationInstructions = provider === "codex" &&
     requirements.includeCollaborationModeInstructions;
-  const { codexHome, providerNodeCommand, codexCommand: effectiveCodexCommand,
+  const { codexHome, skillHome, providerNodeCommand, codexCommand: effectiveCodexCommand,
     opencodeProxyPath, acpxSidecarPath } = input;
   const acpxProfile =
     provider === "acpx"
@@ -395,6 +397,7 @@ export function createRunnerProviderLaunch(
                           disableWebSearch: settings.disableCodexWebSearch,
                           environment: input.options.environment,
                           codexHome,
+                          skillHome,
                           workingDirectory: input.cwd,
                           runtimeStateRoot: input.options.runnerFilesystemRoot ?? input.root,
                           codexCommand: effectiveCodexCommand,
@@ -406,7 +409,7 @@ export function createRunnerProviderLaunch(
                             ),
                             ...(runtimeContext
                               ? [
-                                  resolve(codexHome, "skills"),
+                                  ...codexSkillReadRoots(codexHome, skillHome),
                                   runtimeContext.instructions.bundle.rootPath,
                                   ...runtimeContext.skills.map(
                                     (skill) => skill.bundle.rootPath,
@@ -487,9 +490,25 @@ export function trustedRuntimeReadOnlyRoots(
   return [...roots];
 }
 
+/** The directory Codex discovers assigned skills in. */
+export function codexSkillReadRoot(codexHome: string, skillHome?: string | null): string {
+  return skillHome ? resolve(skillHome, ".agents", "skills") : resolve(codexHome, "skills");
+}
+
+/**
+ * Skill directories granted read-only to the sandbox. Codex still writes its own
+ * bundled `.system` skills into CODEX_HOME/skills, so that stays readable next to
+ * a shared skill home.
+ */
+export function codexSkillReadRoots(codexHome: string, skillHome?: string | null): string[] {
+  return skillHome ? [codexSkillReadRoot(codexHome, skillHome), resolve(codexHome, "skills")] : [resolve(codexHome, "skills")];
+}
+
 export function createRunnerdCodexAppServerArgs(input: {
   environment: NodeJS.ProcessEnv | undefined;
   codexHome: string;
+  /** Shared, sealed skill home that Codex receives as HOME (Mac/Linux). */
+  skillHome?: string | null;
   codexCommand?: string;
   workingDirectory?: string;
   runtimeStateRoot?: string;
@@ -507,7 +526,7 @@ export function createRunnerdCodexAppServerArgs(input: {
     ...createIsolatedCodexAppServerArgs(
       {
         ...input.environment,
-        HOME: usesPreconfiguredHome(input.environment) ? input.environment?.HOME : input.codexHome,
+        HOME: usesPreconfiguredHome(input.environment) ? input.environment?.HOME : input.skillHome ?? input.codexHome,
         CODEX_HOME: input.codexHome,
       },
       [...(input.readOnlyRoots ?? []), ...codexExecutableReadOnlyRoots(input.environment ?? {}, input.codexCommand)],

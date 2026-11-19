@@ -209,7 +209,7 @@ index 0214a509eb5e7b777a69e4e34637941c275d27b1..71cb9f539c0018724e1be71afa4f0611
      async requestPermissionFromClient(params, toolName, signal, parentToolUseId, ownerSessionId = params.sessionId) {
          if (signal.aborted)
              throw new Error("Tool use aborted");
-@@ -5311,14 +5445,40 @@ export class ClaudeAcpAgent {
+@@ -5311,14 +5445,44 @@ export class ClaudeAcpAgent {
              settingSources: ["user", "project", "local"],
              ...(thinking !== undefined && { thinking }),
              ...userProvidedOptions,
@@ -219,6 +219,10 @@ index 0214a509eb5e7b777a69e4e34637941c275d27b1..71cb9f539c0018724e1be71afa4f0611
 +            ...(process.env.PAPERCLIP_ACPX_ISOLATED_CONTEXT === "1" && { settingSources: ["user"] }),
 +            // Subagent progress summaries (~30s) feed the task chat's subagent card.
 +            ...(process.env.PAPERCLIP_ACPX_ISOLATED_CONTEXT === "1" && { agentProgressSummaries: true }),
++            // Paperclip Runner may share one sealed skill home between sessions; Claude
++            // loads it as a local plugin, so its skills appear as `paperclip:<name>`.
++            ...(process.env.PAPERCLIP_ACPX_ISOLATED_CONTEXT === "1" && process.env.PAPERCLIP_CLAUDE_SKILL_PLUGIN_DIR?.startsWith("/")
++                && { plugins: [{ type: "local", path: process.env.PAPERCLIP_CLAUDE_SKILL_PLUGIN_DIR }] }),
              ...(settings && { settings }),
 +            ...(process.env.PAPERCLIP_ACPX_ISOLATED_CONTEXT !== "1" && process.env.PAPERCLIP_LEGACY_CLAUDE_USER_ONLY === "0" && { settingSources: process.env.ACPX_CLAUDE_INCLUDE_USER_SETTINGS === "1" ? ["user", "project", "local"] : ["project", "local"] }),
 +            ...(process.env.PAPERCLIP_ACPX_ISOLATED_CONTEXT !== "1" && process.env.PAPERCLIP_LEGACY_CLAUDE_USER_ONLY === "1" && {
@@ -251,7 +255,7 @@ index 0214a509eb5e7b777a69e4e34637941c275d27b1..71cb9f539c0018724e1be71afa4f0611
                  ...mcpServers,
                  ...(fileChangeAuditSupport
                      ? { [FILE_CHANGE_AUDIT_SERVER_NAME]: fileChangeAuditSupport.mcpServer }
-@@ -5329,6 +5489,16 @@ export class ClaudeAcpAgent {
+@@ -5329,6 +5493,16 @@ export class ClaudeAcpAgent {
              allowDangerouslySkipPermissions: ALLOW_BYPASS,
              permissionMode: initialPermissionMode,
              canUseTool: this.canUseTool(sessionId),
