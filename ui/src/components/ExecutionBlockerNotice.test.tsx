@@ -26,6 +26,20 @@ describe("ordinary task interruption", () => {
   const render = async (presentation = failed, options: { canRetry?: boolean; optimistic?: boolean; takingLonger?: boolean; error?: Error } = {}) => {
     await act(async () => root.render(<ExecutionBlockerNotice presentation={presentation} canRetry onRetry={retry} {...options} />));
   };
+  it("names the incompatible Runner and keeps the next check visible", async () => {
+    await render({ ...failed, state: "retry_scheduled", nextRetryAt: new Date(Date.now() + 30_000).toISOString(),
+      retryWait: { reason: "runner_acpx_profile_incompatible", message: "Waiting for a compatible Runner." }, canRetry: false });
+    expect(container.textContent).toContain("Waiting for a compatible Runner.");
+    expect(container.textContent).toContain("Checking again in");
+    expect(container.querySelector("[data-testid=task-execution-retry]")).toBeNull();
+    await render({ ...failed, state: "retry_scheduled", nextRetryAt: new Date(Date.now() + 30_000).toISOString(),
+      retryWait: { reason: "runner_acpx_profile_incompatible", message: "A compatible Runner is available." }, canRetry: true });
+    const retryButton = container.querySelector<HTMLButtonElement>("[data-testid=task-execution-retry]")!;
+    expect(retryButton.textContent).toBe("Retry");
+    await act(async () => retryButton.click());
+    expect(retry).toHaveBeenCalledOnce();
+  });
+
   it("offers one Retry without delegating infrastructure chores", async () => {
     await render();
     expect(container.textContent).toContain("Couldn’t finish this attempt. Your message is saved.");
@@ -44,6 +58,22 @@ describe("ordinary task interruption", () => {
     expect(container.textContent).not.toMatch(/blocker_|native|owner kind/i);
     await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="task-execution-retry"]')!.click());
     expect(retry).toHaveBeenCalledOnce();
+  });
+
+  it.each([false, true])("names the question without repeating a historical failure (manual Retry=%s)", async canRetry => {
+    const presentation = { ...failed, responsibility: "user" as const, state: "waiting_for_user" as const, userAction: "question" as const, canRetry,
+      providerFailure: { schema: "paperclip.provider-failure.v1", provider: "anthropic", phase: "startup",
+        category: "rate_limit", httpStatus: 429, retryability: "unknown", message: "API error: 429" } } satisfies TaskInterruptionPresentation;
+    await render(presentation);
+    expect(container.textContent).toContain("Respond to the pending question to continue.");
+    expect(container.textContent).not.toMatch(/429|rate limit|failed/i);
+    expect(Boolean(container.querySelector("button"))).toBe(canRetry);
+    if (canRetry) {
+      await act(async () => container.querySelector<HTMLButtonElement>("button")!.click());
+      expect(retry).toHaveBeenCalledOnce();
+    }
+    await render(presentation, { canRetry: false });
+    expect(container.querySelector("button")).toBeNull();
   });
 
   it("keeps the failure visible and names the gate while a saved Retry waits on the budget", async () => {

@@ -109,6 +109,7 @@ import { readNativePlanWait } from "./native-plan-wait.js";
 import { nativeProviderLifecycle } from "./provider-lifecycle.js";
 import { NativePermissionDeclinedError, readCompletedNativePermissionDecline } from "./native-permission-decline.js";
 import { activeIssueInteractionCondition } from "../issue-question-context.js";
+import { RUNNER_ACPX_PROFILE_INCOMPATIBLE, isLegacyRunnerAcpxProfileRefusal, localAcpxRunnerCompatibility } from "./native-runner-profile-compatibility.js";
 import { resolveAcpxQualification, resolveAntigravityCandidateAdmission, resolveKimiCandidateAdmission } from "./acpx-qualification.js";
 import { readLocalAiCredentialFile } from "../local-ai-credential-file.js";
 import { prepareGrokRunnerCredentials } from "./grok-runner-credentials.js";
@@ -9172,6 +9173,7 @@ export function nativeSessionFailureDisposition(
     sourceFailureCode === "native_provider_model_rejected" ||
     sourceFailureCode === "native_provider_approval_required" ||
     sourceFailureCode === "native_event_replay_conflict" ||
+    sourceFailureCode === RUNNER_ACPX_PROFILE_INCOMPATIBLE ||
     sourceFailureCode === "runner_remote_provider_artifact_incompatible" ||
     sourceFailureCode === "runner_remote_provider_verification_unavailable" && !options.freshBootstrap ||
     sourceFailureCode === "native_provider_terminal_failed" ||
@@ -9260,6 +9262,24 @@ export const NATIVE_CONTROLLER_JOURNAL_BEHIND_RUNNER_ACTION =
 export const NATIVE_PROVIDER_STARTUP_REJECTED = "native_provider_startup_rejected";
 export const NATIVE_PROVIDER_STARTUP_REJECTED_ACTION =
   "The provider refused to start a session, so no provider work began. Read the provider message and fix its cause in the agent's environment or AI connection if needed, then Retry. Retry starts a new run with a fresh provider session.";
+
+const ACPX_CREDENTIAL_ADMISSION_REJECTION =
+  "failed to start ACPX provider: ACPX sidecar command session.open was rejected (retryable=false, classification=admission_credential)";
+const NATIVE_CREDENTIAL_ADMISSION_ACTION =
+  "The Runner rejected credential setup before opening a provider session. Check the Runner's credential setup and workspace permissions, then Retry. Retry starts a new run with a fresh provider session.";
+
+function runnerSessionOpenFailure(error: unknown, depth = 0): Record<string, unknown> | null {
+  if (!error || typeof error !== "object" || depth > 5) return null;
+  const value = record(error);
+  const command = record(value.runnerCommandResult);
+  const detail = record(command.result);
+  if (command.commandType === "session.open" && command.status === "failed" && detail.code === "command_execution_failed") {
+    return detail;
+  }
+  return runnerSessionOpenFailure(value.cause, depth + 1)
+    ?? (Array.isArray(value.errors) ? value.errors.slice(0, 3)
+      .map(item => runnerSessionOpenFailure(item, depth + 1)).find(detail => detail !== null) ?? null : null);
+}
 
 function deterministicProviderStartupFailure(error: unknown): boolean {
   const failure = providerFailureFromError(error);
@@ -9385,6 +9405,7 @@ function classifyNativeSessionFailure(
   | "native_session_cleanup_quarantined"
   | "native_adopted_runner_authentication_timeout"
   | "runner_remote_provider_artifact_incompatible"
+  | typeof RUNNER_ACPX_PROFILE_INCOMPATIBLE
   | "runner_remote_provider_verification_unavailable"
   | "provider_process_exited"
   | "provider_stdout_closed"
@@ -9529,7 +9550,16 @@ function classifyNativeSessionFailure(
     if (/classification=(?:requested_model_unsupported|grok_model_mismatch)\)/.test(message)) {
       return "native_provider_model_rejected";
     }
-    if (deterministicProviderStartupFailure(error)) return NATIVE_PROVIDER_STARTUP_REJECTED;
+    const detail = runnerSessionOpenFailure(error);
+    const failure = readProviderFailure(detail?.providerFailure);
+    if (failure?.phase === "startup" && failure.category === "authentication" && failure.retryability === "requires_action") {
+      return "native_provider_auth_failed";
+    }
+    // This closed class also covers lifetime lease and environment checks.
+    // The class alone cannot attribute a failure to the selected account.
+    if (detail?.message === ACPX_CREDENTIAL_ADMISSION_REJECTION || deterministicProviderStartupFailure(error)) {
+      return NATIVE_PROVIDER_STARTUP_REJECTED;
+    }
     return "provider_session_open_rejected";
   }
   // The controller stopped waiting for session.open while runner startup was
@@ -9677,6 +9707,7 @@ export async function nativeProviderRecoveryEvidence(input: {
   const definitelyPreSession = new Set<
     ReturnType<typeof nativeSessionFailureSourceCode>
   >([
+    RUNNER_ACPX_PROFILE_INCOMPATIBLE,
     "runner_remote_provider_artifact_incompatible",
     "provider_process_exited",
     "provider_stdout_closed",
@@ -10688,6 +10719,7 @@ export function resolveNativeCancellationStatus(input: {
 
 export async function executePaperclipNativeSession(input: {
   casesEnabled?: boolean;
+  responsibilitiesEnabled?: boolean;
   getFreshSessionHandoff?: () => Promise<string | null>;
   /** Retire a retained transport so recovery can replace provider tool declarations. */
   refreshTools?: boolean;
@@ -12380,7 +12412,7 @@ async function executePaperclipNativeSessionAttempt(
   );
   let existingWarmSession: NativeSession | undefined;
   let reusingReleasedRunner = false;
-  let relaunchReleased: { owner: ReturnType<typeof createPluginRunnerTaskOwner>; source: DurableRecoveryIdentity;
+  let relaunchReleased: { owner?: ReturnType<typeof createPluginRunnerTaskOwner>; source: DurableRecoveryIdentity;
     runner: { version: string; digest: string }; published?: true } | undefined;
   let managedCredentialSession: NativeSession | undefined;
   let githubAccess: NativeGitHubAccess | undefined;
@@ -12734,24 +12766,44 @@ async function executePaperclipNativeSessionAttempt(
       pluginTaskDescription,
       retainedPluginTaskOwner: existingWarmSession ? pluginTaskSessionOwners.get(existingWarmSession) : relaunchReleased?.owner,
       relaunchReleased: relaunchReleased ? { source: relaunchReleased.source, runner: relaunchReleased.runner } : undefined,
+      onPluginTaskOwner: owner => { if (relaunchReleased && !relaunchReleased.owner) relaunchReleased.owner = owner; },
       beginRetainedRunAttachment: existingWarmSession && reusingReleasedRunner ? beginRetainedRunAttachment(existingWarmSession) : undefined,
       durableEnvironmentLeaseId: durableRunnerBinding?.environmentLeaseId,
-      remoteWarmRecovery: remoteWarmRecovery ? {
-        ...remoteWarmRecovery,
+      remoteWarmRecovery: remoteWarmRecovery ? (recovery => ({
+        ...recovery,
         revalidate: async () => {
-          if (remoteWarmRecoveryPending) await remoteWarmRecovery.revalidate(leaseOwner);
+          if (remoteWarmRecoveryPending) await recovery.revalidate(leaseOwner);
         },
-      } : undefined,
+      }))(remoteWarmRecovery) : undefined,
       trace,
       toolTrace,
     });
+    const releasedRecovery = remoteWarmRecovery;
+    if (releasedRecovery?.releasedSource && releasedRecovery.releasedSourceRunner && releasedRecovery.reuseProcess
+        && !releasedRecovery.portableSourceTaskId && pluginTaskDescription?.resumeIdentityVersion === 1 && warmConfigDigest !== null) {
+      const checkpoint = loadWarmNativeCheckpoint(input.execution, warmConfigDigest, "remote");
+      if (checkpoint) {
+        if (executionContext) await executionContext.wait(() => releasedRecovery.revalidate(leaseOwner));
+        else await releasedRecovery.revalidate(leaseOwner);
+        relaunchReleased = { source: releasedRecovery.releasedSource, runner: releasedRecovery.releasedSourceRunner };
+        persistedWarmSession = checkpoint;
+        remoteWarmRecovery = undefined;
+        remoteWarmRecoveryPending = false;
+        await emitStartupReuse(input.onEvent, "runner", { state: "fresh", reason: "replacement" });
+        executionContext?.assertOpen();
+        await emitStartupReuse(input.onEvent, "provider_session", { state: "reused", reason: "verified_reuse" });
+        trace.setBudgetStart("warm");
+        if (executionContext) await finishStartupContextForFallback();
+      }
+    }
     let runnerdBackend =
       input.useRunnerd && input.backend === undefined
         ? await timeController("backend_setup", () => executionContext ? executionContext.wait(createExecutionBackend) : createExecutionBackend())
         : null;
     if (remoteWarmRecovery) {
-      if (executionContext) await executionContext.wait(() => remoteWarmRecovery.revalidate(leaseOwner));
-      else await remoteWarmRecovery.revalidate(leaseOwner);
+      const recovery = remoteWarmRecovery;
+      if (executionContext) await executionContext.wait(() => recovery.revalidate(leaseOwner));
+      else await recovery.revalidate(leaseOwner);
       const recovered = await runnerdBackend?.recoverSession?.(remoteWarmRecovery.checkpoint, {
         signal: executionContext?.signal ?? new AbortController().signal,
       });
@@ -13283,7 +13335,7 @@ async function executePaperclipNativeSessionAttempt(
         try {
           result = await trace.run(runnerSessionStartupScope, runExecution);
         } catch (error) {
-          if (relaunchReleased && !relaunchReleased.published && !relaunchReleased.owner.relaunchMayHaveStarted()) {
+          if (relaunchReleased && !relaunchReleased.published && !relaunchReleased.owner?.relaunchMayHaveStarted()) {
             revertUnattachedRelaunchRotation(scopedRunnerdStateRoot(input.execution), relaunchReleased.source);
           }
           if (!await continueAfterUnavailableReuse(error)) throw error;
@@ -13498,8 +13550,13 @@ async function executePaperclipNativeSessionAttempt(
         throw error;
       }
       const now = new Date();
-      const startupClassifiedFailureCode = nativeSessionFailureSourceCode(error,
-        attemptDiagnosticLeases.some(lease => lease.sandboxDiskFullObserved()));
+      const localAcpxAgent = input.runnerExecutionTarget?.kind !== "remote" && input.execution.provider.kind === "acpx"
+        ? input.execution.provider.agent : null;
+      const startupClassifiedFailureCode = localAcpxAgent && (error instanceof Error
+        && (error.message === RUNNER_ACPX_PROFILE_INCOMPATIBLE || error.message.startsWith("paperclip_runner_binary_missing:")
+          || isLegacyRunnerAcpxProfileRefusal(error)))
+        ? RUNNER_ACPX_PROFILE_INCOMPATIBLE
+        : nativeSessionFailureSourceCode(error, attemptDiagnosticLeases.some(lease => lease.sandboxDiskFullObserved()));
       // A timed-out session.open may still have opened a provider session
       // before its runner stopped. The same-run retry must not reuse it.
       const classifiedFailureCode = startupClassifiedFailureCode === "provider_session_open_timeout" &&
@@ -13538,11 +13595,16 @@ async function executePaperclipNativeSessionAttempt(
               transientIngressFailure: sourceFailureCode === "runner_ingress_acquisition_failed" && error instanceof NativeRunnerIngressAcquisitionError
                 && (error.failure.httpStatus === 429 || error.failure.httpStatus >= 500),
             } : undefined;
+      const startupAuthenticationFailure = classifiedFailureCode === "native_provider_auth_failed" &&
+        sourceFailureCode === "native_provider_auth_failed";
+      // Use the pre-session recovery evidence for session.open, while keeping
+      // the authentication classification used by the pool attribution path.
+      const recoverySourceFailureCode = startupAuthenticationFailure ? NATIVE_PROVIDER_STARTUP_REJECTED : sourceFailureCode;
       const recoveryEvidence = await nativeProviderRecoveryEvidence({
         db: input.db,
         runId: input.execution.binding.runId,
         executionTargetKind: input.runnerExecutionTarget?.kind ?? "local",
-        sourceFailureCode,
+        sourceFailureCode: recoverySourceFailureCode,
         bootstrap,
       });
       const adoptedRunnerUnanswered = input.runnerExecutionTarget?.kind === "remote"
@@ -13565,11 +13627,17 @@ async function executePaperclipNativeSessionAttempt(
         recoveryEvidence.recoveryMode === "ambiguous_state"
           ? DEFINITIVE_NATIVE_RUNNER_FAILURE_CODES.includes(sourceFailureCode) ? "native_provider_runner_failed" : sourceFailureCode
           : disposition.failureCode;
-      const providerFailure = providerFailureFromError(error) ?? providerQuotaFailureObserved ?? providerAuthenticationFailureObserved;
+      const startupRejection = sourceFailureCode === NATIVE_PROVIDER_STARTUP_REJECTED || startupAuthenticationFailure
+        ? runnerSessionOpenFailure(error) : null;
+      const providerFailure = (startupAuthenticationFailure
+        ? readProviderFailure(startupRejection?.providerFailure) : providerFailureFromError(error))
+        ?? providerQuotaFailureObserved ?? providerAuthenticationFailureObserved;
       const startupFailureSignature = recoveryEvidence.recoveryMode === "bootstrap_retry"
         ? nativeStartupFailureSignature(providerFailure) : null;
-      const startupRejectedAction = repeatedRemoteStartupFailure && providerFailure
-        ? nativeRepeatedStartupFailureAction(providerFailure.message) : NATIVE_PROVIDER_STARTUP_REJECTED_ACTION;
+      const startupRejectedAction = !startupAuthenticationFailure && startupRejection?.message === ACPX_CREDENTIAL_ADMISSION_REJECTION
+        ? NATIVE_CREDENTIAL_ADMISSION_ACTION
+        : repeatedRemoteStartupFailure && providerFailure
+          ? nativeRepeatedStartupFailureAction(providerFailure.message) : NATIVE_PROVIDER_STARTUP_REJECTED_ACTION;
       // Pre-provider startup retries back off and wait out a known provider
       // limit; their exhaustion explains the startup failure.
       const startupRetryExhausted =
@@ -13708,7 +13776,8 @@ async function executePaperclipNativeSessionAttempt(
                   ? "Approval required. Review the operation and update the agent's permission setting before retrying. This runner has no interactive approval handler."
                   : sourceFailureCode === NATIVE_PROVIDER_SESSION_CLOSED
                   ? NATIVE_PROVIDER_SESSION_CLOSED_ACTION
-                  : sourceFailureCode === NATIVE_PROVIDER_STARTUP_REJECTED
+                  : sourceFailureCode === NATIVE_PROVIDER_STARTUP_REJECTED ||
+                      (startupAuthenticationFailure && recoveryEvidence.recoveryMode === "bootstrap_retry")
                   ? startupRejectedAction
                   : sourceFailureCode === NATIVE_CONTROLLER_JOURNAL_BEHIND_RUNNER
                   ? NATIVE_CONTROLLER_JOURNAL_BEHIND_RUNNER_ACTION
@@ -13866,7 +13935,7 @@ async function executePaperclipNativeSessionAttempt(
         if (recoveryEvidence.unclaimedBootstrap && bootstrap) {
           const currentEvidence = await nativeProviderRecoveryEvidence({ db: tx as unknown as Db,
             runId: input.execution.binding.runId, executionTargetKind: input.runnerExecutionTarget?.kind ?? "local",
-            sourceFailureCode, bootstrap });
+            sourceFailureCode: recoverySourceFailureCode, bootstrap });
           if (!runBeforeWrite || ["cancelled", "succeeded"].includes(runBeforeWrite.status)
             || Object.keys(record(runBeforeWrite.resultJson?.nativeCancellation)).length > 0
             || runBeforeWrite.runnerInstanceId !== bootstrap.identity.runnerInstanceId
@@ -13904,6 +13973,8 @@ async function executePaperclipNativeSessionAttempt(
             error: message,
             resultJson: sql`(coalesce(${heartbeatRuns.resultJson}, '{}'::jsonb) - 'remoteRunnerRecovery')
               || ${JSON.stringify(remoteRunnerRecovery ? { remoteRunnerRecovery } : {})}::jsonb
+              || ${JSON.stringify(sourceFailureCode === RUNNER_ACPX_PROFILE_INCOMPATIBLE && localAcpxAgent
+                ? { runnerCompatibility: { acpxAgent: localAcpxAgent } } : {})}::jsonb
               || ${providerFailure ? sql`jsonb_build_object('providerFailure', coalesce(${heartbeatRuns.resultJson}->'providerFailure', ${JSON.stringify(providerFailure)}::jsonb))` : sql`'{}'::jsonb`}`,
             errorCode: ownershipUnverified
               ? NATIVE_OWNERSHIP_UNVERIFIED_ERROR_CODE
@@ -13983,7 +14054,9 @@ async function executePaperclipNativeSessionAttempt(
             ...(providerLimit?.plan.resetAt ? { providerLimitResetAt: providerLimit.plan.resetAt.toISOString() } : {}),
           },
           nextAction:
-            providerLimit
+            sourceFailureCode === RUNNER_ACPX_PROFILE_INCOMPATIBLE
+              ? "Paperclip will continue when the local Runner supports this provider profile."
+              : providerLimit
               ? providerLimit.nextAction
               : sourceFailureCode === "native_permission_declined"
               ? "Provider permission was declined. Inspect the task and give explicit direction before starting further provider work. Automatic recovery is stopped."
@@ -16560,6 +16633,7 @@ export function remoteCheckpointIncompleteFailure(
 export async function createRunnerdBackend(input: {
   executionContext?: NativeExecutionContext;
   casesEnabled?: boolean;
+  responsibilitiesEnabled?: boolean;
   toolRefreshOnResume?: boolean;
   db: Db;
   providerPackAdmissionSource?: NativeProviderPackAdmissionSource;
@@ -16575,6 +16649,7 @@ export async function createRunnerdBackend(input: {
   remoteWarmRecovery?: Omit<RemoteWarmSessionRecovery, "revalidate"> & { revalidate: () => Promise<void> };
   retainedPluginTaskOwner?: ReturnType<typeof createPluginRunnerTaskOwner>;
   relaunchReleased?: { source: DurableRecoveryIdentity; runner: { version: string; digest: string } };
+  onPluginTaskOwner?: (owner: ReturnType<typeof createPluginRunnerTaskOwner>) => void;
   beginRetainedRunAttachment?: () => void;
   pluginTaskDescription?: PluginTaskDescription;
   onSpawn?: (meta: {
@@ -16909,6 +16984,7 @@ async function createRunnerdBackendWithinSessionClaim(
   const authority = new PaperclipRunnerToolAuthority(input.db, {
     apiUrl: resolveLocalRuntimeApiUrl(),
     casesEnabled: input.casesEnabled === true,
+    responsibilitiesEnabled: input.responsibilitiesEnabled === true,
     ...(nativeReview ? { nativeReview } : {}),
     connectorAssignments,
     assignedMcpTools,
@@ -17048,7 +17124,8 @@ async function createRunnerdBackendWithinSessionClaim(
     }
     let priorDescription = input.pluginTaskDescription?.taskId === remoteTarget.sandboxLeaseAcquisition?.providerLeaseId
       ? input.pluginTaskDescription : undefined;
-    if (remoteTarget.sandboxLeaseAcquisition?.outcome === "resumed" && !durableBinding && !input.retainedPluginTaskOwner && !input.remoteWarmRecovery) {
+    if (remoteTarget.sandboxLeaseAcquisition?.outcome === "resumed" && !durableBinding && !input.retainedPluginTaskOwner && !input.remoteWarmRecovery
+      && !input.relaunchReleased) {
       // A new logical session (including fresh retries) cannot inherit the old process authority.
       await pluginTask({kind:"stop"});
       const stopped=environmentTaskResultSchema.parse(await pluginTask({kind:"status"}));
@@ -17075,7 +17152,7 @@ async function createRunnerdBackendWithinSessionClaim(
       turnId: input.remoteWarmRecovery.identity.turnId, itemId: input.remoteWarmRecovery.identity.itemId,
     } : undefined;
 
-    const resumeFrom = !retainedOwner && !adopting && prior && prior.environmentLeaseId !== remoteTarget.leaseId
+    const resumeFrom = !retainedOwner && !adopting && !input.relaunchReleased && prior && prior.environmentLeaseId !== remoteTarget.leaseId
       ? await resolvePluginTaskResume(input.db, { companyId: input.execution.binding.companyId,
           leaseId: remoteTarget.leaseId!, priorIdentity: prior }) : undefined;
     const credentials = await preparePluginRunnerCredentials({
@@ -17160,6 +17237,7 @@ async function createRunnerdBackendWithinSessionClaim(
     if (input.execution.session.lifecyclePolicy.mode === "warm" && (!credentials.accountIdentity || description.warmTaskVersion !== 1)) throw new Error("Plugin warm task capability or account unavailable");
     const owner = retainedOwner ?? createPluginRunnerTaskOwner(ownerInput);
     if (retainedOwner) retainedOwner.rebind(ownerInput);
+    input.onPluginTaskOwner?.(owner);
     return { provider, description, prior, adoptionIdentity, adopting, owner };
   }
   if (pluginTask && remoteTarget?.transport === "sandbox" && input.execution.schema !== "paperclip.native-execution-input.v6" && input.execution.schema !== "paperclip.native-execution-input.v8") {
@@ -17402,6 +17480,12 @@ async function createRunnerdBackendWithinSessionClaim(
     : remoteTarget
     ? remoteClaudeRunnerBinary || input.runnerRemoteBinaryPath?.trim() || remotePiCompanion?.runnerBinary || (useBundledRemoteImageAssets ? await verifiedBundledRemoteRunnerBinary() : await resolvePaperclipRunnerBinaryAsync())
     : await resolvePaperclipRunnerBinaryAsync();
+  const localAcpxProvider = !remoteTarget && !input.restartRecovery && input.execution.provider.kind === "acpx"
+    ? input.execution.provider : null;
+  if (localAcpxProvider
+    && await localAcpxRunnerCompatibility(localAcpxProvider.agent, controllerRunnerBinary) === "incompatible") {
+    throw new Error(RUNNER_ACPX_PROFILE_INCOMPATIBLE);
+  }
   const selectProviderPackAuthority = (reattach: boolean) => requiresRemoteProviderPack ? resolveRemoteProviderPackAuthority({
     stateDirectory: root,
     binding: { companyId: input.execution.binding.companyId, agentId: input.execution.binding.agentId,
@@ -19353,9 +19437,10 @@ async function createRunnerdBackendWithinSessionClaim(
         launchRoot: launch.root, accountUid: launch.accountUid });
       providerArtifacts = await reuse() ?? await shareNativeProviderArtifactCapture({
         key: `${input.execution.binding.companyId}:${manifest.digest}`, signal, reuse,
-        capture: () => captureRemoteNativeProviderArtifacts({ runner: remoteCommandRunner,
-          remoteCwd: remoteTarget.remoteCwd, launch, manifest, signal, context: input.executionContext },
-          source => retainNativeProviderArtifacts({ db: input.db, storage: artifactStorage, owner: backupOwner, source, signal })),
+        capture: (captureSignal, hold) => captureRemoteNativeProviderArtifacts({ runner: remoteCommandRunner,
+          remoteCwd: remoteTarget.remoteCwd, launch, manifest, signal: captureSignal, context: input.executionContext, hold },
+          source => retainNativeProviderArtifacts({ db: input.db, storage: artifactStorage, owner: backupOwner, source,
+            signal: captureSignal })),
       });
     } : undefined,
     bindDiagnosticSession: session => {
