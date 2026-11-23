@@ -1696,6 +1696,7 @@ export type {
   ToolProfileSummary,
   ToolProfileStatus,
   ToolProfileWithDetails,
+  ToolProfileListItem,
   ToolProfileConfiguration,
   ToolRateLimitCounter,
   ToolRateLimitRule,
