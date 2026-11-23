@@ -472,9 +472,9 @@ Current fork-local migrations (SQL bytes are final once a database has applied t
 | `8808_skill_version_security_approval` | skill version security approval (PR 20846 `0502`) |
 | `8809_skill_source_security_override_summary` | skill source override summary (PR 20846 `0503`) |
 | `8810_skill_version_security_approval_index` | concurrent index for the approvals table (PR 20846 `0504`); listed in `MIGRATIONS_WITH_TOP_LEVEL_STATEMENTS` in `packages/db/src/client.ts` |
-| `8811_white_wild_child` | personal sidebar Recents limit (PR 22614 `0501`) |
+| `8811_white_wild_child` | personal sidebar Recents limit (PR 22614 `0510`) |
 
-The upstream number in parentheses is the byte-identical copy in the pull request branch. Upstream master currently ends at `0500`; the open fork pull requests hold `0501`-`0509`.
+The upstream number in parentheses is the byte-identical copy in the pull request branch. Upstream master currently ends at `0500`; the open fork pull requests hold `0501`-`0510`.
 
 Migration `0471` keeps the existing conversation as the default for its company, agent and user and permits additional conversations. The partial unique index still protects concurrent creation of the default conversation.
 
