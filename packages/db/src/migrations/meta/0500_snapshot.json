@@ -1,6 +1,6 @@
 {
-  "id": "0fc0ef19-487e-4b55-ab2f-b61341c22805",
-  "prevId": "51525362-c4bc-44be-b4a7-95cb4aae7748",
+  "id": "51525362-c4bc-44be-b4a7-95cb4aae7748",
+  "prevId": "a80ac568-accd-4c40-b63a-82b870052e0a",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -43494,13 +43494,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "conversation_default": {
-          "name": "conversation_default",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": true
-        },
         "conversation_state": {
           "name": "conversation_state",
           "type": "text",
@@ -43930,7 +43923,6 @@
             }
           ],
           "isUnique": true,
-          "where": "\"issues\".\"conversation_default\" = true",
           "concurrently": false,
           "method": "btree",
           "with": {}

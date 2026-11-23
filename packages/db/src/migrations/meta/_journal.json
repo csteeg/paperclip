@@ -3489,72 +3489,79 @@
       "breakpoints": true
     },
     {
+      "idx": 500,
+      "version": "7",
+      "when": 1795206084746,
+      "tag": "0500_funny_malcolm_colcord",
+      "breakpoints": true
+    },
+    {
       "idx": 8801,
       "version": "7",
-      "when": 1795048062307,
+      "when": 1795206084747,
       "tag": "8801_skill_source_security_override",
       "breakpoints": true
     },
     {
       "idx": 8802,
       "version": "7",
-      "when": 1795048062308,
+      "when": 1795206084748,
       "tag": "8802_messy_talkback",
       "breakpoints": true
     },
     {
       "idx": 8803,
       "version": "7",
-      "when": 1795048062309,
+      "when": 1795206084749,
       "tag": "8803_flaky_arclight",
       "breakpoints": true
     },
     {
       "idx": 8804,
       "version": "7",
-      "when": 1795048062310,
+      "when": 1795206084750,
       "tag": "8804_project_provider_authorizations",
       "breakpoints": true
     },
     {
       "idx": 8805,
       "version": "7",
-      "when": 1795048062311,
+      "when": 1795206084751,
       "tag": "8805_multiple_agent_chat_conversations",
       "breakpoints": true
     },
     {
       "idx": 8806,
       "version": "7",
-      "when": 1795048062312,
+      "when": 1795206084752,
       "tag": "8806_project_repository_checkout",
       "breakpoints": true
     },
     {
       "idx": 8807,
       "version": "7",
-      "when": 1795048062313,
+      "when": 1795206084753,
       "tag": "8807_project_repository_checkout_none",
       "breakpoints": true
     },
     {
       "idx": 8808,
       "version": "7",
-      "when": 1795048062314,
+      "when": 1795206084754,
       "tag": "8808_skill_version_security_approval",
       "breakpoints": true
     },
     {
       "idx": 8809,
       "version": "7",
-      "when": 1795048062315,
+      "when": 1795206084755,
       "tag": "8809_skill_source_security_override_summary",
       "breakpoints": true
     },
     {
       "idx": 8810,
       "version": "7",
-      "when": 1795048062316,
+      "when": 1795206084756,
       "tag": "8810_skill_version_security_approval_index",
       "breakpoints": true
     }
