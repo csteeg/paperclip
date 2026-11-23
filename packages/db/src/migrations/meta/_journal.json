@@ -3564,6 +3564,13 @@
       "when": 1795206084756,
       "tag": "8810_skill_version_security_approval_index",
       "breakpoints": true
+    },
+    {
+      "idx": 8811,
+      "version": "7",
+      "when": 1795423728953,
+      "tag": "8811_white_wild_child",
+      "breakpoints": true
     }
   ]
 }

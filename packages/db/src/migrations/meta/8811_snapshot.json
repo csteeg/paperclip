@@ -1,5 +1,5 @@
 {
-  "id": "2438752e-a45c-450d-9db6-997defabc782",
+  "id": "bba764c1-5d29-491f-a607-c997e4d4f56b",
   "prevId": "51525362-c4bc-44be-b4a7-95cb4aae7748",
   "version": "7",
   "dialect": "postgresql",
@@ -67370,6 +67370,13 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
+        },
+        "recent_items_limit": {
+          "name": "recent_items_limit",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 20
         },
         "coordinator_workspace_enabled": {
           "name": "coordinator_workspace_enabled",
