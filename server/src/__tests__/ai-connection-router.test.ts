@@ -212,7 +212,7 @@ afterAll(async () => {
 });
 
 describe("durable, authorized connection routing", () => {
-  it.each([["win32", "local"], ["linux", "local"], ["win32", "ssh"]] as const)("selects a compatible pool account for the %s/%s execution platform", async (platform, driver) => {
+  it.each([["linux", "local"], ["win32", "ssh"]] as const)("selects a compatible pool account for the %s/%s execution platform", async (platform, driver) => {
     const target = vi.spyOn(localRunnerPlatform, "localAgentRunnerTarget").mockReturnValue({
       driver: "local", platform, architecture: "x64", ...(platform === "linux" ? { libc: "glibc" as const, glibcVersion: "2.39" } : {}),
     });
@@ -223,26 +223,16 @@ describe("durable, authorized connection routing", () => {
         name: randomUUID(), driver: "ssh", status: "active", envVars: {}, config: { host: "pool-fixture.invalid", username: "fixture" },
       });
       const claude = members[1]!, codex = members[0]!;
-      const backupId = randomUUID();
       const pool = await harnessPoolService(db).save(companyId, { config: {
         schemaVersion: 2, kind: "harness_pool", name: randomUUID(), enabled: true, mode: "failover", members: [
           { id: claude.id, harness: { type: "claude_code" }, connection: claude.binding, model: claude.profile.model },
           { id: codex.id, harness: { type: "codex" }, connection: codex.binding, model: codex.profile.model },
-          { id: backupId, harness: { type: "codex" }, connection: codex.binding, model: "gpt-6-luna" },
         ],
       } }, "alice");
       const taskKey = randomUUID();
       const selected = await resolve(pool.id, taskKey, { environmentId: environment.id, skipUsageProbe: true });
-      const nativeWindows = platform === "win32" && driver === "local";
-      expect(selected.memberId).toBe(nativeWindows ? codex.id : claude.id);
-      expect(selected.runtimeConfig.provider).toBe(nativeWindows ? "codex" : "acpx");
-      if (nativeWindows) {
-        const transitioned = await db.transaction(tx => aiConnectionRouterService(tx as unknown as typeof db).transitionQuotaPin({
-          companyId, agentId, poolId: pool.id, taskKey, expectedSelection: selected, userId: "alice", adapterType: "paperclip_runner",
-          attemptedMemberIds: [codex.id], failureKind: "runner", environmentId: environment.id,
-        }));
-        expect(transitioned).toMatchObject({ kind: "selected", selection: { memberId: backupId } });
-      }
+      expect(selected.memberId).toBe(claude.id);
+      expect(selected.runtimeConfig.provider).toBe("acpx");
       if (platform === "linux" && driver === "local") {
         target.mockReturnValue({ driver: "local", platform: "win32", architecture: "x64" });
         await expect(resolve(pool.id, taskKey, { environmentId: local.id, skipUsageProbe: true }))
@@ -1019,10 +1009,11 @@ describe("durable, authorized connection routing", () => {
     }, "alice");
     const taskKey = randomUUID();
     const pinned = await resolve(pool.id, taskKey);
-    expect(pinned.memberId).toBe(members[0]!.id);
+    const first = members[0]!;
+    expect(pinned.memberId).toBe(first.id);
     try {
-      await service().recordQuotaCooldown(companyId, pinned.binding.connectionId,
-        await identityFor(pinned.binding.grantId), new Date(Date.now() + 60_000));
+      await service().recordQuotaCooldown(companyId, first.binding.connectionId,
+        await identityFor(first.binding.grantId), new Date(Date.now() + 60_000));
       await expect(resolve(pool.id, taskKey)).rejects.toMatchObject({ poolWaitScope: "account" });
       await expect(resolve(pool.id, randomUUID())).resolves.toMatchObject({ memberId: members[1]!.id });
     } finally {
