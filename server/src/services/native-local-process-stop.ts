@@ -444,6 +444,7 @@ type SettledProcessFacts = {
 function readSettledProcessFacts(tx: Db, runId: string) {
   return tx.execute(sql`select r.company_id as "companyId", r.agent_id as "agentId", r.runtime_mode as "runtimeMode",
       r.status, r.finished_at is not null as "finished",
+      r.native_issue_id as "nativeIssueId", r.process_host_hash as "processHostHash", r.finished_at as "finishedAt",
       r.process_pid as "processPid", r.process_group_id as "processGroupId",
       to_char(r.process_started_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as "processStartedAt",
       r.driver_kind = 'cursor_cloud_api' as "apiDriver",
