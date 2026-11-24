@@ -287,7 +287,7 @@ because a failed run starts again from the first statement. The pull-request
 guard fails a new `CONCURRENTLY` migration that is not in that list.
 
 **The rule for a new migration.** A pull request fails when a migration it adds
-is `unknown`. Rewrite the migration, split it into expand and contract
+is `unknown` or `requires_staging`. Rewrite the migration, split it into expand and contract
 migrations, or, when you have verified the migration yourself, state the class
 in the first lines of the migration file:
 
@@ -301,7 +301,10 @@ override is read only from the migration file, so it is reviewed with the SQL
 and travels with it. A contract migration (for example the `DROP COLUMN` that
 follows an expand release) always classifies as `requires_staging`; mark it
 `online_compatible` this way once no running release uses the column.
-`requires_staging` does not fail the pull request yet; it prints a notice.
+Cloud stacks that serve two releases at once refuse a `requires_staging`
+release, so it ships only through a maintenance deploy. Prefer splitting it
+into expand and contract migrations; add the `requires_staging` override only
+when the maintenance deploy is accepted.
 
 Check a migration locally:
 
@@ -324,6 +327,18 @@ array lists every packed migration in journal order with `idx`, `tag`,
 `sqlSha256` (the hash the migrator records in the migration history),
 `compatibility`, `classified` (the classifier's verdict before an override),
 `override`, `overrideJustification`, and `reasons`.
+
+### Migrations that need a deploy without overlap
+
+Some `requires_staging` migrations ship in one release instead of an expand
+and a contract release. Their `requires_staging` header records that the
+operator accepts a maintenance deploy; this table explains why. Deploy such a
+release without overlap: stop every server of the previous release before a
+server of the new release accepts traffic.
+
+| Migration | Why the previous release cannot run beside it |
+| --- | --- |
+| `0509_multiple_agent_chat_conversations` (develop `8805`) | The new release lets a person open more than one chat with an agent (`conversation_default = false`). A previous-release server finds a chat by company, agent and user without the default predicate, so it can open or deliver into a secondary chat instead of the default one, and it ignores `?new=true`. Duplicate default chats stay impossible: the partial unique index still allows one `conversation_default = true` chat per person and agent. |
 
 ## Migration authoring checklist
 
@@ -462,19 +477,19 @@ Current fork-local migrations (SQL bytes are final once a database has applied t
 
 | File | Origin |
 | --- | --- |
-| `8801_skill_source_security_override` | skill source security override (PR 20846 `0501`) |
+| `8801_skill_source_security_override` | skill source security override (PR 20846 `0511`) |
 | `8802_messy_talkback` | managed Claude project sources (PR 19216 `0505`) |
 | `8803_flaky_arclight` | provider pool (PR 19481 `0506`) |
 | `8804_project_provider_authorizations` | Azure DevOps skill sources (PR 20533 `0507`) |
 | `8805_multiple_agent_chat_conversations` | multiple agent chats (PR 19425 `0509`) |
 | `8806_project_repository_checkout` | project repository checkout scope (PR 21367 `0508`) |
 | `8807_project_repository_checkout_none` | project repository checkout scope, `none` value (develop only; the pull request branch has no copy) |
-| `8808_skill_version_security_approval` | skill version security approval (PR 20846 `0502`) |
-| `8809_skill_source_security_override_summary` | skill source override summary (PR 20846 `0503`) |
-| `8810_skill_version_security_approval_index` | concurrent index for the approvals table (PR 20846 `0504`); listed in `MIGRATIONS_WITH_TOP_LEVEL_STATEMENTS` in `packages/db/src/client.ts` |
+| `8808_skill_version_security_approval` | skill version security approval (PR 20846 `0512`) |
+| `8809_skill_source_security_override_summary` | skill source override summary (PR 20846 `0513`) |
+| `8810_skill_version_security_approval_index` | concurrent index for the approvals table (PR 20846 `0514`); listed in `MIGRATIONS_WITH_TOP_LEVEL_STATEMENTS` in `packages/db/src/client.ts` |
 | `8811_white_wild_child` | personal sidebar Recents limit (PR 22614 `0510`) |
 
-The upstream number in parentheses is the byte-identical copy in the pull request branch. Upstream master currently ends at `0500`; the open fork pull requests hold `0501`-`0510`.
+The upstream number in parentheses is the byte-identical copy in the pull request branch. Upstream master currently ends at `0504`; the open fork pull requests hold `0505`-`0514`.
 
 Migration `0471` keeps the existing conversation as the default for its company, agent and user and permits additional conversations. The partial unique index still protects concurrent creation of the default conversation.
 

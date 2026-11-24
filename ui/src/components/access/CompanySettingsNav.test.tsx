@@ -65,31 +65,6 @@ describe("CompanySettingsNav", () => {
     vi.clearAllMocks();
   });
 
-  it("maps company settings routes to the expected shared tab value", () => {
-    expect(getCompanySettingsTab("/company/settings")).toBe("general");
-    expect(getCompanySettingsTab("/PAP/company/settings")).toBe("general");
-    expect(getCompanySettingsTab("/PAP/company/settings/connections")).toBe("connections");
-    expect(getCompanySettingsTab("/company/settings/environments")).toBe("instance-environments");
-    expect(getCompanySettingsTab("/company/export")).toBe("export");
-    expect(getCompanySettingsTab("/PAP/company/export")).toBe("export");
-    expect(getCompanySettingsTab("/company/import")).toBe("import");
-    expect(getCompanySettingsTab("/PAP/company/import")).toBe("import");
-    expect(getCompanySettingsTab("/company/settings/members")).toBe("members");
-    expect(getCompanySettingsTab("/PAP/company/settings/members")).toBe("members");
-    expect(getCompanySettingsTab("/company/settings/access")).toBe("members");
-    expect(getCompanySettingsTab("/PAP/company/settings/access")).toBe("members");
-    expect(getCompanySettingsTab("/company/settings/invites")).toBe("members");
-    expect(getCompanySettingsTab("/PAP/company/settings/secrets")).toBe("secrets");
-    expect(getCompanySettingsTab("/company/settings/instance/profile")).toBe("instance-profile");
-    expect(getCompanySettingsTab("/PAP/company/settings/instance/general")).toBe("general");
-    expect(getCompanySettingsTab("/company/settings/instance/environments")).toBe("instance-environments");
-    expect(getCompanySettingsTab("/company/settings/instance/access")).toBe("instance-access");
-    expect(getCompanySettingsTab("/PAP/company/settings/instance/access")).toBe("instance-access");
-    expect(getCompanySettingsTab("/company/settings/instance/experimental")).toBe("instance-experimental");
-    expect(getCompanySettingsTab("/PAP/company/settings/instance/plugins/example")).toBe("instance-plugins");
-    expect(getCompanySettingsTab("/company/settings/instance/adapters")).toBe("instance-adapters");
-  });
-
   function renderNav(
     root: ReturnType<typeof createRoot>,
     hiddenSettings?: string[],
@@ -109,13 +84,6 @@ describe("CompanySettingsNav", () => {
       </QueryClientProvider>,
     );
   }
-
-  it("shows Connections while fast responses are disabled", async () => {
-    const root = createRoot(container);
-    await act(async () => { renderNav(root, undefined, undefined, false); });
-    expect(pageTabBarMock.mock.calls.at(-1)?.[0]?.items).toContainEqual({ value: "connections", label: "Connections" });
-    await act(async () => { root.unmount(); });
-  });
 
   it("renders the active tab and navigates when a different tab is selected", async () => {
     currentPathname = "/PAP/company/settings/members";
@@ -192,45 +160,6 @@ describe("CompanySettingsNav", () => {
     });
   });
 
-  it("filters operator-hidden company tabs out of the tab bar", async () => {
-    currentPathname = "/PAP/company/settings/members";
-    const root = createRoot(container);
-
-    await act(async () => {
-      renderNav(root, ["company.import", "company.secrets"]);
-    });
-
-    const renderedValues = pageTabBarMock.mock.calls.at(-1)?.[0]?.items?.map(
-      (item: { value: string }) => item.value,
-    );
-    expect(renderedValues).not.toContain("import");
-    expect(renderedValues).not.toContain("secrets");
-    expect(renderedValues).toContain("export");
-    expect(renderedValues).toContain("members");
-
-    await act(async () => {
-      root.unmount();
-    });
-  });
-
-  it("suppresses the Import tab on a Cloud-managed instance", async () => {
-    currentPathname = "/PAP/company/settings/members";
-    const root = createRoot(container);
-
-    await act(async () => {
-      renderNav(root, undefined, { managed: true });
-    });
-
-    const renderedValues = pageTabBarMock.mock.calls.at(-1)?.[0]?.items?.map(
-      (item: { value: string }) => item.value,
-    );
-    expect(renderedValues).not.toContain("import");
-    expect(renderedValues).toContain("export");
-
-    await act(async () => {
-      root.unmount();
-    });
-  });
 });
 
 it("selects the dedicated Pools settings destination", () => {

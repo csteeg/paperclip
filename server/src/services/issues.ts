@@ -45,6 +45,7 @@ import { executionWorkspaceService } from "./execution-workspaces.js";
 import { notifyChatPublicationWork } from "./chat-work-notifications.js";
 import { notifyTerminalWorkspaceWork } from "./terminal-workspace-work.js";
 import { requestRestorePointDeletion } from "./git-restore-point-ledger.js";
+import { requestIssueConnectionContentDeletion } from "./tool-access/connections/issue-content-deletion.js";
 import { DELIVERY_QUEUES, notifyDeliveryWork } from "./delivery-work-notifications.js";
 import { recordChatHandoff, recordAcceptedChatHandoff, lockAcceptedChatHandoffSource, recordChatCompletion, existingChatCompletionReply, acknowledgeChatCompletionReply } from "./chat-completion-delivery.js";
 import { mirrorSlackBoardComment, slackBoardReplyBindings } from "./slack-board-messages.js";
@@ -11818,6 +11819,12 @@ export function issueService(db: Db) {
         await assertExecutionTaskParent(dbOrTx, existing.companyId, data.parentId);
       }
       if (existing.conversationAgentId) {
+        // An agent names its chat only while the title is provisional, as set_task_title does: once
+        // named, or renamed by the person, the title stands against a task update too.
+        if (data.actorAgentId && data.title !== undefined && !existing.titleNeedsGeneration) {
+          const { title: _finalTitle, ...rest } = data;
+          data = rest;
+        }
         if ((data.assigneeAgentId !== undefined && data.assigneeAgentId !== existing.conversationAgentId)
           || data.assigneeUserId || data.conversationAgentId !== undefined || data.conversationUserId !== undefined || data.conversationDefault !== undefined
           || data.conversationState !== undefined || data.conversationSessionGeneration !== undefined
@@ -12860,6 +12867,9 @@ export function issueService(db: Db) {
           await notifyDeliveryWork(tx, DELIVERY_QUEUES.agentTimers);
           await notifyDeliveryWork(tx, DELIVERY_QUEUES.managedClaudeTranscriptCleanup, id);
           await notifyRoutineExecutionStatus(tx, id);
+          if (owner) {
+            await requestIssueConnectionContentDeletion(tx as unknown as Db, { companyId: owner.companyId, issueId: id, actorAgentId });
+          }
           removedIssue = await tx
             .delete(issues)
             .where(eq(issues.id, id))
