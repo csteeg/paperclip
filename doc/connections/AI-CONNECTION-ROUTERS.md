@@ -140,7 +140,13 @@ management using authenticated, company-scoped pool APIs. No separate plugin
 page or sidebar entry is needed. New allocations over
 the chosen threshold wait; known exhaustion defers pinned turns. The deferred
 run schedules `ai_connection_pool_wait` without spending the failure retry
-budget, and the UI labels that retry as **Pool exhausted**.
+budget. A wait on a pinned account stays scoped to that account. The UI shows
+**Pool exhausted** only after the router verifies that all eligible pool members
+are unavailable. Older retries without that scope show a general pool wait.
+The retry uses the earliest verified cooldown deadline across the eligible
+accounts. Account and pool changes wake parked retries through the existing
+dispatcher. Paperclip switches the pin only after verifying that the previous
+turn and workspace have settled.
 
 Operators choose **Connectors → AI connection pool → Add connection pool**,
 select existing accounts, arrange their order, and create a paused connection.

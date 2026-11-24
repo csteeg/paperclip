@@ -7,7 +7,7 @@ import { notifyIssueAttentionRetentionWork } from "../retention-work-notificatio
 import { normalizeAgentNameKey } from "../agent-name-key.js";
 import { notifyStatusCardIssueChange } from "../status-card-notifications.js";
 import { notifyScheduledRetryDispatch } from "../run-dispatch-notifications.js";
-import { switchUnstartedLegacyQuotaPin } from "./quota-prestart-fence.js";
+import { applyHistoricalQuotaHandoff, switchHistoricalQuotaPin, switchUnstartedLegacyQuotaPin } from "./quota-prestart-fence.js";
 import { poolFailureKind, switchFailedPoolPin, poolConversationHandoff } from "./pool-failover.js";
 import { deriveTaskKeyWithHeartbeatFallback } from "./run-state.js";
 import { infrastructureRetryDelayMs } from "../system-recovery-state.js";
@@ -1277,14 +1277,35 @@ export function createHeartbeatRetries(db: Db, dependencies: HeartbeatRetryDepen
           delete retryContextSnapshot.transientRetryNotBefore;
           sessionBefore = null;
         }
-        if (retryReason === AI_CONNECTION_POOL_WAIT_RETRY_REASON && issueId && !sessionBefore && agent.adapterType === "claude_local") {
-          const selected = await switchUnstartedLegacyQuotaPin(tx as unknown as Db, { companyId: run.companyId,
-            runId: run.id, issueId, agentId: run.agentId, userId: responsibleUserId });
-          if (selected) {
+        if (retryReason === AI_CONNECTION_POOL_WAIT_RETRY_REASON && issueId) {
+          const [source] = await tx.select().from(heartbeatRuns).where(and(
+            eq(heartbeatRuns.id, run.id), eq(heartbeatRuns.companyId, run.companyId), eq(heartbeatRuns.agentId, run.agentId)));
+          const historical = source && await switchHistoricalQuotaPin(tx as unknown as Db, {
+            source, issueId, executionRunId: source.id, userId: responsibleUserId,
+          });
+          if (historical && "retryAt" in historical) {
+            retryContextSnapshot.poolWaitScope = "pool";
+            if (historical.retryAt < schedule.dueAt) {
+              schedule.dueAt = historical.retryAt;
+              schedule.delayMs = Math.max(0, schedule.dueAt.getTime() - now.getTime());
+              retryContextSnapshot.scheduledRetryAt = schedule.dueAt.toISOString();
+            }
+          }
+          const handoff = historical && "selection" in historical ? historical : null;
+          const firstClaim = !historical && !sessionBefore && agent.adapterType === "claude_local"
+            ? await switchUnstartedLegacyQuotaPin(tx as unknown as Db, { companyId: run.companyId,
+                runId: run.id, issueId, agentId: run.agentId, userId: responsibleUserId })
+            : null;
+          if (handoff || firstClaim) {
             schedule.dueAt = now;
             schedule.delayMs = 0;
-            retryContextSnapshot.aiRouterSelection = selected;
             retryContextSnapshot.scheduledRetryAt = now.toISOString();
+            if (handoff) {
+              applyHistoricalQuotaHandoff(retryContextSnapshot, handoff);
+              sessionBefore = null;
+            } else {
+              retryContextSnapshot.aiRouterSelection = firstClaim;
+            }
           }
         }
 
@@ -2098,6 +2119,8 @@ export function createHeartbeatRetries(db: Db, dependencies: HeartbeatRetryDepen
       scheduledRetryAt: row.run.scheduledRetryAt,
       scheduledRetryAttempt: row.run.scheduledRetryAttempt,
       scheduledRetryReason: row.run.scheduledRetryReason,
+      ...((row.run.contextSnapshot?.poolWaitScope === "account" || row.run.contextSnapshot?.poolWaitScope === "pool")
+        ? { poolWaitScope: row.run.contextSnapshot.poolWaitScope } : {}),
       error: row.run.error,
       errorCode: row.run.errorCode,
     };

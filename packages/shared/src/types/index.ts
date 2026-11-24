@@ -783,6 +783,7 @@ export type {
   IssueBlockerStalledWakeContext,
   SuccessfulRunHandoffState,
   SuccessfulRunHandoffStateKind,
+  AiConnectionPoolWaitScope,
   IssueScheduledRetry,
   IssueScheduledRetryStatus,
   IssueRetryNowOutcome,

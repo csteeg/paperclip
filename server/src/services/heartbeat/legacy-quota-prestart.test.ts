@@ -1,3 +1,4 @@
+import { buildExecutionContinuation } from "../execution-continuation.js";
 import { appendHeartbeatRunEvent } from "../heartbeat-run-events.js";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -5,10 +6,12 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { and, eq } from "drizzle-orm";
-import { agentTaskSessions, agentWakeupRequests, agents, aiConnectionPools, aiConnectionQuotaCooldowns, aiConnectionTaskPins, authUsers, companies, companyMemberships, companySecrets, connectionGrants, createDb, heartbeatRunEvents, heartbeatRuns, issues, toolInvocations, type Db } from "@paperclipai/db";
+import { agentTaskSessions, agentWakeupRequests, agents, aiConnectionPools, aiConnectionQuotaCooldowns, aiConnectionTaskPins, authUsers, companies, companyMemberships, companySecrets, completionContracts, connectionGrants, createDb, heartbeatRunEvents, heartbeatRuns, issues, issueThreadInteractions, nativeRunFinalizations, nativeRunResults, toolInvocations, type Db } from "@paperclipai/db";
 import { BUILTIN_AI_FAILOVER_ROUTER_KEY } from "@paperclipai/shared";
+import { createPrpSemanticToolInputEnvelope, createPrpSemanticToolResultEnvelope } from "@paperclipai/paperclip-runner";
 import { startEmbeddedPostgresTestDatabase } from "../../__tests__/helpers/embedded-postgres.js";
 import { secretService } from "../secrets.js";
+import { instanceSettingsService } from "../instance-settings.js";
 import { observeLegacyPoolAccountFailure, isCurrentLegacyPoolAccountProof } from "./legacy-pool-account-proof.js";
 import { prepareManagedAiRuntime } from "../ai-connection-runtime.js";
 import { connectionIntentService } from "../connection-intents.js";
@@ -34,8 +37,9 @@ describe("legacy quota prestart retry", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ five_hour: { utilization: 100, resets_at: observedReset }, extra_usage: { is_enabled: false } })));
   });
   afterEach(() => vi.restoreAllMocks());
-  async function fixture(postStart = false, taskless = false, provider: "anthropic" | "openai" = "anthropic") {
-    const adapterType = provider === "openai" ? "codex_local" : "claude_local";
+  async function fixture(postStart = false, taskless = false, provider: "anthropic" | "openai" = "anthropic",
+    historicalAdapters?: { firstNative: boolean; backupCodex: boolean }) {
+    const adapterType = historicalAdapters ? "paperclip_runner" : provider === "openai" ? "codex_local" : "claude_local";
     const credential = provider === "openai" ? JSON.stringify({ tokens: { access_token: "fixture-token", account_id: "fixture-account" } }) : "fixture-one";
     if (provider === "openai") vi.mocked(globalThis.fetch).mockImplementation(async () => new Response(JSON.stringify({ rate_limit: { allowed: false, primary_window: { used_percent: 100, reset_at: Math.ceil(Date.parse(observedReset) / 1000) } }, credits: { has_credits: false, unlimited: false } })));
     const companyId = randomUUID(), userId = randomUUID();
@@ -45,11 +49,22 @@ describe("legacy quota prestart retry", () => {
     const [agent] = await db.insert(agents).values({ companyId, name: adapterType, adapterType, status: "active" }).returning();
     const accounts = aiConnectionService(db);
     const first = await accounts.save(companyId, userId, { provider, method: "subscription", ownership: "personal", name: "First", loginSessionId: "fixture", agentIds: [], allAgents: true }, credential);
-    const second = await accounts.save(companyId, userId, { provider: "anthropic", method: "subscription", ownership: "personal", name: "Second", loginSessionId: "fixture", agentIds: [], allAgents: true }, "fixture-two");
-    const members = [first, second].map(account => ({ id: randomUUID(), binding: { mode: "delegated" as const, provider: account === first ? provider : "anthropic" as const, method: "subscription" as const, ...account }, profile: account === first && provider === "openai" ? { provider: "codex" as const, model: "gpt-5.6-sol" } : { provider: "acpx" as const, acpxAgent: "claude" as const, model: "claude-sonnet-5" } }));
+    const backupProvider = historicalAdapters?.backupCodex ? "openai" : "anthropic";
+    const second = await accounts.save(companyId, userId, { provider: backupProvider, method: "subscription", ownership: "personal", name: "Second", loginSessionId: "fixture", agentIds: [], allAgents: true }, historicalAdapters?.backupCodex
+      ? JSON.stringify({ tokens: { access_token: "backup-token", account_id: "backup-account" } }) : "fixture-two");
+    const members = [first, second].map((account, index) => {
+      const accountProvider = index === 0 ? provider : backupProvider;
+      return { id: randomUUID(), binding: { mode: "delegated" as const, provider: accountProvider, method: "subscription" as const, ...account },
+        ...(historicalAdapters && { runner: (index === 0 && historicalAdapters.firstNative ? "paperclip" : "legacy") as "paperclip" | "legacy" }),
+        profile: accountProvider === "openai" ? { provider: "codex" as const, model: "gpt-5.6-sol" }
+          : { provider: "acpx" as const, acpxAgent: "claude" as const, model: "claude-sonnet-5" } };
+    });
     const router = aiConnectionRouterService(db);
-    const pool = await router.save(BUILTIN_AI_FAILOVER_ROUTER_KEY, { companyId, config: { name: "Pool", enabled: true, mode: "failover", thresholdPercent: 90, members } }, userId);
-    const [updatedAgent] = await db.update(agents).set({ runtimeConfig: { aiConnection: { mode: "router", connectionId: pool.id } } }).where(eq(agents.id, agent.id)).returning();
+    const pool = await router.save(BUILTIN_AI_FAILOVER_ROUTER_KEY, { companyId, config: { name: "Pool", enabled: true, mode: "failover", thresholdPercent: 90, members,
+      ...(historicalAdapters && { schemaVersion: 2 as const, kind: "harness_pool" as const }) } }, userId);
+    if (historicalAdapters) await instanceSettingsService(db).updateExperimental({ enableNativeRunner: true });
+    const [updatedAgent] = await db.update(agents).set({ runtimeConfig: historicalAdapters
+      ? { harnessPool: { poolId: pool.id } } : { aiConnection: { mode: "router", connectionId: pool.id } } }).where(eq(agents.id, agent.id)).returning();
     const [issue] = await db.insert(issues).values({ companyId, title: "Task", identifier: `Q${companyId.slice(0, 8)}-1`, status: "in_progress", assigneeAgentId: agent.id }).returning();
     const startedAt = new Date(Date.now() - 10_000);
     const runId = randomUUID(), taskKey = taskless ? runId : issue.id;
@@ -502,6 +517,200 @@ describe("legacy quota prestart retry", () => {
     const [reopened] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, successor!.id));
     expect(reopened!.scheduledRetryAt!.getTime()).toBeLessThan(Date.now() + 1_000);
   }, 30_000);
+  async function historicalWait(runtimeMode: "legacy" | "native" = "legacy") {
+    const f = await fixture(false, false, "anthropic", { firstNative: runtimeMode === "native", backupCodex: true });
+    const priorAdapter = runtimeMode === "native" ? "paperclip_runner" : "claude_local";
+    const [contract] = runtimeMode === "native" ? await db.insert(completionContracts).values({
+      companyId: f.companyId, issueId: f.issue.id, revision: 1, schemaVersion: "v1", policyVersion: "v1",
+      risk: "low", completionAuthority: "agent_claim_policy", incompleteCriteriaPolicy: "block",
+      contractJson: {}, canonicalSha256: "fixture-contract", createdByActorType: "system", createdByActorId: "system",
+    }).returning() : [];
+    const priorStartedAt = new Date(f.source.startedAt!.getTime() - 60_000);
+    const priorFinishedAt = new Date(f.source.startedAt!.getTime() - 30_000);
+    const [predecessor] = await db.insert(heartbeatRuns).values({
+      companyId: f.companyId, agentId: f.agent.id, issueId: f.issue.id, scopeKind: "issue",
+      status: "succeeded", runtimeMode, executionStage: "dispatching",
+      ...(contract ? { nativeIssueId: f.issue.id, nativeSessionId: randomUUID(), completionContractId: contract.id }
+        : { processPid: 1234, processGroupId: 1234, processStartedAt: priorStartedAt }),
+      createdAt: priorStartedAt, startedAt: priorStartedAt, finishedAt: priorFinishedAt,
+      contextSnapshot: { issueId: f.issue.id, aiRouterTaskKey: f.issue.id, aiRouterSelection: f.selected },
+      sessionIdAfter: "prior-private-session", responsibleUserId: f.userId,
+      resultJson: contract ? { workspaceFinalizeStatus: "succeeded",
+        semanticToolReceipts: { completed: { operationId: "paperclip_get_issue", result: {} } } }
+        : { executionSettlement: { providerStopped: true, workspaceSettled: true, actionOutcomes: "unknown" },
+          acpToolInventoryComplete: true, acpPendingToolCount: 0, summary: "Implementation is done. Verification remains." },
+    }).returning();
+    if (contract) {
+      const [accepted] = await db.insert(nativeRunResults).values({ companyId: f.companyId, issueId: f.issue.id, runId: predecessor.id,
+        completionContractId: contract.id, serverFingerprint: "accepted", schemaStatus: "accepted",
+        resultJson: { summary: "Implementation is done. Verification remains." }, canonicalSha256: "accepted" }).returning();
+      await db.insert(nativeRunFinalizations).values({ companyId: f.companyId, issueId: f.issue.id,
+        runId: predecessor.id, phase: "committed", resultId: accepted.id });
+    }
+    await db.update(aiConnectionTaskPins).set({ createdAt: priorStartedAt }).where(eq(aiConnectionTaskPins.poolId, f.pool.id));
+    await db.insert(agentTaskSessions).values({ companyId: f.companyId, agentId: f.agent.id, taskKey: f.issue.id,
+      adapterType: priorAdapter, sessionDisplayId: predecessor.sessionIdAfter, lastRunId: predecessor.id });
+    const [source] = await db.update(heartbeatRuns).set({
+      // Existing waiting rows predate the first-claim fence.
+      runnerProfileJson: { adapterDispatch: { adapterType: "paperclip_runner",
+        poolPreparationFailure: { kind: "exhausted", poolId: f.pool.id, retryAt: observedReset } } },
+      resultJson: { ...f.source.resultJson, cancellation: { source: "control_plane", expected: true,
+        initiator: { type: "system" }, reason: "Waiting for an AI connection pool account",
+        recordedAt: f.source.finishedAt!.toISOString() }, retryAt: observedReset },
+      contextSnapshot: { ...f.source.contextSnapshot, aiRouterPoolId: f.pool.id },
+      sessionIdBefore: predecessor.sessionIdAfter,
+      executionStage: "settled",
+    }).where(eq(heartbeatRuns.id, f.source.id)).returning();
+    Object.assign(f.source, source);
+    return { ...f, predecessor };
+  }
+
+  it.each(["legacy", "native"] as const)(
+    "switches an exhausted historical %s Claude pin to a fresh Codex session on the same issue", async runtimeMode => {
+    const f = await historicalWait(runtimeMode);
+    expect((await f.schedule()).outcome).toBe("scheduled");
+    const [successor] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.retryOfRunId, f.source.id));
+    expect(successor).toMatchObject({ companyId: f.companyId, issueId: f.issue.id, agentId: f.agent.id,
+      responsibleUserId: f.userId, sessionIdBefore: null, contextSnapshot: {
+        aiRouterSelection: { memberId: f.members[1].id, adapterType: "codex_local" }, forceFreshSession: true, previousRunId: f.predecessor.id,
+      },
+    });
+    expect(successor.scheduledRetryAt!.getTime()).toBeLessThan(Date.now() + 1000);
+    expect(JSON.stringify(successor.contextSnapshot)).not.toContain("prior-private-session");
+    const continuation = await buildExecutionContinuation({ db, companyId: f.companyId, issueId: f.issue.id,
+      agentId: f.agent.id, runId: successor.id, context: successor.contextSnapshot!, summary: null, exposeLowTrustRaw: false });
+    expect(continuation.trigger.sourceRunId).toBe(f.source.id);
+    expect(continuation.completedWork).toBe("Implementation is done. Verification remains.");
+    const fake = randomUUID();
+    const tampered = await buildExecutionContinuation({ db, companyId: f.companyId, issueId: f.issue.id, agentId: f.agent.id,
+      runId: successor.id, context: { ...successor.contextSnapshot, previousRunId: fake,
+        aiPoolPreDispatchHandoff: { sourceRunId: f.source.id, predecessorRunId: fake } },
+      summary: null, exposeLowTrustRaw: false });
+    expect(tampered.completedWork).toBeNull();
+  }, 30_000);
+
+  it.each(["succeeded", "missing", "failed", "different_turn"] as const)(
+    "requires a same-turn successful native PRP tool receipt before switching (%s)", async outcome => {
+      const f = await historicalWait("native");
+      const sourceInstanceId = randomUUID();
+      const correlation = { runId: f.predecessor.id, normalizedSessionId: f.predecessor.nativeSessionId!,
+        turnId: "prior-turn", itemId: "read-item" };
+      const call = { callId: "get-issue-call", operationId: "paperclip_get_issue", correlation, content: { issueId: f.issue.id } };
+      const append = async (eventType: "semantic_tool.input" | "semantic_tool.result", sourceSeq: number,
+        semanticTool: ReturnType<typeof createPrpSemanticToolInputEnvelope>) => {
+        const event = { schema: "paperclip.prp.event.v1", schemaVersion: 1, sourceKind: "runner", sourceInstanceId,
+          sourceEventId: `semantic-${sourceSeq}`, sourceSeq, runId: correlation.runId,
+          normalizedSessionId: correlation.normalizedSessionId, turnId: semanticTool.correlation.turnId,
+          itemId: correlation.itemId, eventType, priority: 0, emittedAt: new Date().toISOString(),
+          payload: { semantic_tool: semanticTool } };
+        await appendHeartbeatRunEvent(db, { companyId: f.companyId, runId: f.predecessor.id, agentId: f.agent.id, eventType,
+          payload: { prpEvent: event },
+          nativeSource: { sourceInstanceId, sourceEventId: event.sourceEventId, sourceSeq, protocolSchemaVersion: 1,
+            canonicalPayload: event } });
+      };
+      await append("semantic_tool.input", 1, createPrpSemanticToolInputEnvelope(call));
+      if (outcome !== "missing") {
+        await append("semantic_tool.result", 2, createPrpSemanticToolResultEnvelope({ ...call,
+          correlation: outcome === "different_turn" ? { ...correlation, turnId: "different-turn" } : correlation,
+          outcome: outcome === "failed" ? "failed" : "succeeded", code: "fixture_result",
+          authorizationBoundary: "active_task", retryable: false,
+        }));
+      }
+      expect((await f.schedule()).outcome).toBe("scheduled");
+      const [pin] = await db.select().from(aiConnectionTaskPins).where(eq(aiConnectionTaskPins.poolId, f.pool.id));
+      expect(pin.selection.memberId).toBe(f.members[outcome === "succeeded" ? 1 : 0].id);
+    }, 30_000);
+
+  async function recordBackupCooldown(f: Awaited<ReturnType<typeof historicalWait>>, retryAt: Date) {
+    const [grant] = await db.select().from(connectionGrants).where(eq(connectionGrants.id, f.members[1].binding.grantId));
+    const [secret] = await db.select().from(companySecrets).where(eq(companySecrets.id, grant.credentialSecretRefs[0].secretId));
+    const identity = `secret:${secret.id}:${secret.aiSessionEpoch}`;
+    await f.router.recordQuotaCooldown(f.companyId, f.members[1].binding.connectionId, identity, retryAt);
+    return identity;
+  }
+
+  it("schedules a settled historical quota wait at the earlier backup reset", async () => {
+    const f = await historicalWait();
+    const backupReset = new Date(Date.now() + 5 * 60_000);
+    await recordBackupCooldown(f, backupReset);
+
+    expect((await f.schedule()).outcome).toBe("scheduled");
+    const [waiting] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.retryOfRunId, f.source.id));
+    expect(waiting.scheduledRetryAt).toEqual(backupReset);
+    expect(waiting.contextSnapshot).toMatchObject({ scheduledRetryAt: backupReset.toISOString(), poolWaitScope: "pool" });
+    expect(waiting.contextSnapshot?.forceFreshSession).toBeUndefined();
+    const [pin] = await db.select().from(aiConnectionTaskPins).where(eq(aiConnectionTaskPins.poolId, f.pool.id));
+    expect(pin.member.id).toBe(f.members[0].id);
+  }, 30_000);
+
+  it.each(["queued", "scheduled_retry"] as const)("reconsiders an already persisted %s quota wait", async status => {
+    const f = await historicalWait();
+    const backupIdentity = await recordBackupCooldown(f, new Date(Date.now() + 3_600_000));
+    expect((await f.schedule()).outcome).toBe("scheduled");
+    const [waiting] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.retryOfRunId, f.source.id));
+    expect(waiting.scheduledRetryAt!.getTime()).toBeGreaterThan(Date.now() + 60_000);
+    await db.delete(aiConnectionQuotaCooldowns).where(and(eq(aiConnectionQuotaCooldowns.companyId, f.companyId),
+      eq(aiConnectionQuotaCooldowns.credentialIdentity, backupIdentity)));
+    if (status === "scheduled_retry") {
+      await db.transaction(tx => reopenNativeQuotaPoolWaits(tx as unknown as Db, { companyId: f.companyId, poolId: f.pool.id }));
+      const [reopened] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, waiting.id));
+      expect(reopened.scheduledRetryAt!.getTime()).toBeLessThan(Date.now() + 1000);
+      expect(reopened.contextSnapshot?.poolWaitScope).toBeUndefined();
+    }
+    const [candidate] = await db.update(heartbeatRuns).set({ status: "queued", sessionIdBefore: f.predecessor.sessionIdAfter })
+      .where(eq(heartbeatRuns.id, waiting.id)).returning();
+    const handoff = { aiRouterSelection: { memberId: f.members[1].id }, forceFreshSession: true, previousRunId: f.predecessor.id };
+    if (status === "queued") {
+      await db.insert(agentTaskSessions).values({ companyId: f.companyId, agentId: f.agent.id, taskKey: f.issue.id,
+        adapterType: "codex_local", sessionDisplayId: "old-codex-session", sessionParamsJson: { paperclipAiCredentialIdentity: "old-grant" } });
+      const claims = await Promise.all([
+        preparePoolAdapterClaim(db, candidate, f.agent, f.userId),
+        preparePoolAdapterClaim(db, candidate, f.agent, f.userId),
+      ]);
+      expect(claims).toMatchObject([{ context: handoff }, { context: handoff }]);
+    } else {
+      expect(await preparePoolAdapterClaim(db, candidate, f.agent, f.userId)).toMatchObject({ context: handoff });
+    }
+    const [successor] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, candidate.id));
+    expect(successor.sessionIdBefore).toBeNull();
+    expect(successor.scheduledRetryAt!.getTime()).toBeLessThan(Date.now() + 1000);
+  }, 30_000);
+
+  it.each(["pending_action", "unsettled", "private_owner", "pending_interaction", "stop", "newer_active",
+    "unproven_source", "source_provider_event", "quota_reset"])(
+    "keeps the historical pin when %s prevents safe predispatch failover", async condition => {
+      const f = await historicalWait();
+      if (condition === "pending_action") await appendHeartbeatRunEvent(db, {
+        companyId: f.companyId, agentId: f.agent.id, runId: f.predecessor.id,
+        eventType: "tool.execution.started", stream: "system", level: "info", message: "Began an external action",
+        payload: { executionId: "exec", name: "shell" },
+      });
+      if (condition === "unsettled" || condition === "private_owner") {
+        await db.update(heartbeatRuns).set(condition === "unsettled"
+          ? { resultJson: { ...f.predecessor.resultJson, executionSettlement: undefined } }
+          : { responsibleUserId: null }).where(eq(heartbeatRuns.id, f.predecessor.id));
+      }
+      if (condition === "pending_interaction") await db.insert(issueThreadInteractions).values({
+        companyId: f.companyId, issueId: f.issue.id, kind: "request_confirmation", payload: {} as never,
+      });
+      if (condition === "stop") expect(await fenceLegacyQuotaPrestartStop(db, { companyId: f.companyId,
+        issueId: f.issue.id, runId: f.source.id })).toMatchObject({ kind: "fenced" });
+      if (condition === "newer_active") await db.insert(heartbeatRuns).values({
+        companyId: f.companyId, agentId: f.agent.id, issueId: f.issue.id, scopeKind: "issue", status: "running",
+      });
+      if (condition === "unproven_source") await db.update(heartbeatRuns).set({ runnerProfileJson: {} })
+        .where(eq(heartbeatRuns.id, f.source.id));
+      if (condition === "source_provider_event") await appendHeartbeatRunEvent(db, {
+        companyId: f.companyId, agentId: f.agent.id, runId: f.source.id,
+        eventType: "turn.started", stream: "system", level: "info", message: "Started a provider turn",
+      });
+      if (condition === "quota_reset") await db.delete(aiConnectionQuotaCooldowns)
+        .where(eq(aiConnectionQuotaCooldowns.companyId, f.companyId));
+      expect((await f.schedule()).outcome).toBe(condition === "stop" ? "not_scheduled" : "scheduled");
+      const [pin] = await db.select().from(aiConnectionTaskPins).where(eq(aiConnectionTaskPins.poolId, f.pool.id));
+      expect(pin.selection.memberId).toBe(f.members[0].id);
+    }, 30_000);
+
   it("atomically switches one pin and creates one immediate successor across concurrent claims", async () => {
     const f = await fixture();
     const results = await Promise.all([f.schedule(), f.schedule()]);
