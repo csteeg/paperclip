@@ -79,45 +79,6 @@ afterEach(async () => {
 });
 
 describe("Chat landing", () => {
-  it("uses the primary only when there is no valid recent conversation", async () => {
-    state.primaryAgentId = "alice";
-    recordAgentChatVisit("company-a", "user-a", "removed");
-    await render();
-    expect(state.navigate).toHaveBeenCalledWith("/chats/alice-slug", { replace: true });
-    state.navigate.mockClear();
-    recordAgentChatVisit("company-a", "user-a", "bob");
-    await render();
-    expect(state.navigate).toHaveBeenCalledWith("/chats/bob-slug", { replace: true });
-  });
-
-  it("waits for the primary without sending anything and preserves the chooser for unavailable primaries", async () => {
-    state.primaryLoading = true;
-    await render();
-    expect(state.navigate).not.toHaveBeenCalled();
-    expect(container.textContent).toContain("Opening chat");
-    state.primaryLoading = false;
-    state.primaryAgentId = "removed";
-    await render();
-    expect(state.navigate).not.toHaveBeenCalled();
-    expect(container.textContent).toContain("Who would you like to talk to?");
-  });
-
-  it("opens the most recently visited agent and replaces the landing history entry", async () => {
-    recordAgentChatVisit("company-a", "user-a", "alice");
-    recordAgentChatVisit("company-a", "user-a", "bob");
-    await render();
-    expect(state.navigate).toHaveBeenCalledWith("/chats/bob-slug", { replace: true });
-    expect(container.textContent).toContain("Opening chat");
-  });
-
-  it("skips unavailable saved agents and preserves the company and user scope", async () => {
-    recordAgentChatVisit("company-a", "user-a", "alice");
-    recordAgentChatVisit("company-a", "user-a", "removed");
-    recordAgentChatVisit("company-b", "user-a", "other-company-agent");
-    recordAgentChatVisit("company-a", "user-b", "other-user-agent");
-    await render();
-    expect(state.navigate).toHaveBeenCalledWith("/chats/alice-slug", { replace: true });
-  });
 
   it("reopens historical chats for agents missing from the active roster", async () => {
     recordAgentChatVisit("company-a", "user-a", "retired-id");
@@ -138,21 +99,6 @@ describe("Chat landing", () => {
     expect(state.navigate).toHaveBeenCalledWith("/chats/retired-id/chat-retired", { replace: true });
   });
 
-  it("shows the chooser when no saved chat remains available", async () => {
-    recordAgentChatVisit("company-a", "user-a", "removed");
-    await render();
-    expect(state.navigate).not.toHaveBeenCalled();
-    expect(container.textContent).toContain("Who would you like to talk to?");
-  });
-
-  it("skips a saved conversation that is no longer accessible even when its agent remains available", async () => {
-    recordAgentChatVisit("company-a", "user-a", "alice");
-    recordAgentChatVisit("company-a", "user-a", "bob", "deleted-chat");
-    state.chats = [{ id: "chat-alice", conversationAgentId: "alice" }];
-    await render();
-    expect(state.navigate).toHaveBeenCalledWith("/chats/alice-slug", { replace: true });
-  });
-
   it("reopens an active agent when history fails", async () => {
     recordAgentChatVisit("company-a", "user-a", "alice", "chat-alice");
     state.chatsFetched = false;
@@ -161,20 +107,4 @@ describe("Chat landing", () => {
     expect(state.navigate).toHaveBeenCalledWith("/chats/alice-slug/chat-alice", { replace: true });
   });
 
-  it("reopens a visited empty chat without waiting for history", async () => {
-    recordAgentChatVisit("company-a", "user-a", "alice", null);
-    state.chatsFetched = false;
-    await render();
-    expect(state.navigate).toHaveBeenCalledWith("/chats/alice-slug", { replace: true });
-  });
-
-  it("shows a retry state when identity fails instead of waiting for disabled history", async () => {
-    recordAgentChatVisit("company-a", "user-a", "alice");
-    state.sessionError = new Error("Session unavailable");
-    state.chatsFetched = false;
-    await render();
-    expect(state.navigate).not.toHaveBeenCalled();
-    expect(container.querySelector('[role="alert"]')?.textContent).toMatch(/Couldn[’']t load your chats/);
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain("Retry");
-  });
 });

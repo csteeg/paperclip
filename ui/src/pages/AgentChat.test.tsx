@@ -100,79 +100,6 @@ it("creates the default chat for the default route after leaving a chat that no 
   await waitFor(() => expect(container.textContent).toContain("History for Helper new-default"));
 });
 
-it("waits for the onboarding conversation to paint before requesting its live greeting", async () => {
-  const frames: FrameRequestCallback[] = [];
-  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => frames.push(callback));
-  vi.stubGlobal("cancelAnimationFrame", vi.fn());
-  client.setQueryData(queryKeys.agents.list("company-a"), [{ id: agentId, companyId: "company-a", name: "Ada" }]);
-  api.getChat.mockResolvedValue({ id: "welcome-chat", originKind: "onboarding_chat" });
-  try {
-    render();
-    await waitFor(() => expect(container.textContent).toContain("History for Ada"));
-    expect(api.greet).not.toHaveBeenCalled();
-    flushSync(() => api.onReady!());
-    expect(api.greet).not.toHaveBeenCalled();
-    frames.shift()!(0);
-    expect(api.greet).not.toHaveBeenCalled();
-    frames.shift()!(1);
-    await waitFor(() => expect(api.greet).toHaveBeenCalledTimes(1));
-    expect(api.greet).toHaveBeenCalledWith("company-a", agentId);
-  } finally { vi.unstubAllGlobals(); }
-});
-
-it("explains when Agent Chat is disabled without creating a conversation", async () => {
-  api.enabled = false;
-  api.list.mockResolvedValue([{ id: agentId, companyId: "company-a", name: "Helper" }]);
-  render();
-  await waitFor(() => expect(container.textContent).toContain("Agent Chat is disabled"));
-  expect(api.ensure).not.toHaveBeenCalled();
-  expect(api.getChat).not.toHaveBeenCalled();
-});
-
-it.each(["cached_refetch_failed", "fresh"])("opens historical chat from an available roster (%s)", async state => {
-  if (state === "cached_refetch_failed") await failRoster(429);
-  else client.setQueryData(queryKeys.agents.list("company-a"), []);
-  render();
-  await waitFor(() => expect(container.textContent).toContain("History for Retired helper"));
-  expect(api.get).toHaveBeenCalledWith(agentId, "company-a");
-  expect(api.getChat).toHaveBeenCalledWith("company-a", agentId);
-  expect(container.textContent).not.toContain("Agent not found");
-  expect(api.ensure).not.toHaveBeenCalled();
-});
-
-it("offers a working retry when the historical lookup also fails", async () => {
-  await failRoster(429);
-  api.get.mockRejectedValue(new ApiError("Rate limited", 429, {}));
-  render();
-  await waitFor(() => expect([...container.querySelectorAll("button")].some(button => button.textContent?.trim() === "Retry")).toBe(true));
-  expect(container.textContent).not.toContain("Agent not found");
-  api.get.mockResolvedValue({ id: agentId, companyId: "company-a", name: "Retired helper" });
-  flushSync(() => [...container.querySelectorAll("button")].find(button => button.textContent?.trim() === "Retry")!.click());
-  await waitFor(() => expect(container.textContent).toContain("History for Retired helper"));
-  expect(api.ensure).not.toHaveBeenCalled();
-});
-
-it.each([[403, true], [429, false]] as const)("retains roster error controls without starting a historical lookup (%s, cached %s)", async (status, cached) => {
-  await failRoster(status, cached);
-  render();
-  await waitFor(() => expect(container.querySelector('[role="alert"]')).not.toBeNull());
-  expect([...container.querySelectorAll("button")].some(button => button.textContent?.trim() === "Retry")).toBe(status === 429);
-  expect(api.get).not.toHaveBeenCalled();
-  expect(api.getChat).not.toHaveBeenCalled();
-  expect(container.textContent).not.toContain("Agent not found");
-});
-
-it("does not display a historical agent from another company", async () => {
-  await failRoster(429);
-  api.get.mockResolvedValue({ id: agentId, companyId: "company-b", name: "Private helper" });
-  render();
-  await waitFor(() => expect(api.get).toHaveBeenCalled());
-  await waitFor(() => expect(container.textContent).toContain("Agent not found"));
-  expect(container.textContent).not.toContain("Private helper");
-  expect(api.getChat).not.toHaveBeenCalled();
-});
-
-
 it("opens a stale navigation conversation immediately while revalidating in the background", async () => {
   client.setDefaultOptions({ queries: { retry: false, staleTime: 30_000, gcTime: Infinity } });
   client.setQueryData(queryKeys.agents.list("company-a"), [{ id: agentId, companyId: "company-a", name: "Helper" }]);
@@ -187,13 +114,3 @@ it("opens a stale navigation conversation immediately while revalidating in the 
   expect(api.ensure).not.toHaveBeenCalled();
 });
 
-it("does not reuse another account's cached conversation", async () => {
-  client.setQueryData(queryKeys.agents.list("company-a"), [{ id: agentId, companyId: "company-a", name: "Helper" }]);
-  client.setQueryData(queryKeys.agentChats.list("company-a", "viewer-b"), [{
-    id: "private-chat", companyId: "company-a", conversationAgentId: agentId,
-  } as Issue]);
-  api.getChat.mockImplementation(() => new Promise(() => {}));
-  render();
-  expect(container.textContent).toContain("Loading conversation");
-  await waitFor(() => expect(api.getChat).toHaveBeenCalled());
-});

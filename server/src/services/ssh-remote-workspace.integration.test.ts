@@ -1,63 +1,27 @@
-import fs from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
-import os from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { and, eq } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { agents, authUsers, companyMemberships, closeRegisteredClients, companies, createDb, environmentLeases, environments,
-  executionWorkspaces, heartbeatRuns, issues } from "@paperclipai/db";
+import { describe, expect, it, vi } from "vitest";
+import { agents, companies, createDb, environmentLeases, environments, executionWorkspaces, heartbeatRuns, issues } from "@paperclipai/db";
 import type { AdapterSshExecutionTarget } from "@paperclipai/adapter-utils/execution-target";
-import { buildSshEnvLabFixtureConfig, getSshEnvLabSupport, shellQuote, startSshEnvLabFixture,
-  stopSshEnvLabFixture, type SshEnvLabFixtureState } from "@paperclipai/adapter-utils/ssh";
-import type { AiProvider, EnvironmentLease } from "@paperclipai/shared";
-import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from "../__tests__/helpers/embedded-postgres.js";
+import { buildSshEnvLabFixtureConfig } from "@paperclipai/adapter-utils/ssh";
+import type { EnvironmentLease } from "@paperclipai/shared";
 import { createLocalDiskStorageProvider } from "../storage/local-disk-provider.js";
 import { createStorageService } from "../storage/service.js";
 import { prepareRemoteWorkspace, readRemoteWorkspaceAuthority, reserveRemoteWorkspace, saveRemoteWorkspace } from "./remote-workspaces.js";
-import { requireRemoteWorkspaceTarget } from "./remote-workspace-transport.js";
+import { requireRemoteWorkspaceTarget, hasRemoteRecoveryAttachment } from "./remote-workspace-transport.js";
 import { remoteTerminationReceipt } from "./remote-execution-termination.js";
 import { withNativeWorkspaceFinalizationOwnership } from "./native-runtime/native-workspace-finalization-ownership.js";
-import { heartbeatService } from "./heartbeat.js";
-import { aiConnectionService } from "./ai-connections.js";
-import * as storageModule from "../storage/index.js";
-import { collectEnvironmentSecretRefs, normalizeEnvironmentConfigForPersistence } from "./environment-config.js";
-import { secretService } from "./secrets.js";
-import * as runLogModule from "./run-log-store.js";
-import { objectLogFixture } from "./heartbeat/__tests__/object-log-fixture.js";
-import { issueService } from "./issues.js";
-import { getServerAdapter } from "../adapters/index.js";
 import * as recoverySnapshots from "./workspace-recovery-snapshot.js";
-import { hasRemoteRecoveryAttachment } from "./remote-workspace-transport.js";
+import { sshWorkspaceTestsSupported, useSshWorkspaceFixture } from "./__tests__/ssh-remote-workspace-fixture.js";
 
-const [postgres, ssh] = await Promise.all([getEmbeddedPostgresTestSupport(), getSshEnvLabSupport()]);
-
-describe.skipIf(!postgres.supported || !ssh.supported)("Cloud SSH durable workspace with a real SSH server", () => {
-  let root: string;
-  let database: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>>;
-  let db: ReturnType<typeof createDb>;
-  let sshd: SshEnvLabFixtureState | undefined;
-
-  beforeAll(async () => {
-    root = await realpath(await mkdtemp(path.join(os.tmpdir(), "cloud-ssh-workspace-")));
-    database = await startEmbeddedPostgresTestDatabase("cloud-ssh-workspace-");
-    db = createDb(database.connectionString);
-    vi.stubEnv("DATABASE_URL", database.connectionString);
-    vi.stubEnv("PAPERCLIP_HOME", path.join(root, "controller-home"));
-    vi.stubEnv("PAPERCLIP_SECRETS_MASTER_KEY", "62".repeat(32));
-    sshd = await startSshEnvLabFixture({ statePath: path.join(root, "sshd", "state.json") });
-  }, 60_000);
-
-  afterAll(async () => {
-    if (sshd) await stopSshEnvLabFixture(sshd);
-    if (database) await closeRegisteredClients(database.connectionString);
-    await database?.cleanup();
-    if (root) await rm(root, { recursive: true, force: true });
-    vi.restoreAllMocks();
-    vi.unstubAllEnvs();
-  }, 60_000);
+describe.skipIf(!sshWorkspaceTestsSupported)("Cloud SSH durable workspace with a real SSH server", () => {
+  const fixture = useSshWorkspaceFixture("cloud-ssh-workspace-");
 
   it("keeps Hello World through controller replacement and restores it to a new SSH allocation", async () => {
+    const { root, sshd, database } = fixture;
+    let { db } = fixture;
     const companyId = randomUUID(), agentId = randomUUID(), issueId = randomUUID(), runId = randomUUID();
     await db.insert(companies).values({ id: companyId, name: "SSH workspace test", issuePrefix: "SSH" });
     await db.insert(agents).values({ id: agentId, companyId, name: "SSH Claude", adapterType: "claude_local" });
@@ -132,7 +96,7 @@ describe.skipIf(!postgres.supported || !ssh.supported)("Cloud SSH durable worksp
     await db.update(heartbeatRuns).set({ status: "cancelled", finishedAt: new Date() }).where(eq(heartbeatRuns.id, peerRunId));
 
     // Replace the controller connection. The saved task and remote files are the authority.
-    db = createDb(database.connectionString);
+    db = fixture.db = createDb(database.connectionString);
     const [saved] = await db.select().from(executionWorkspaces).where(and(eq(executionWorkspaces.id, reserved.id), eq(executionWorkspaces.companyId, companyId)));
     const snapshotId = readRemoteWorkspaceAuthority(saved.metadata)!.snapshotId;
     expect(snapshotId).toBeTruthy();
@@ -159,6 +123,7 @@ describe.skipIf(!postgres.supported || !ssh.supported)("Cloud SSH durable worksp
   }, 60_000);
 
   it("prepares a verified recovered copy on SSH without directory-sync support", async () => {
+    const { root, sshd, db } = fixture;
     const companyId = randomUUID(), agentId = randomUUID(), issueId = randomUUID(), runId = randomUUID(), sourceId = randomUUID(), operationId = randomUUID();
     await db.insert(companies).values({ id: companyId, name: "SSH recovery test", issuePrefix: "REC" });
     await db.insert(agents).values({ id: agentId, companyId, name: "Recovery worker", adapterType: "claude_local" });
