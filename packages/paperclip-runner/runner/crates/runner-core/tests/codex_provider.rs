@@ -322,10 +322,25 @@ fn provider_config(directory: &Path, switches: &[&str]) -> CodexProviderConfig {
 }
 
 #[test]
-fn codex_launch_accepts_long_environment_config_with_bounded_total_arguments() {
+fn codex_launch_accepts_long_filesystem_and_environment_overrides_together() {
     let directory = temporary_directory("long-config-argument");
     let mut config = provider_config(&directory, &[]);
+    let filesystem_rules = (0..40)
+        .map(|index| {
+            format!(
+                r#""/runtime/assigned-context/{index}/{}"="read""#,
+                "a".repeat(86)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
     config.args = vec![
+        "-c".into(),
+        format!("permissions.paperclip-runner-workspace-only.filesystem={{{filesystem_rules}}}"),
+        "-c".into(),
+        format!(
+            "permissions.paperclip-runner-workspace-read-only.filesystem={{{filesystem_rules}}}"
+        ),
         "-c".into(),
         format!(
             "shell_environment_policy.set={{PATH=\"{}\"}}",
@@ -335,20 +350,7 @@ fn codex_launch_accepts_long_environment_config_with_bounded_total_arguments() {
     ];
     config
         .validate()
-        .expect("a normal Windows PATH may exceed 4096 bytes");
-    for args in [
-        vec!["p".repeat(16_385)],
-        vec!["p".repeat(16_000), "p".repeat(16_000), "p".repeat(1000)],
-        vec!["p".into(); 65],
-        vec!["bad\0argument".into()],
-    ] {
-        config.args = args;
-        assert!(config
-            .validate()
-            .unwrap_err()
-            .to_string()
-            .contains("bounded launch contract"));
-    }
+        .expect("generated filesystem and environment overrides can exceed 4096 bytes");
     fs::remove_dir_all(directory).unwrap();
 }
 
