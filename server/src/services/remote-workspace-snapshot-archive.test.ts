@@ -78,7 +78,7 @@ describe("portable remote workspace archives", () => {
     await fs.writeFile(path.join(cwd, "saved.txt"), "preserve work\n");
     await git(cwd, "add", "."); await git(cwd, "commit", "-qm", "Saved work");
     const canonical = await fs.realpath(root);
-    const roots = [canonical, ...Array.from({ length: 511 }, (_, i) => path.join(canonical, `owner-${i}`))];
+    const roots = [canonical, ...Array.from({ length: 1535 }, (_, i) => path.join(canonical, `owner-${i}`))];
     await expect(captureRemoteWorkspaceDirectory({ cwd, archivePath: path.join(root, "too-many.pcws"),
       gitSourceRoots: [...roots, path.join(canonical, "extra")] })).rejects.toThrow("online_source_git_requires_shared_fence");
     await expect(captureRemoteWorkspaceDirectory({ cwd, archivePath: path.join(root, "complete.pcws"), gitSourceRoots: roots }))
