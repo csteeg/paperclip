@@ -1675,6 +1675,41 @@ const recoveryFakeCodex = resolve(
 );
 
 describe("rebindNativeSessionCheckpoint", () => {
+
+  it.each([false, true])(
+    "rebases the Codex counters on the previous run's usage (accounted counters present: %s)",
+    (hasAccountedCounters) => {
+      const prior = previousRun();
+      const oldBaseline = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 };
+      const accounted = { inputTokens: 100, outputTokens: 10, cacheReadTokens: 80 };
+      const latest = { inputTokens: 130, outputTokens: 12, cacheReadTokens: 100 };
+      const codexUsageBaseline = {
+        baseline: oldBaseline,
+        latest,
+        ...(hasAccountedCounters ? { accounted } : {}),
+      };
+      const source = previousRun({
+        sessionCheckpoint: {
+          ...prior.runnerProfileJson.sessionCheckpoint,
+          codexUsageBaseline,
+        },
+      });
+
+      const rebound = rebindNativeSessionCheckpoint({
+        previousRun: source,
+        currentExecution: execution(currentRunId),
+      });
+
+      expect(rebound?.codexUsageBaseline).toEqual({
+        ...codexUsageBaseline,
+        baseline: hasAccountedCounters ? accounted : latest,
+      });
+      expect(source.runnerProfileJson.sessionCheckpoint).toMatchObject({
+        codexUsageBaseline: { baseline: oldBaseline, latest },
+      });
+    },
+  );
+
   it("rotates a carried session id when no checkpoint source exists", () => {
     const calls: boolean[] = [];
     const result = buildNativeExecutionWithCheckpoint({

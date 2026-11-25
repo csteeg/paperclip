@@ -8,7 +8,7 @@ import type {
   NativeExecutionInput,
   PersistedNativeSession,
 } from "../../vendor/paperclip-runner/index.js";
-import { canonicalNativeRuntimeContextDigest, parseNativeExecutionInput, type NativeRuntimeContextSnapshot } from "../../vendor/paperclip-runner/index.js";
+import { canonicalNativeRuntimeContextDigest, codexUsageBaselineForNextRun, parseNativeExecutionInput, type NativeRuntimeContextSnapshot } from "../../vendor/paperclip-runner/index.js";
 
 export type NativeToolExecutionTargetKind = "local" | "remote";
 
@@ -722,8 +722,14 @@ export function rebindNativeSessionCheckpoint(input: {
       ? ("allow_replacement_after_governed_wait" as const)
       : ("allow_replacement_after_resume_failure" as const);
 
+  const checkpoint = structuredClone(rawCheckpoint) as unknown as PersistedNativeSession;
   return {
-    ...(structuredClone(rawCheckpoint) as unknown as PersistedNativeSession),
+    ...checkpoint,
+    // Codex reports thread totals. A new run starts from the previous run's
+    // accounted counters while retaining any usage that arrived after them.
+    ...(checkpoint.codexUsageBaseline
+      ? { codexUsageBaseline: codexUsageBaselineForNextRun(checkpoint.codexUsageBaseline) }
+      : {}),
     identity: {
       runId: current.binding.runId,
       sessionId: normalizedSessionId,
