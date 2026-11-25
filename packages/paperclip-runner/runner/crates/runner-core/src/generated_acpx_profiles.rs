@@ -5,7 +5,7 @@ pub(crate) const ACPX_DRIVER_KIND: &str = "acpx_runtime";
 pub const ACPX_RELEASE_PROFILE_DIGESTS: &[(&str, &str)] = &[
     (
         "antigravity",
-        "sha256:4cac29164931f72356278026e4ef6dca420388d0479ee1c538c3d1081ed74050",
+        "sha256:027131caf0b722f34fc04886ef176ea00d49a742de679ec50f658740f97ed772",
     ),
     (
         "grok",
