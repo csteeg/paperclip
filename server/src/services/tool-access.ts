@@ -100,7 +100,7 @@ import { defaultConnectionAgentInstructions, paperclipPeerAgentInstructions, pap
 import { isBrowserUseConnection } from "./browser-use-client.js";
 
 import { COGNEE_STDIO_TEMPLATE } from "./cognee-connection.js";
-import { isCatalogEntryBlocked, isCatalogEntryRemovedByProvider, isRemoteMcpConnectorMethod, type AwsConnectionSetup } from "@paperclipai/shared";
+import { isCatalogEntryBlocked, isCatalogEntryOffered, isCatalogEntryRemovedByProvider, isRemoteMcpConnectorMethod, type AwsConnectionSetup } from "@paperclipai/shared";
 
 import { githubBotRequest } from "./chat-github-client.js";
 import { loadGitHubTokenAccount, recordGitHubTokenAccount } from "./github-token-account.js";
@@ -3470,7 +3470,7 @@ export function toolAccessService(
     if (input.access !== "all_agents")
       await assertAgentsInCompany(companyId, input.access.agentIds);
 
-    const entries: CreateToolProfileEntryForProfile[] = enabledRows.map(
+    const entries: CreateToolProfileEntryForProfile[] = enabledRows.filter(isCatalogEntryOffered).map(
       (entry) => ({
         selectorType: "catalog_entry",
         effect: "include",
@@ -3572,8 +3572,19 @@ export function toolAccessService(
                 priority: prior.priority,
                 metadata: prior.metadata,
               });
+          const priorCatalogEntryIds = [...new Set(priorEntries.flatMap((prior) => prior.catalogEntryId ? [prior.catalogEntryId] : []))];
+          const removedPriorCatalogEntryIds = new Set(
+            (priorCatalogEntryIds.length > 0
+              ? await tx
+                  .select({ id: toolCatalogEntries.id, status: toolCatalogEntries.status, quarantineReason: toolCatalogEntries.quarantineReason })
+                  .from(toolCatalogEntries)
+                  .where(and(eq(toolCatalogEntries.companyId, companyId), inArray(toolCatalogEntries.id, priorCatalogEntryIds)))
+              : []
+            ).filter(isCatalogEntryRemovedByProvider).map((entry) => entry.id),
+          );
           for (const prior of priorEntries)
             if (
+              !(prior.effect === "include" && prior.catalogEntryId && removedPriorCatalogEntryIds.has(prior.catalogEntryId)) &&
               !entries.some(
                 (entry) =>
                   entry.catalogEntryId &&
@@ -3761,7 +3772,7 @@ export function toolAccessService(
         {
           companyId,
           connection,
-          askFirstEntries: askFirstRows,
+          askFirstEntries: askFirstRows.filter(isCatalogEntryOffered),
           disableStale: !input.preserveExistingAccess,
           actor,
         },

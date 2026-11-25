@@ -533,7 +533,14 @@ const spentRestartRetryAccounting = () => ({
   serverRestartWindowStartedAt: new Date().toISOString(),
 });
 
-describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
+/**
+ * Registers one of four disjoint partitions of the heartbeat process recovery
+ * suite so CI can shard them across serialized runners. Every `it` / `it.each`
+ * (and nested `describe`) in this function MUST live inside an
+ * `if (part === N)` block; shared helpers stay at top level outside the guards.
+ */
+export function registerHeartbeatProcessRecoverySuite(part: 1 | 2 | 3 | 4): void {
+describeEmbeddedPostgres(`heartbeat orphaned process recovery (part ${part}/4)`, () => {
   let db!: ReturnType<typeof createDb>;
   let tempDb: Awaited<
     ReturnType<typeof startEmbeddedPostgresTestDatabase>
@@ -680,7 +687,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       emailVerified: true,
       createdAt: now,
       updatedAt: now,
-    });
+    }).onConflictDoNothing();
   }, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS);
 
   afterEach(async () => {
@@ -1018,6 +1025,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     return { environmentId, leaseId };
   }
 
+  if (part === 1) {
   it("does not reap active adapter executions started by another heartbeat service instance", async () => {
     let releaseAdapter!: () => void;
     const adapterRelease = new Promise<void>(resolve => { releaseAdapter = resolve; });
@@ -1106,6 +1114,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     }
     // Start alone measures 3-6s locally, before the 5s settle wait.
   }, 30_000);
+  }
 
   async function seedStrandedIssueFixture(input: {
     status: "todo" | "in_progress";
@@ -1661,6 +1670,40 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     return { companyId, agentId, runId, wakeupRequestId, issueId };
   }
 
+  async function withTempPaperclipHome<T>(
+    fn: (home: string) => Promise<T>,
+  ): Promise<T> {
+    const home = await fs.mkdtemp(
+      path.join(os.tmpdir(), "paperclip-hot-restart-"),
+    );
+    const previousHome = process.env.PAPERCLIP_HOME;
+    process.env.PAPERCLIP_HOME = home;
+    try {
+      return await fn(home);
+    } finally {
+      if (previousHome === undefined) delete process.env.PAPERCLIP_HOME;
+      else process.env.PAPERCLIP_HOME = previousHome;
+      // Native dispatch materializes read-only runtime bundles in this owned
+      // temporary home. Restore directory permissions solely for test cleanup.
+      const makeDirectoriesWritable = async (
+        directory: string,
+      ): Promise<void> => {
+        const stat = await fs.lstat(directory);
+        if (!stat.isDirectory() || stat.isSymbolicLink()) return;
+        await fs.chmod(directory, 0o700);
+        for (const entry of await fs.readdir(directory, {
+          withFileTypes: true,
+        })) {
+          if (entry.isDirectory())
+            await makeDirectoriesWritable(path.join(directory, entry.name));
+        }
+      };
+      await makeDirectoriesWritable(home);
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  }
+
+  if (part === 1) {
   it.each(["owned", "forged"] as const)("keeps unresolved-ref recovery and reporting while persisting only owned diagnostics: %s", async provenance => {
     const { companyId, agentId, issueId, runId, wakeupRequestId } = await seedQueuedIssueRunFixture();
     const repoRoot = await fs.mkdtemp(path.join(os.tmpdir(), "base-ref-heartbeat-"));
@@ -2132,7 +2175,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       const report = await waitForValue(async () => mockCaptureRunFailure.mock.calls.find(([event]) => event.runId === runId)?.[0]);
       expect(report?.diagnostics).toMatchObject({
         execution: { failurePhase: "setup" },
-        exceptions: [{ message, stack: expect.stringContaining("heartbeat-process-recovery.test.ts") }, { code: "ECONNRESET" }],
+        exceptions: [{ message, stack: expect.stringContaining("heartbeat-process-recovery.helper.ts") }, { code: "ECONNRESET" }],
       });
       const [wakeup] = await db.select().from(agentWakeupRequests)
         .where(eq(agentWakeupRequests.id, wakeupRequestId));
@@ -2413,8 +2456,8 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     const previous = (await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId)))[0]!;
     await db.insert(heartbeatRuns).values({ id: queuedId, companyId, agentId: previous.agentId,
       status: "queued", contextSnapshot: { issueId, wakeReason: "issue_commented" } });
-    const { createPostgresRunDispatchAdapter } = await import("../modules/run-dispatch/adapters/postgres.js");
-    expect(await createPostgresRunDispatchAdapter(db).cancelStaleQueuedRun({ companyId, runId: queuedId,
+    const { createRunDispatch } = await import("../modules/run-dispatch/index.js");
+    expect(await createRunDispatch(db).cancelStaleQueuedRun({ companyId, runId: queuedId,
       expectedStatus: "queued", now: new Date() })).toMatchObject({ outcome: "cancelled", errorCode: "execution_reconciliation_required" });
     const { settleUnrecoverableExecutions } = await import("../services/execution-recovery-resolution.js");
     await settleUnrecoverableExecutions(db);
@@ -2436,8 +2479,8 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     const previous = (await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId)))[0]!;
     await db.insert(heartbeatRuns).values({ id: queuedId, companyId, agentId: previous.agentId,
       status: "queued", contextSnapshot: { issueId, wakeReason: "issue_commented" } });
-    const { createPostgresRunDispatchAdapter } = await import("../modules/run-dispatch/adapters/postgres.js");
-    expect(await createPostgresRunDispatchAdapter(db).cancelStaleQueuedRun({ companyId, runId: queuedId,
+    const { createRunDispatch } = await import("../modules/run-dispatch/index.js");
+    expect(await createRunDispatch(db).cancelStaleQueuedRun({ companyId, runId: queuedId,
       expectedStatus: "queued", now: new Date() })).toMatchObject({ outcome: "cancelled", errorCode: "execution_reconciliation_required" });
     await db.update(environmentLeases).set({ releasedAt: new Date(), status: "released" }).where(eq(environmentLeases.id, lease!.id));
     expect(await getExecutionBlocker(db, companyId, issueId)).toBeNull();
@@ -4143,39 +4186,6 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     ]);
   });
 
-  async function withTempPaperclipHome<T>(
-    fn: (home: string) => Promise<T>,
-  ): Promise<T> {
-    const home = await fs.mkdtemp(
-      path.join(os.tmpdir(), "paperclip-hot-restart-"),
-    );
-    const previousHome = process.env.PAPERCLIP_HOME;
-    process.env.PAPERCLIP_HOME = home;
-    try {
-      return await fn(home);
-    } finally {
-      if (previousHome === undefined) delete process.env.PAPERCLIP_HOME;
-      else process.env.PAPERCLIP_HOME = previousHome;
-      // Native dispatch materializes read-only runtime bundles in this owned
-      // temporary home. Restore directory permissions solely for test cleanup.
-      const makeDirectoriesWritable = async (
-        directory: string,
-      ): Promise<void> => {
-        const stat = await fs.lstat(directory);
-        if (!stat.isDirectory() || stat.isSymbolicLink()) return;
-        await fs.chmod(directory, 0o700);
-        for (const entry of await fs.readdir(directory, {
-          withFileTypes: true,
-        })) {
-          if (entry.isDirectory())
-            await makeDirectoriesWritable(path.join(directory, entry.name));
-        }
-      };
-      await makeDirectoriesWritable(home);
-      await fs.rm(home, { recursive: true, force: true });
-    }
-  }
-
   it.each([false, true])("settles a failed saved native descriptor without inventing files when workspace access is disabled: %s", async withoutWorkspace => {
     await withTempPaperclipHome(async () => {
       const f = await seedQueuedIssueRunFixture();
@@ -5244,7 +5254,9 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       await heartbeat.drainActiveRunExecutions();
     }
   });
+  }
 
+  if (part === 2) {
   it("reports adopted hot-restart runs before startup reap can mark them process_lost", async () => {
     const child = spawnAliveProcess();
     childProcesses.add(child);
@@ -7048,7 +7060,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     const report = await waitForValue(async () => mockCaptureRunFailure.mock.calls.find(([event]) => event.runId === runId)?.[0]);
     expect(report?.diagnostics).toMatchObject({
       execution: { failurePhase: "execute" },
-      exceptions: [{ stack: expect.stringContaining("heartbeat-process-recovery.test.ts") }],
+      exceptions: [{ stack: expect.stringContaining("heartbeat-process-recovery.helper.ts") }],
     });
 
     const interaction = await waitForValue(async () => {
@@ -10222,7 +10234,9 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       }),
     );
   });
+  }
 
+  if (part === 3) {
   it.each(([
     { mode: "signal", graceful: false, failure: null },
     { mode: "graceful exit", graceful: true, failure: null },
@@ -13548,7 +13562,9 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       ).resolves.toEqual([{ id: runId }]);
     },
   );
+  }
 
+  if (part === 4) {
   async function seedCommittedChatControlStop(
     control: "close" | "new" = "close",
   ) {
@@ -18009,8 +18025,10 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
   });
 
   });
+  }
 
 });
+}
 
 
 enableRunFailureReporting();

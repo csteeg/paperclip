@@ -13,6 +13,7 @@ import { agents, connectionGrantMembers, connectionGrantDelegations, connectionG
 import { badRequest, conflict, forbidden, notFound, unprocessable } from "../../../errors.js";
 import type { PaperclipCloudConnector } from "../../paperclip-cloud-connector.js";
 import { createManagedGoogleAccessRemoval } from "./google-access-removal.js";
+import { createAntigravitySignInRemoval } from "../../antigravity-access-removal.js";
 import { contentDeletionActor, deleteGoogleContentWhenAccessEnds } from "./google-content-retention.js";
 import type { ConnectionGrantRevocationResult } from "@paperclipai/shared";
 import { vercelTokenRequest, type VercelConnectClient } from "../../vercel-connect.js";
@@ -31,6 +32,7 @@ type GrantDependencies = {
 
 export function createConnectionGrants(db: Db, { getConnectionRow, assertSecretRefs, vercelConnect, currentCloudConnector, secrets }: GrantDependencies) {
   const managedGoogleAccess = createManagedGoogleAccessRemoval(db, { currentCloudConnector });
+  const antigravitySignIn = createAntigravitySignInRemoval(db, { secrets });
   return {
     listConnectionGrants: async (idOrUid: string, companyId?: string) => {
       const connection = await getConnectionRow(idOrUid, companyId);
@@ -523,6 +525,7 @@ replaceConnectionGrantMembers: async (
         removingConnection: false,
         removeSecret: (secretId, expectedVersion) => secrets.remove(secretId, { expectedVersion }),
       });
+      const signInRemoval = await antigravitySignIn.prepare(connection, [currentGrant], { removingConnection: false });
       if (
         connection.credentialSource === "vercel_connect" &&
         connection.externalCredential
@@ -618,6 +621,7 @@ replaceConnectionGrantMembers: async (
       });
       if (!grant) throw notFound("Connection grant not found");
       const providerAccess = providerAccessRemoval ? await providerAccessRemoval.send() : null;
+      const signIn = signInRemoval ? await signInRemoval.send() : null;
       await db.insert(toolAccessAuditEvents).values({
         companyId: connection.companyId,
         connectionId: connection.id,
@@ -629,7 +633,7 @@ replaceConnectionGrantMembers: async (
         details: { grantId: grant.id, kind: grant.kind, providerRevocation },
       });
       releasedWaitPublications.forEach(publishActivity);
-      return { ...toConnectionGrant(grant), ...(providerAccess ? { providerAccess } : {}) };
+      return { ...toConnectionGrant(grant), ...(providerAccess ? { providerAccess } : {}), ...(signIn ? { signInRemoval: signIn } : {}) };
     }
   };
 }

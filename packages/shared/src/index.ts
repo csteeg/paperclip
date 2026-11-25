@@ -1654,6 +1654,7 @@ export type {
   ToolConnectionRemovalResult,
   ToolConnectionRemovalSummary,
   ManagedGoogleAccessRemoval,
+  AiSignInRemoval,
   ManagedGoogleRevocationOutcome,
   ConnectionGrantRevocationResult,
   ToolConnectionStoredContent,

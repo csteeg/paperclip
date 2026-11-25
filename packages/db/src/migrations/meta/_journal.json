@@ -3627,6 +3627,13 @@
       "when": 1795572002143,
       "tag": "8811_white_wild_child",
       "breakpoints": true
+    },
+    {
+      "idx": 8812,
+      "version": "7",
+      "when": 1795602445143,
+      "tag": "8812_recover_exhausted_github_responses",
+      "breakpoints": true
     }
   ]
 }

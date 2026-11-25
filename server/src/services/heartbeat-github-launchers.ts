@@ -33,7 +33,7 @@ export async function prepareHeartbeatGitHubLaunchers(
   // token-free wrappers still isolate image credentials, but may live as long
   // as the workspace so a warm provider never inherits a deleted run path.
   // Other adapter paths retain their run-scoped capability/retirement rules.
-  const anonymous = input.native && !input.githubConfigured &&
+  const anonymous = input.native && !input.githubConfigured && !input.hostGitHub && !input.requireGitHubConnection &&
     input.target?.kind === "remote" && input.target.transport === "sandbox";
   const location = {
     runId: anonymous
@@ -47,7 +47,7 @@ export async function prepareHeartbeatGitHubLaunchers(
   }, { preserveHostGitHub: input.hostGitHub });
   try {
     return {
-      env: await prepareLaunchers({ ...location, cwd: input.cwd, env, hostGitHub: input.hostGitHub, requireGitHubConnection: input.requireGitHubConnection }),
+      env: await prepareLaunchers({ ...location, cwd: input.cwd, env, hostGitHub: input.hostGitHub, requireGitHubConnection: input.requireGitHubConnection, ...(anonymous ? { anonymous: true } : {}) }),
       cleanupLocation: anonymous ? null : location,
     };
   } catch (error) {

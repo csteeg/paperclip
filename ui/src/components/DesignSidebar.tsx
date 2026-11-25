@@ -43,7 +43,7 @@ export function DesignSidebar({ onNewTask, recentTasks = [], recentError }: { on
           <SidebarSection label="Org">
             <SidebarNavItem className="design-sidebar-item" to={`${root}/agents`} label="Agents" icon={Users} />
             <SidebarNavItem className="design-sidebar-item" to={`${root}/skills`} label="Skills" icon={Boxes} />
-            <SidebarNavItem className="design-sidebar-item" to={`${root}/apps`} label="Connectors" icon={Unplug} />
+            <SidebarNavItem className="design-sidebar-item" to={`${root}/apps`} label="Plugins" icon={Unplug} />
             <SidebarNavItem className="design-sidebar-item" to={`${root}/activity`} label="Audit" icon={History} />
           </SidebarSection>
           {recentError}
