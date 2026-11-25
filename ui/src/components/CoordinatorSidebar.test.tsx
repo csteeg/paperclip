@@ -175,9 +175,12 @@ describe("Coordinator task creation", () => {
 
     const region = container.querySelector('[role="region"][aria-label="Recents"]')!;
     const links = Array.from(region.querySelectorAll("a"), link => link.getAttribute("href"));
-    expect(links).toHaveLength(tasks.length + chats.length + 2);
-    // A recent chat row opens its own conversation.
-    expect(links.slice(0, 4)).toEqual(["/projects/project-1/issues", "/projects/project-0/issues", "/issues/TASK-299", "/chats/agent-99/chat-99"]);
+    expect(links).toHaveLength(tasks.length + chats.length);
+    // Recent projects lead as folder toggles; a recent chat row opens its own conversation.
+    const projectRows = Array.from(region.querySelectorAll("button.design-sidebar-project-toggle"), button => button.textContent);
+    expect(projectRows).toEqual(["Project 1", "Project 0"]);
+    expect(projectToggle(region).compareDocumentPosition(region.querySelector("a")!) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    expect(links.slice(0, 2)).toEqual(["/issues/TASK-299", "/chats/agent-99/chat-99"]);
     expect(links.at(-1)).toBe("/issues/TASK-0");
     expect(new Set(links).size).toBe(links.length);
     expect(fixture.projectTasks).not.toHaveBeenCalled();
@@ -221,6 +224,14 @@ describe("Coordinator task creation", () => {
   });
 });
 
+// Upstream #22805: a project row is a folder toggle that expands its tasks in
+// place; it has no link. Each pin renders inside a sortable row.
+const projectToggle = (scope: ParentNode) => scope.querySelector<HTMLButtonElement>("button.design-sidebar-project-toggle")!;
+const pinnedRows = () => [...container.querySelectorAll(".design-sidebar-pinned-row")].map(row => row.closest(".select-none")!);
+const pinnedRowTargets = () => pinnedRows().map(row =>
+  row.querySelector(".design-sidebar-pinned-row > button.design-sidebar-project-toggle")?.textContent
+    ?? row.querySelector(".design-sidebar-pinned-row a")?.getAttribute("href"));
+
 describe("Coordinator pinned pages", () => {
   it("pins tasks, chats, and projects from Recents and restores them above More in saved order", async () => {
     const task = { id: "e4acf42d-422f-44b8-84b8-9d678f8b7c7c", companyId: "company", identifier: "TASK-1", title: "Release task", status: "todo", recordedAt: 1 };
@@ -232,7 +243,6 @@ describe("Coordinator pinned pages", () => {
     fixture.recentTasks = [task];
     await renderSidebar();
     const recents = container.querySelector('[aria-label="Recents"]')!;
-    const pinnedLinks = () => Array.from(navigation().querySelectorAll(".group\\/coordinator-pin a"), link => link.getAttribute("href"));
     for (const label of ["Release task", "CTO", "Launch"]) {
       const button = recents.querySelector<HTMLButtonElement>(`button[aria-label="Pin ${label}"]`)!;
       expect(button).not.toBeNull();
@@ -240,7 +250,7 @@ describe("Coordinator pinned pages", () => {
       await act(async () => button.click());
       expect(button.getAttribute("aria-pressed")).toBe("true");
     }
-    expect(pinnedLinks()).toEqual(["/issues/TASK-1", "/chats/cto", "/projects/launch/issues"]);
+    expect(pinnedRowTargets()).toEqual(["/issues/TASK-1", "/chats/cto", "Launch"]);
     fixture.pathname = "/COO/issues";
     fixture.recentTasks = [];
     fixture.chats = [];
@@ -249,10 +259,10 @@ describe("Coordinator pinned pages", () => {
     root = createRoot(container);
     await renderSidebar();
     expect(container.querySelector('[aria-label="Recents"]')).toBeNull();
-    expect(pinnedLinks()).toEqual(["/issues/TASK-1", "/chats/cto", "/projects/launch/issues"]);
+    expect(pinnedRowTargets()).toEqual(["/issues/TASK-1", "/chats/cto", "Launch"]);
     expect(pinnedPage("/issues/TASK-1")?.textContent).toContain("Renamed release task");
     await click("Unpin Renamed release task");
-    expect(pinnedLinks()).toEqual(["/chats/cto", "/projects/launch/issues"]);
+    expect(pinnedRowTargets()).toEqual(["/chats/cto", "Launch"]);
   });
   it("matches pinned and recent agent avatar dimensions to task status icons", async () => {
     fixture.agents = [{ id: "cto", companyId: "company", name: "CTO", urlKey: "cto", role: "cto", status: "idle" } as Agent];
@@ -291,7 +301,8 @@ describe("Coordinator pinned pages", () => {
     const items = buildPinnedNavigationItems(bounded(pins), bounded(agents), [], bounded(tasks), bounded(projects));
     expect(items.map(item => item.key)).toEqual(pins);
     expect(reads).toBeLessThanOrEqual(4 * pins.length);
-    expect(items.slice(0, 3).map(item => item.to)).toEqual(["/issues/TASK-199", "/projects/project-199/issues", "/chats/agent-199"]);
+    expect(items.slice(0, 3).map(item => ("to" in item ? item.to : null))).toEqual(["/issues/TASK-199", null, "/chats/agent-199"]);
+    expect(items[1]!.project?.id).toBe("project-199");
   });
   it("keeps mixed pins above More in stored order and prevents native link dragging", async () => {
     fixture.agents = [{ id: "cto", companyId: "company", name: "CTO", urlKey: "cto", role: "cto", status: "idle" } as Agent];
@@ -312,11 +323,10 @@ describe("Coordinator pinned pages", () => {
     const saved = ["/artifacts", "agent-chat:another-company:hidden", "/dashboard"];
     localStorage.setItem(storageKey, JSON.stringify(saved));
     await renderSidebar();
-    const order = () => [...navigation().querySelectorAll(".group\\/coordinator-pin a")].map(link => link.getAttribute("href"));
+    const order = pinnedRowTargets;
     const nativeRect = HTMLElement.prototype.getBoundingClientRect;
     const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-      const rows = [...container.querySelectorAll(".group\\/coordinator-pin")];
-      const index = rows.indexOf(this);
+      const index = pinnedRows().indexOf(this);
       if (index < 0) return nativeRect.call(this);
       const top = index * 40;
       return { x: 0, y: top, top, bottom: top + 40, left: 0, right: 240, width: 240, height: 40, toJSON() {} };
@@ -564,13 +574,14 @@ describe("Coordinator task status glyphs (BUG-07)", () => {
     expect(glyph("/issues/ONB-1")?.getAttribute("aria-label")).toBe("Blocked · waiting on active sub-task ONB-3");
   });
 
-  it("opens a recent project on Tasks and keeps its task query lazy", async () => {
+  it("shows a recent project as a task toggle and keeps its task query lazy", async () => {
     fixture.projects = [{ id: "project-1", companyId: "company", name: "Onboarding", urlKey: "onboarding" }];
     fixture.pathname = "/COO/projects/onboarding";
     await renderSidebar();
     const region = container.querySelector('[aria-label="Recents"]')!;
-    expect(region.querySelector('a[href="/projects/onboarding/issues"]')?.textContent).toBe("Onboarding");
-    expect(region.querySelector('button[aria-expanded="false"]')).not.toBeNull();
+    expect(projectToggle(region).textContent).toBe("Onboarding");
+    expect(projectToggle(region).getAttribute("aria-expanded")).toBe("false");
+    expect(region.querySelector('a[href="/projects/onboarding/issues"]')).toBeNull();
     expect(fixture.projectTasks).not.toHaveBeenCalled();
   });
 });
@@ -584,17 +595,18 @@ describe("Coordinator project tasks", () => {
       fixture.pathname = "/COO/projects/onboarding/configuration";
     }
     await renderSidebar();
-    return container.querySelector(pinned ? ".group\\/coordinator-pin" : '[aria-label="Recents"]')!;
+    return pinned ? pinnedRows()[0]! : container.querySelector('[aria-label="Recents"]')!;
   }
 
-  it.each([false, true])("opens Tasks and expands tasks beneath the project (pinned: %s)", async pinned => {
+  it.each([false, true])("expands tasks beneath the project row (pinned: %s)", async pinned => {
     const task = { id: "project-task", companyId: "company", projectId: "project-1", identifier: "TASK-42", title: "Prepare launch",
       status: "in_progress", displayStatus: "monitoring", isUnreadForMe: true };
     fixture.projectTasks.mockResolvedValue([task]);
     const row = await projectRow(pinned);
-    expect(row.querySelector('a[href="/projects/onboarding/issues"]')?.textContent).toBe("Onboarding");
+    expect(row.querySelector('a[href="/projects/onboarding/issues"]')).toBeNull();
     expect(fixture.projectTasks).not.toHaveBeenCalled();
-    const expand = row.querySelector<HTMLButtonElement>('button[aria-label="Expand Onboarding"]')!;
+    const expand = projectToggle(row);
+    expect(expand.textContent).toBe("Onboarding");
     expect(expand.closest("a")).toBeNull();
     await act(async () => expand.click());
     await flush();
@@ -618,15 +630,15 @@ describe("Coordinator project tasks", () => {
   it("keeps an expanded project's task links when it is pinned and unpinned", async () => {
     fixture.projectTasks.mockResolvedValue([{ id: "task", companyId: "company", projectId: "project-1", identifier: "TASK-42", title: "Prepare launch", status: "todo" }]);
     const recent = await projectRow(false);
-    await act(async () => recent.querySelector<HTMLButtonElement>('[aria-label="Expand Onboarding"]')!.click());
+    await act(async () => projectToggle(recent).click());
     await flush();
     await act(async () => recent.querySelector<HTMLButtonElement>('[aria-label="Pin Onboarding"]')!.click());
-    const pinned = container.querySelector(".group\\/coordinator-pin")!;
-    await act(async () => pinned.querySelector<HTMLButtonElement>('[aria-label="Expand Onboarding"]')!.click());
+    const pinned = pinnedRows()[0]!;
+    await act(async () => projectToggle(pinned).click());
     await flush();
     expect(pinned.querySelector('a[href="/issues/TASK-42"]')).not.toBeNull();
     await act(async () => pinned.querySelector<HTMLButtonElement>('[aria-label="Unpin Onboarding"]')!.click());
-    expect(container.querySelector(".group\\/coordinator-pin")).toBeNull();
+    expect(container.querySelector(".design-sidebar-pinned-row")).toBeNull();
     expect(recent.querySelector('a[href="/issues/TASK-42"]')).not.toBeNull();
   });
 
@@ -634,7 +646,7 @@ describe("Coordinator project tasks", () => {
     let resolve!: (tasks: never[]) => void;
     fixture.projectTasks.mockReturnValue(new Promise<never[]>(done => { resolve = done; }));
     const row = await projectRow(true);
-    await act(async () => row.querySelector<HTMLButtonElement>('[aria-label="Expand Onboarding"]')!.click());
+    await act(async () => projectToggle(row).click());
     expect(row.querySelector('[role="status"]')?.textContent).toBe("Loading tasks…");
     await act(async () => resolve([]));
     await flush();
@@ -646,12 +658,11 @@ describe("Coordinator project tasks", () => {
     fixture.projectTasks.mockResolvedValue([{ id: "task", companyId: "company", projectId: "project-1", identifier: "TASK-42", title: "Prepare launch", status: "todo" }]);
     localStorage.setItem("paperclip.coordinator.pinned-nav.v1:reviewer", JSON.stringify(["project:company:project-1", "/artifacts"]));
     await renderSidebar();
-    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Expand Onboarding"]')!.click());
+    await act(async () => projectToggle(pinnedRows()[0]!).click());
     await flush();
     const nativeRect = HTMLElement.prototype.getBoundingClientRect;
     const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-      const rows = [...container.querySelectorAll(".group\\/coordinator-pin")];
-      const index = rows.indexOf(this);
+      const index = pinnedRows().indexOf(this);
       if (index < 0) return nativeRect.call(this);
       const top = index * 80;
       return { x: 0, y: top, top, bottom: top + 80, left: 0, right: 240, width: 240, height: 80, toJSON() {} };
@@ -665,26 +676,26 @@ describe("Coordinator project tasks", () => {
           await new Promise(resolve => setTimeout(resolve, 0));
         });
       }
-      const rows = [...container.querySelectorAll(".group\\/coordinator-pin")];
-      expect(rows.map(row => row.querySelector("a")?.getAttribute("href"))).toEqual(["/artifacts", "/projects/onboarding/issues"]);
+      expect(pinnedRowTargets()).toEqual(["/artifacts", "Onboarding"]);
+      const rows = pinnedRows();
       expect(rows[1]!.querySelector('a[href="/issues/TASK-42"]')).not.toBeNull();
-      expect(rows[1]!.querySelector('[aria-label="Collapse Onboarding"]')).not.toBeNull();
+      expect(projectToggle(rows[1]!).getAttribute("aria-expanded")).toBe("true");
     } finally { rect.mockRestore(); }
   });
 
   it("shows a failed task read without removing project navigation", async () => {
     fixture.projectTasks.mockRejectedValue(new Error("Forbidden"));
     const row = await projectRow(true);
-    await act(async () => row.querySelector<HTMLButtonElement>('[aria-label="Expand Onboarding"]')!.click());
+    await act(async () => projectToggle(row).click());
     await flush();
     expect(row.querySelector('[role="alert"]')?.textContent).toBe("Couldn’t load tasks.");
-    expect(row.querySelector('a[href="/projects/onboarding/issues"]')).not.toBeNull();
+    expect(projectToggle(row).textContent).toBe("Onboarding");
   });
 
   it("does not reuse another person's expanded task cache", async () => {
     fixture.projectTasks.mockResolvedValue([{ id: "task", companyId: "company", projectId: "project-1", identifier: "TASK-42", title: "First person's task", status: "todo" }]);
     const row = await projectRow(false);
-    await act(async () => row.querySelector<HTMLButtonElement>('[aria-label="Expand Onboarding"]')!.click());
+    await act(async () => projectToggle(row).click());
     await flush();
     expect(row.querySelector('a[href="/issues/TASK-42"]')).not.toBeNull();
     fixture.userId = "another-person";
@@ -692,7 +703,7 @@ describe("Coordinator project tasks", () => {
     await renderSidebar();
     const recent = container.querySelector('[aria-label="Recents"]')!;
     expect(recent.querySelector('a[href="/issues/TASK-42"]')).toBeNull();
-    await act(async () => recent.querySelector<HTMLButtonElement>('[aria-label="Expand Onboarding"]')!.click());
+    await act(async () => projectToggle(recent).click());
     await flush();
     expect(recent.querySelector('a[href="/issues/TASK-42"]')).toBeNull();
     expect(recent.textContent).toContain("No tasks yet.");
