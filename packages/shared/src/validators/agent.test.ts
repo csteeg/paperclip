@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createAgentSchema, updateAgentSchema } from "./agent.js";
+import { createAgentSchema, resetAgentSessionSchema, updateAgentSchema } from "./agent.js";
 
 describe("agent update schema", () => {
   it.each(["paused", "idle", "terminated"])("accepts lifecycle status request %s", status => {
@@ -40,5 +40,21 @@ describe("agent transcript retention validation", () => {
   });
   it.each([undefined, 1, 7, 30])("accepts unset or positive whole days %s", days => {
     expect(updateAgentSchema.safeParse({ adapterConfig: { transcriptRetentionDays: days } }).success).toBe(true);
+  });
+});
+
+describe("reset agent session schema", () => {
+  it.each([{}, { taskKey: null }])("accepts a full reset request: %j", payload => {
+    expect(resetAgentSessionSchema.parse(payload)).toEqual(payload);
+  });
+  it("trims a task key", () => {
+    expect(resetAgentSessionSchema.parse({ taskKey: "  task-1  " })).toEqual({ taskKey: "task-1" });
+  });
+  it.each(["", "   ", "\t\n"])("rejects a blank task key %j", taskKey => {
+    const result = resetAgentSessionSchema.safeParse({ taskKey });
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: ["taskKey"] }),
+    ]));
   });
 });

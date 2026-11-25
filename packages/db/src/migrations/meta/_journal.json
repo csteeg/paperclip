@@ -3524,79 +3524,107 @@
       "breakpoints": true
     },
     {
+      "idx": 505,
+      "version": "7",
+      "when": 1795544784796,
+      "tag": "0505_nice_rawhide_kid",
+      "breakpoints": true
+    },
+    {
+      "idx": 506,
+      "version": "7",
+      "when": 1795560008849,
+      "tag": "0506_nappy_agent_brand",
+      "breakpoints": true
+    },
+    {
+      "idx": 507,
+      "version": "7",
+      "when": 1795561452000,
+      "tag": "0507_special_kang",
+      "breakpoints": true
+    },
+    {
+      "idx": 508,
+      "version": "7",
+      "when": 1795572002132,
+      "tag": "0508_normal_riptide",
+      "breakpoints": true
+    },
+    {
       "idx": 8801,
       "version": "7",
-      "when": 1795469468403,
+      "when": 1795572002133,
       "tag": "8801_skill_source_security_override",
       "breakpoints": true
     },
     {
       "idx": 8802,
       "version": "7",
-      "when": 1795469468404,
+      "when": 1795572002134,
       "tag": "8802_messy_talkback",
       "breakpoints": true
     },
     {
       "idx": 8803,
       "version": "7",
-      "when": 1795469468405,
+      "when": 1795572002135,
       "tag": "8803_flaky_arclight",
       "breakpoints": true
     },
     {
       "idx": 8804,
       "version": "7",
-      "when": 1795469468406,
+      "when": 1795572002136,
       "tag": "8804_project_provider_authorizations",
       "breakpoints": true
     },
     {
       "idx": 8805,
       "version": "7",
-      "when": 1795469468407,
+      "when": 1795572002137,
       "tag": "8805_multiple_agent_chat_conversations",
       "breakpoints": true
     },
     {
       "idx": 8806,
       "version": "7",
-      "when": 1795469468408,
+      "when": 1795572002138,
       "tag": "8806_project_repository_checkout",
       "breakpoints": true
     },
     {
       "idx": 8807,
       "version": "7",
-      "when": 1795469468409,
+      "when": 1795572002139,
       "tag": "8807_project_repository_checkout_none",
       "breakpoints": true
     },
     {
       "idx": 8808,
       "version": "7",
-      "when": 1795469468410,
+      "when": 1795572002140,
       "tag": "8808_skill_version_security_approval",
       "breakpoints": true
     },
     {
       "idx": 8809,
       "version": "7",
-      "when": 1795469468411,
+      "when": 1795572002141,
       "tag": "8809_skill_source_security_override_summary",
       "breakpoints": true
     },
     {
       "idx": 8810,
       "version": "7",
-      "when": 1795469468412,
+      "when": 1795572002142,
       "tag": "8810_skill_version_security_approval_index",
       "breakpoints": true
     },
     {
       "idx": 8811,
       "version": "7",
-      "when": 1795469468413,
+      "when": 1795572002143,
       "tag": "8811_white_wild_child",
       "breakpoints": true
     }

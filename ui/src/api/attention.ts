@@ -4,6 +4,7 @@ import type {
   AttentionCloseResult,
   AttentionFeed,
   AttentionSummary,
+  AttentionRunHistoryEntry,
   AttentionTaskIndex,
   AttentionFeedQuery,
   AttentionSourceKind,
@@ -21,6 +22,10 @@ function cardPath(companyId: string, sourceKind: AttentionSourceKind, sourceId: 
 export const attentionApi = {
   summary: (companyId: string, options: Pick<AttentionFeedQuery, "actionableOnly"> = {}) => api.get<AttentionSummary>(`/companies/${companyId}/attention/summary${options.actionableOnly ? "?actionableOnly=true" : ""}`),
   taskIndex: (companyId: string, options: Pick<AttentionFeedQuery, "actionableOnly"> = {}) => api.get<AttentionTaskIndex>(`/companies/${companyId}/attention/tasks${options.actionableOnly ? "?actionableOnly=true" : ""}`),
+  runHistory: (companyId: string, before?: { at: string; id: string }) => {
+    const query = before ? `?${new URLSearchParams(before)}` : "";
+    return api.get<AttentionRunHistoryEntry[]>(`/companies/${companyId}/attention/run-history${query}`);
+  },
   history: (companyId: string, options: DecisionHistoryQuery = {}) => {
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(options)) if (value !== undefined && value !== "") params.set(key, String(value));

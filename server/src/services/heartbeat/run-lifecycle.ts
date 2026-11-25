@@ -1,4 +1,5 @@
 import { currentProcessSpaceHash } from "../controller-process-identity.js";
+import { ANTIGRAVITY_SWARM_UNAVAILABLE } from "../antigravity-swarm-refusal.js";
 import { notifyTerminalWorkspaceWork } from "../terminal-workspace-work.js";
 import { settleReattachRun } from "./run-admission.js";
 import { readNativeStartupCleanup } from "../native-runtime/native-startup-cleanup.js";
@@ -281,6 +282,8 @@ export const NON_RETRYABLE_PREFLIGHT_FAILURE_CODES = new Set<string>([
   "low_trust_runtime_services_denied",
   "chat_failed_run_retry_not_authorized",
   CHAT_CONTROL_RECOVERY_UNRESOLVED_CODE,
+  // A requested /swarm that cannot run waits for the user (send /swarm again or Retry).
+  ANTIGRAVITY_SWARM_UNAVAILABLE,
 ]);
 
 // Error codes that mark a pre-dispatch setup failure. The adapter process never

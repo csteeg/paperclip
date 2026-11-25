@@ -32,6 +32,8 @@ import { assertBoard, assertBoardOrAgent, assertCompanyAccess, getActorInfo } fr
 import { forbidden, notFound, unprocessable } from "../errors.js";
 import { accessService } from "../services/access.js";
 import { logActivity } from "../services/activity-log.js";
+import { logger } from "../middleware/logger.js";
+import { releaseProviderLimitWaits } from "../services/heartbeat/provider-limit-wait.js";
 import { aiConnectionRouterService } from "../services/ai-connection-router.js";
 import { harnessPoolService } from "../services/harness-pools.js";
 import { harnessPoolConfigSchema } from "@paperclipai/shared";
@@ -429,7 +431,7 @@ export function aiConnectionRoutes(db: Db, options: Parameters<typeof supportsLo
         throw forbidden("Viewers cannot change defaults");
       if (!z.string().uuid().safeParse(req.body.grantId).success)
         throw unprocessable("Choose a personal connection");
-      await service.setDefault(companyId, userId, req.body.grantId);
+      const { previousGrantId } = await service.setDefault(companyId, userId, req.body.grantId);
       await logActivity(db, {
         companyId,
         ...connectionRequestActor(req),
@@ -437,6 +439,14 @@ export function aiConnectionRoutes(db: Db, options: Parameters<typeof supportsLo
         entityType: "connection_grant",
         entityId: req.body.grantId,
       });
+      if (previousGrantId && previousGrantId !== req.body.grantId) {
+        // Work held for a limit on the previous default rechecks against the
+        // new one. A failed release leaves the saved recheck, never the default.
+        await releaseProviderLimitWaits(db, {
+          companyId, reason: "ai_connection_changed", grantIds: [previousGrantId],
+          actor: { actorType: "user", actorId: userId },
+        }).catch((err: unknown) => logger.warn({ err, companyId }, "failed to release usage waits after a default change"));
+      }
       res.json({ ok: true });
     },
   );
