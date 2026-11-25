@@ -100,7 +100,7 @@ import { defaultConnectionAgentInstructions, paperclipPeerAgentInstructions, pap
 import { isBrowserUseConnection } from "./browser-use-client.js";
 
 import { COGNEE_STDIO_TEMPLATE } from "./cognee-connection.js";
-import { isRemoteMcpConnectorMethod, type AwsConnectionSetup } from "@paperclipai/shared";
+import { isCatalogEntryBlocked, isCatalogEntryRemovedByProvider, isRemoteMcpConnectorMethod, type AwsConnectionSetup } from "@paperclipai/shared";
 
 import { githubBotRequest } from "./chat-github-client.js";
 import { loadGitHubTokenAccount, recordGitHubTokenAccount } from "./github-token-account.js";
@@ -3438,11 +3438,11 @@ export function toolAccessService(
       connection.id,
       input.askFirstCatalogEntryIds,
     );
-    if (enabledRows.some((entry) => entry.status === "disabled" && !(entry.quarantineReason === "mcp_tool_removed" && isRemoteMcpConnectorMethod(connection.config.sourceTemplateKey, connection.config.connectionMethodKey)))) {
+    if (enabledRows.some(isCatalogEntryBlocked)) {
       throw badRequest("Disabled actions cannot be enabled");
     }
     if (reviewedIds.length > 0) {
-      await assertCatalogEntriesForConnection(
+      const reviewedRows = await assertCatalogEntriesForConnection(
         companyId,
         connection.id,
         reviewedIds,
@@ -3457,7 +3457,7 @@ export function toolAccessService(
             eq(toolCatalogEntries.status, "quarantined"),
           ),
         );
-      const reviewedIdSet = new Set(reviewedIds);
+      const reviewedIdSet = new Set(reviewedRows.filter((entry) => !isCatalogEntryRemovedByProvider(entry)).map((entry) => entry.id));
       if (
         quarantinedRows.length !== reviewedIdSet.size ||
         quarantinedRows.some((entry) => !reviewedIdSet.has(entry.id))
@@ -3752,6 +3752,7 @@ export function toolAccessService(
               inArray(toolCatalogEntries.id, enabledIds),
               ne(toolCatalogEntries.status, "quarantined"),
               ne(toolCatalogEntries.status, "disabled"),
+              ne(toolCatalogEntries.status, "removed"),
             ),
           );
       }

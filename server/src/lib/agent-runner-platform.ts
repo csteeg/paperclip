@@ -9,12 +9,19 @@ type LocalRunnerTarget = {
   glibcVersion?: string;
 };
 
-async function detectLocalRunnerTarget(): Promise<LocalRunnerTarget> {
-  const target: LocalRunnerTarget = {
-    driver: "local", platform: process.platform, architecture: process.arch,
-  };
-  if (target.platform !== "linux") return target;
-  target.libc = "unknown";
+/**
+ * Delays between re-probes after `getconf` itself failed (timeout, spawn
+ * error). The last delay repeats. A failed probe is not an answer about the
+ * platform, so it must not disable the Paperclip Runner for the whole process.
+ */
+const LIBC_REPROBE_DELAYS_MS = [5_000, 30_000, 120_000, 600_000];
+
+type LibcProbe =
+  | { status: "measured"; libc: "glibc"; glibcVersion: string }
+  | { status: "unrecognized" }
+  | { status: "failed" };
+
+async function probeLibc(): Promise<LibcProbe> {
   try {
     const stdout = await new Promise<string>((resolve, reject) => {
       // Cold imports can delay draining a completed child's output past one second.
@@ -23,15 +30,43 @@ async function detectLocalRunnerTarget(): Promise<LocalRunnerTarget> {
       }, (error, output) => error ? reject(error) : resolve(output));
     });
     const version = /^glibc\s+(\d+\.\d+(?:\.\d+)?)$/.exec(stdout.trim())?.[1];
-    if (version) {
-      target.libc = "glibc";
-      target.glibcVersion = version;
-    }
-  } catch {}
-  return target;
+    return version ? { status: "measured", libc: "glibc", glibcVersion: version } : { status: "unrecognized" };
+  } catch {
+    return { status: "failed" };
+  }
 }
 
-const localTarget = await detectLocalRunnerTarget();
+function targetFor(probe: LibcProbe | null): LocalRunnerTarget {
+  const target: LocalRunnerTarget = {
+    driver: "local", platform: process.platform, architecture: process.arch,
+  };
+  if (!probe) return target;
+  if (probe.status === "measured") return { ...target, libc: probe.libc, glibcVersion: probe.glibcVersion };
+  return { ...target, libc: "unknown" };
+}
+
+function scheduleReprobe(attempt: number) {
+  const delay = LIBC_REPROBE_DELAYS_MS[Math.min(attempt, LIBC_REPROBE_DELAYS_MS.length - 1)]!;
+  const timer = setTimeout(() => {
+    void probeLibc().then((probe) => {
+      if (probe.status === "failed") {
+        scheduleReprobe(attempt + 1);
+        return;
+      }
+      localTarget = targetFor(probe);
+    });
+  }, delay);
+  timer.unref?.();
+}
+
+async function detectLocalRunnerTarget(): Promise<LocalRunnerTarget> {
+  if (process.platform !== "linux") return targetFor(null);
+  const probe = await probeLibc();
+  if (probe.status === "failed") scheduleReprobe(0);
+  return targetFor(probe);
+}
+
+let localTarget = await detectLocalRunnerTarget();
 
 export function localAgentRunnerTarget(): LocalRunnerTarget {
   return { ...localTarget };
