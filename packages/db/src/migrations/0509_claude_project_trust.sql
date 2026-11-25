@@ -1,1 +1,0 @@
-ALTER TABLE "project_workspaces" ADD COLUMN IF NOT EXISTS "claude_project_trust" jsonb;
