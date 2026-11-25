@@ -83,7 +83,7 @@ test.describe.serial("applications lifecycle", () => {
     await gotoApps(page, seed.prefix);
 
     // Search for both fixtures because the unconnected item is paginated.
-    await page.getByRole("searchbox", { name: "Search connectors" }).fill(APP_PREFIX);
+    await page.getByRole("searchbox", { name: "Search plugins" }).fill(APP_PREFIX);
 
     // The connected app starts with a "Connected" status. A
     // background health sweep then probes the connection endpoint. The test
@@ -104,7 +104,7 @@ test.describe.serial("applications lifecycle", () => {
     // The not-connected app has no connection, so the health sweep never touches
     // it and its Connect action stay deterministic. Not-connected apps are paged
     // with the catalog, so search for it rather than rely on the first page.
-    await page.getByRole("searchbox", { name: "Search connectors" }).fill(notConnectedName);
+    await page.getByRole("searchbox", { name: "Search plugins" }).fill(notConnectedName);
     const notConnectedRow = connectorList
       .getByRole("listitem")
       .filter({ has: page.getByRole("heading", { name: notConnectedName, exact: true }) });
@@ -113,7 +113,7 @@ test.describe.serial("applications lifecycle", () => {
     await expect(notConnectedRow.getByRole("button", { name: `Connect ${notConnectedName}` })).toBeVisible();
     await page.screenshot({ path: `${SCREENSHOT_DIR}/applications-crud-current-list.png`, fullPage: true });
 
-    await page.getByRole("searchbox", { name: "Search connectors" }).fill(connectedName);
+    await page.getByRole("searchbox", { name: "Search plugins" }).fill(connectedName);
     // Accounts live on the plugin's own page, one click in from the catalog.
     await connectedRow.getByRole("button", { name: connectedName, exact: true }).click();
     const openConnection = page.getByRole("button", { name: /^Open .* permissions$/ });
@@ -125,7 +125,7 @@ test.describe.serial("applications lifecycle", () => {
     );
 
     await gotoApps(page, seed.prefix);
-    await page.getByRole("searchbox", { name: "Search connectors" }).fill(notConnectedName);
+    await page.getByRole("searchbox", { name: "Search plugins" }).fill(notConnectedName);
     await notConnectedRow.getByRole("button", { name: `Connect ${notConnectedName}` }).click();
     await expect(page).toHaveURL(
       new RegExp(`/${seed.prefix}/apps/app/${notConnected.id}/permissions$`),

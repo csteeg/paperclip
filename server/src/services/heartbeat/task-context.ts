@@ -9,6 +9,7 @@ import { isConversation } from "../agent-conversations.js";
 import { chatCompletionInstruction } from "../chat-completion-delivery.js";
 import { chatAwaitsFirstAgentTurn } from "../chat-titles.js";
 import { getConversationConfirmationContext } from "../conversation-confirmation-context.js";
+import { readNativeReviewAssignmentContext } from "../native-runtime/native-review-participant.js";
 import { buildExecutionContinuation } from "../execution-continuation.js";
 import { getIssueContinuationSummaryDocument } from "../issue-continuation-summary.js";
 import type { issueService } from "../issues.js";
@@ -140,8 +141,9 @@ export async function prepareHeartbeatTaskContext(db: Db, input: HeartbeatTaskCo
   } else {
     delete context.paperclipSkillTest;
   }
+  const poolReviewContinuation = Boolean(parseObject(context.aiPoolFailover).sourceRunId && readNativeReviewAssignmentContext(context));
   const executionContinuation =
-    issueRef && !isConversation(issueContext) && issueContext?.assigneeAgentId === agent.id
+    issueRef && !isConversation(issueContext) && (issueContext?.assigneeAgentId === agent.id || poolReviewContinuation)
       ? await buildExecutionContinuation({
           db,
           companyId: agent.companyId,
@@ -151,7 +153,7 @@ export async function prepareHeartbeatTaskContext(db: Db, input: HeartbeatTaskCo
           context,
           previousContextRunId: taskSession?.lastRunId,
           summary: safeContinuationSummary?.body ?? null,
-          exposeLowTrustRaw,
+          exposeLowTrustRaw: exposeLowTrustRaw && !poolReviewContinuation,
         })
       : null;
   context.executionContinuation = executionContinuation;

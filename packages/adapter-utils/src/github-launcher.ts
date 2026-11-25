@@ -60,7 +60,7 @@ function connectorRepositoryTool(args) {
 // Resolve only common network operations. Unrecognized Azure remotes fail closed
 // because the isolated environment has no ambient credential helper.
 function azureRemote(args, env) {
-  if (program !== 'git' || isLocalGit(args)) return null;
+  if (program !== 'git' || isLocalCommand(args)) return null;
   const globalOptions = [];
   let index = 0;
   while (index < args.length && args[index].startsWith('-')) {
@@ -145,7 +145,7 @@ function azureRemote(args, env) {
 function requiresGitHubConnection(args, env) {
   if (!${options.requireGitHubConnection ? 'true' : 'false'}) return false;
   if (program === 'gh') return !args.some(arg => ['--version', '--help', '-h'].includes(arg));
-  if (isLocalGit(args)) return false;
+  if (isLocalCommand(args)) return false;
   const options = [];
   let i = 0;
   while (i < args.length && args[i].startsWith('-')) {
