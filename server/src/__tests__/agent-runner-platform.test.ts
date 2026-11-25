@@ -83,6 +83,65 @@ describe("local runner platform probe", () => {
     },
   );
 
+  it("re-probes after a failed startup probe instead of keeping libc unknown for the process lifetime", async () => {
+    vi.useFakeTimers();
+    try {
+      const outcomes: Array<[Error | null, string]> = [
+        [Object.assign(new Error("probe failed"), { code: "ETIMEDOUT" }), ""],
+        [Object.assign(new Error("probe failed"), { code: "EAGAIN" }), ""],
+        [null, "glibc 2.41\n"],
+      ];
+      probe.execFile.mockImplementation((_command, _args, _options, callback) => {
+        const [error, stdout] = outcomes.shift()!;
+        callback(error, stdout, "");
+      });
+      const module = await import("../lib/agent-runner-platform.js");
+      expect(module.localAgentRunnerTarget()).toMatchObject({ libc: "unknown" });
+      expect(module.localPaperclipRunnerSupported()).toBe(false);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(probe.execFile).toHaveBeenCalledTimes(2);
+      expect(module.localAgentRunnerTarget()).toMatchObject({ libc: "unknown" });
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(probe.execFile).toHaveBeenCalledTimes(3);
+      expect(module.localAgentRunnerTarget()).toEqual({
+        driver: "local", platform: "linux", architecture: "x64", libc: "glibc", glibcVersion: "2.41",
+      });
+      expect(module.localPaperclipRunnerSupported()).toBe(true);
+      await vi.advanceTimersByTimeAsync(60 * 60_000);
+      expect(probe.execFile).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps re-probing at a bounded interval while the probe keeps failing", async () => {
+    vi.useFakeTimers();
+    try {
+      reply("", Object.assign(new Error("probe failed"), { code: "ENOENT" }));
+      const module = await import("../lib/agent-runner-platform.js");
+      await vi.advanceTimersByTimeAsync(5_000 + 30_000 + 120_000 + 600_000);
+      expect(probe.execFile).toHaveBeenCalledTimes(5);
+      await vi.advanceTimersByTimeAsync(600_000);
+      expect(probe.execFile).toHaveBeenCalledTimes(6);
+      expect(module.localAgentRunnerTarget()).toMatchObject({ libc: "unknown" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not re-probe a definitive non-glibc answer", async () => {
+    vi.useFakeTimers();
+    try {
+      reply("musl 1.2.5");
+      const module = await import("../lib/agent-runner-platform.js");
+      await vi.advanceTimersByTimeAsync(60 * 60_000);
+      expect(probe.execFile).toHaveBeenCalledTimes(1);
+      expect(module.localAgentRunnerTarget()).toMatchObject({ libc: "unknown" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it.each(["darwin", "win32"])("does not probe libc on %s", async value => {
     Object.defineProperty(process, "platform", { ...platform, value });
     const module = await import("../lib/agent-runner-platform.js");
