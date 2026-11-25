@@ -574,9 +574,9 @@ function QuestionFormForRequest({
           {decision ? <span aria-hidden className="text-muted-foreground"> · {question.required ? "Required" : "Optional"}</span> : null}
         </div>
         {question.helpText ? (
-          <p className="mt-1 text-xs leading-4 text-muted-foreground">
-            {question.helpText}
-          </p>
+          <div className="mt-1 text-xs leading-4 text-muted-foreground">
+            <MarkdownBody mediaMode="reference" linkIssueReferences={false} className="paperclip-markdown-inherit-size">{question.helpText}</MarkdownBody>
+          </div>
         ) : null}
       </div>
       {question.answerMode === "text" ? (

@@ -1428,7 +1428,11 @@ function AskUserQuestionsCard({
                 </div>
                 <span aria-hidden className="text-muted-foreground"> · {question.required ? "Required" : "Optional"}</span>
               </div>
-              {question.helpText ? <span className="text-xs leading-4.5 text-muted-foreground">{question.helpText}</span> : null}
+              {question.helpText ? (
+                <div className="text-xs leading-4.5 text-muted-foreground">
+                  <MarkdownBody className="paperclip-markdown-inherit-size" externalReferences={externalReferences} mediaMode="reference">{question.helpText}</MarkdownBody>
+                </div>
+              ) : null}
               <span className="sr-only" id={`${interaction.id}-${question.id}-requirements`}>
                 {question.selectionMode === "single" ? "Choose one answer." : "Choose one or more answers."} {question.required ? "Required." : "Optional."}
               </span>
@@ -1500,9 +1504,9 @@ function AskUserQuestionsCard({
                     <PromptText>{question.prompt}</PromptText>
                   </div>
                   {question.helpText ? (
-                    <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                      {question.helpText}
-                    </p>
+                    <div className="mt-1 text-sm leading-6 text-muted-foreground">
+                      <MarkdownBody className="paperclip-markdown-inherit-size" externalReferences={externalReferences} mediaMode="reference">{question.helpText}</MarkdownBody>
+                    </div>
                   ) : null}
                 </div>
                 <TaskField
