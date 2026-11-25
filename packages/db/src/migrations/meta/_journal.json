@@ -3552,87 +3552,94 @@
       "breakpoints": true
     },
     {
+      "idx": 509,
+      "version": "7",
+      "when": 1795602445143,
+      "tag": "0509_recover_exhausted_github_responses",
+      "breakpoints": true
+    },
+    {
+      "idx": 510,
+      "version": "7",
+      "when": 1795635927842,
+      "tag": "0510_clear_speedball",
+      "breakpoints": true
+    },
+    {
       "idx": 8801,
       "version": "7",
-      "when": 1795572002133,
+      "when": 1795635927843,
       "tag": "8801_skill_source_security_override",
       "breakpoints": true
     },
     {
       "idx": 8802,
       "version": "7",
-      "when": 1795572002134,
+      "when": 1795635927844,
       "tag": "8802_messy_talkback",
       "breakpoints": true
     },
     {
       "idx": 8803,
       "version": "7",
-      "when": 1795572002135,
+      "when": 1795635927845,
       "tag": "8803_flaky_arclight",
       "breakpoints": true
     },
     {
       "idx": 8804,
       "version": "7",
-      "when": 1795572002136,
+      "when": 1795635927846,
       "tag": "8804_project_provider_authorizations",
       "breakpoints": true
     },
     {
       "idx": 8805,
       "version": "7",
-      "when": 1795572002137,
+      "when": 1795635927847,
       "tag": "8805_multiple_agent_chat_conversations",
       "breakpoints": true
     },
     {
       "idx": 8806,
       "version": "7",
-      "when": 1795572002138,
+      "when": 1795635927848,
       "tag": "8806_project_repository_checkout",
       "breakpoints": true
     },
     {
       "idx": 8807,
       "version": "7",
-      "when": 1795572002139,
+      "when": 1795635927849,
       "tag": "8807_project_repository_checkout_none",
       "breakpoints": true
     },
     {
       "idx": 8808,
       "version": "7",
-      "when": 1795572002140,
+      "when": 1795635927850,
       "tag": "8808_skill_version_security_approval",
       "breakpoints": true
     },
     {
       "idx": 8809,
       "version": "7",
-      "when": 1795572002141,
+      "when": 1795635927851,
       "tag": "8809_skill_source_security_override_summary",
       "breakpoints": true
     },
     {
       "idx": 8810,
       "version": "7",
-      "when": 1795572002142,
+      "when": 1795635927852,
       "tag": "8810_skill_version_security_approval_index",
       "breakpoints": true
     },
     {
       "idx": 8811,
       "version": "7",
-      "when": 1795572002143,
+      "when": 1795635927853,
       "tag": "8811_white_wild_child",
-      "breakpoints": true
-    },
-    {
-      "idx": 8812,
-      "version": "7",
-      "when": 1795602445143,
-      "tag": "8812_recover_exhausted_github_responses",
       "breakpoints": true
     }
   ]

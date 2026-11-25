@@ -1,6 +1,6 @@
 {
-  "id": "8203ee75-b4b2-4c4d-bf18-d25727fe8e57",
-  "prevId": "8ddb0345-f9e8-4dde-8156-391f71d858b1",
+  "id": "f6f75620-4b82-4af2-a551-1eed345edf65",
+  "prevId": "bd7706ab-f548-43f0-9dbb-4f1d52d9c135",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -26665,6 +26665,160 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.document_annotation_comment_reactions": {
+      "name": "document_annotation_comment_reactions",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "company_id": {
+          "name": "company_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "comment_id": {
+          "name": "comment_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reaction": {
+          "name": "reaction",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "actor_type": {
+          "name": "actor_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "actor_id": {
+          "name": "actor_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "removed_at": {
+          "name": "removed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "document_annotation_comment_reactions_company_comment_idx": {
+          "name": "document_annotation_comment_reactions_company_comment_idx",
+          "columns": [
+            {
+              "expression": "company_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "comment_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "document_annotation_comment_reactions_comment_reaction_actor_idx": {
+          "name": "document_annotation_comment_reactions_comment_reaction_actor_idx",
+          "columns": [
+            {
+              "expression": "comment_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "reaction",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "actor_type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "actor_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "document_annotation_comment_reactions_company_id_companies_id_fk": {
+          "name": "document_annotation_comment_reactions_company_id_companies_id_fk",
+          "tableFrom": "document_annotation_comment_reactions",
+          "tableTo": "companies",
+          "columnsFrom": [
+            "company_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "document_annotation_comment_reactions_comment_id_document_annotation_comments_id_fk": {
+          "name": "document_annotation_comment_reactions_comment_id_document_annotation_comments_id_fk",
+          "tableFrom": "document_annotation_comment_reactions",
+          "tableTo": "document_annotation_comments",
+          "columnsFrom": [
+            "comment_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "document_annotation_comment_reactions_reaction_chk": {
+          "name": "document_annotation_comment_reactions_reaction_chk",
+          "value": "\"document_annotation_comment_reactions\".\"reaction\" in ('done', 'check', 'thumbs_up', 'question')"
+        },
+        "document_annotation_comment_reactions_actor_type_chk": {
+          "name": "document_annotation_comment_reactions_actor_type_chk",
+          "value": "\"document_annotation_comment_reactions\".\"actor_type\" in ('agent', 'user')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.document_annotation_comments": {
