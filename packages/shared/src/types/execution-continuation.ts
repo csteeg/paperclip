@@ -93,6 +93,10 @@ export interface ExecutionContinuationEnvelope {
       interactionOutcomes?: number;
       /** Older human answers shown without their result. */
       humanResponses?: number;
+      /** Recovery decisions shown only as references or left out. */
+      recoveryOutcomes?: number;
+      /** 1 when the completed-work summary was shortened. */
+      completedWork?: number;
     };
   };
 }

@@ -1,3 +1,4 @@
+import { taskHistoryReadsForRun } from "../queued-comment-delivery.js";
 import * as connectorRuntime from "../connector-runtime.js";
 import * as cloudIdentity from "../cloud-runtime-identity.js";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -689,7 +690,8 @@ describe("PaperclipRunnerToolAuthority", () => {
 
   it("pages the complete saved continuation of the run's own task in the full view", async () => {
     const [saved] = await db.select({ contextSnapshot: heartbeatRuns.contextSnapshot }).from(heartbeatRuns).where(eq(heartbeatRuns.id, runId));
-    const messages = Array.from({ length: 120 }, (_, index) => ({ id: `m-${index}`, body: `Message ${index} ${"x".repeat(4_000)}` }));
+    const messages = Array.from({ length: 120 }, (_, index) => ({ id: `m-${index}`, body: `Message ${index} ${"x".repeat(4_000)}`,
+      updatedAt: "2026-11-24T00:00:00.000Z", deleted: false }));
     const continuation = { version: 1, companyId, issueId, messages };
     await db.update(heartbeatRuns).set({ contextSnapshot: { ...(saved?.contextSnapshot ?? {}), executionContinuation: continuation } })
       .where(eq(heartbeatRuns.id, runId));
@@ -698,15 +700,30 @@ describe("PaperclipRunnerToolAuthority", () => {
       const bounded = await authority.execute({ tool: "get_task_context", callId: "bounded-context", arguments: {} });
       expect(JSON.stringify(bounded)).not.toContain("executionContinuation");
       const first = await authority.execute({ tool: "get_task_context", callId: "full-continuation", arguments: { view: "full" } }) as { jsonText: string; contextDigest: string; nextOffset: number | null };
+      // Jumping past the saved progress reaches the end without having read the whole history.
+      const skipping = new PaperclipRunnerToolAuthority(db, { companyId, agentId, issueId, runId });
+      for (let offset: number | null = first.nextOffset! + 1; offset !== null;) {
+        const page = await skipping.execute({ tool: "get_task_context", callId: `skip-${offset}`,
+          arguments: { view: "full", offset, contextDigest: first.contextDigest } }) as typeof first;
+        offset = page.nextOffset;
+      }
+      // Other tests in this file share the run and record their own history reads.
+      const continuationReads = async () => (await taskHistoryReadsForRun(db, { companyId, runId }))
+        .map((read) => read.commentId).filter((id) => id.startsWith("m-"));
+      expect(await continuationReads()).toEqual([]);
+      // A restarted controller continues from the progress the first page saved.
+      const restarted = new PaperclipRunnerToolAuthority(db, { companyId, agentId, issueId, runId });
       let text = first.jsonText;
       let offset = first.nextOffset;
       while (offset !== null) {
-        const page = await authority.execute({ tool: "get_task_context", callId: `full-continuation-${offset}`,
+        const page = await restarted.execute({ tool: "get_task_context", callId: `full-continuation-${offset}`,
           arguments: { view: "full", offset, contextDigest: first.contextDigest } }) as typeof first;
         text += page.jsonText;
         offset = page.nextOffset;
       }
       expect(JSON.parse(text).executionContinuation).toEqual(continuation);
+      // Reading the final page records the recovered messages like get_task_history.
+      expect(await continuationReads()).toEqual(expect.arrayContaining(["m-0", "m-119"]));
     } finally {
       await db.update(heartbeatRuns).set({ contextSnapshot: saved?.contextSnapshot ?? {} }).where(eq(heartbeatRuns.id, runId));
     }

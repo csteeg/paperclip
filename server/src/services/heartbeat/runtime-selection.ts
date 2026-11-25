@@ -342,6 +342,8 @@ export async function selectHeartbeatRuntime(db: Db, input: HeartbeatRuntimeSele
   if (nativeRuntimeResolution.kind !== "native" && readNativeReviewAssignmentContext(context))
     throw new Error("native_review_requires_paperclip_runner: a completion review can only be resolved on the Paperclip Runner. Assign a Paperclip Runner pool member to the reviewer, then retry.");
   let nativeExecution: NativeExecutionInput | null = null;
+  // Delivered continuation messages per built task prompt, reported by the builder.
+  const deliveredContinuationByPrompt = new Map<string, Record<string, string>>();
   let toolRefreshOnResume: boolean | undefined;
   let getNativeFreshSessionHandoff: (() => Promise<string | null>) | undefined;
   let nativeRunnerInstanceId: string | null = null;
@@ -847,6 +849,7 @@ export async function selectHeartbeatRuntime(db: Db, input: HeartbeatRuntimeSele
         });
       const buildExecution = ({ normalizedSessionId, resumedSession }: { normalizedSessionId: string; resumedSession: boolean }) =>
             buildNativeExecutionInput({
+              onDeliveredContinuationMessages: (prompt, delivered) => deliveredContinuationByPrompt.set(prompt, delivered),
               agentKeyId: agentIdentity?.keyId,
               companyId: agent.companyId,
               runId: run.id,
@@ -1085,6 +1088,13 @@ export async function selectHeartbeatRuntime(db: Db, input: HeartbeatRuntimeSele
               : {}),
             nativeExecutionInput:
               lockedProfile.nativeExecutionInput ?? nativeExecution,
+            // The continuation messages this turn delivered whole, as the input
+            // builder reported them from the structures it submits (the resume
+            // delta or the bounded bootstrap history). Queued-comment delivery
+            // trusts only these for a retry.
+            nativeDeliveredContinuationMessages: lockedProfile.nativeExecutionInput
+              ? lockedProfile.nativeDeliveredContinuationMessages ?? null
+              : deliveredContinuationByPrompt.get(String(parseObject(parseObject(nativeExecution).task).prompt ?? "")) ?? {},
             nativeToolRefreshOnResume: lockedProfile.nativeExecutionInput
               ? lockedProfile.nativeToolRefreshOnResume === true : toolRefreshOnResume === true,
             ...(typeof lockedProfile.inheritedProcessIdentityRunId === "string"

@@ -142,7 +142,9 @@ import {
   READ_CHAT_ATTACHMENT_TOOL_NAME,
   type NativeChatAttachmentReadScope,
 } from "./chat-attachment-read.js";
-import { commentsArrivedDuringRun, recordTaskHistoryRead, taskHistoryHandlingGuidance } from "../queued-comment-delivery.js";
+import {
+  commentsArrivedDuringRun, readFullContextProgress, recordFullContextProgress, recordTaskHistoryRead, taskHistoryHandlingGuidance,
+} from "../queued-comment-delivery.js";
 import { recordChildTaskRead } from "./native-child-completion-delivery.js";
 import { logger } from "../../middleware/logger.js";
 
@@ -1013,8 +1015,9 @@ export class PaperclipRunnerToolAuthority {
           company: { id: this.binding.companyId }, actor: redactedActor(context.actor),
           activeTask: redactedTask(context.issue), childTasks: [], childReviewOutcomes: [],
           run: { id: context.run.id, status: context.run.status, invocationSource: context.run.invocationSource },
+          ...(input.view === "full" ? runExecutionContinuation(await this.#runExecutionContinuationSnapshot(), this.binding.issueId) : {}),
           };
-          return input.view === "full" ? nativeTaskContextPage(taskContext, input) : fitNativeTaskContext(taskContext);
+          return input.view === "full" ? await this.#fullContextPage(taskContext, input) : fitNativeTaskContext(taskContext);
         }
         const monitorCheckAt = !this.binding.nativeReview && context.issue.workMode === "standard" &&
           context.issue.executionRunId === this.binding.runId
@@ -1073,7 +1076,7 @@ export class PaperclipRunnerToolAuthority {
           // view returns the complete envelope this run was started with.
           ...(input.view === "full" ? runExecutionContinuation(await this.#runExecutionContinuationSnapshot(), this.binding.issueId) : {}),
         };
-        return input.view === "full" ? nativeTaskContextPage(taskContext, input) : fitNativeTaskContext(taskContext);
+        return input.view === "full" ? await this.#fullContextPage(taskContext, input) : fitNativeTaskContext(taskContext);
       }
       case "get_task_history": {
         const readerSourceTrust = await resolveActorSourceTrustForIssue({ db: this.db, issue: context.issue,
@@ -1912,6 +1915,47 @@ export class PaperclipRunnerToolAuthority {
       runId: this.binding.runId, source: "agent_jwt", onBehalfOfUserId: run.responsibleUserId,
       keyScope: nativeRunKeyScope({ ...this.binding, contextSnapshot: run.contextSnapshot }),
       ...(this.binding.museRuntime ? { authorizingUserId: this.binding.externalAuthorizingUserId } : {}) };
+  }
+
+  /**
+   * One page of the complete context. The final page of a context that carries
+   * the run's continuation records its messages as read, like get_task_history,
+   * so queued delivery does not replay a message the agent recovered here.
+   */
+  // Next unread offset per full-context digest. Only a read that fetched every
+  // page in order from offset 0 counts as having read the whole history.
+  #fullContextCoverage = new Map<string, number>();
+
+  async #fullContextPage(taskContext: Record<string, unknown>, input: Record<string, unknown>) {
+    const page = nativeTaskContextPage(taskContext, input);
+    if (!("jsonText" in page) || typeof page.contextDigest !== "string") return page;
+    const digest = page.contextDigest;
+    const offset = Number(page.offset ?? 0);
+    // A restarted controller continues from the progress the run saved.
+    const expected = this.#fullContextCoverage.get(digest) ?? (offset > 0
+      ? await readFullContextProgress(this.db, { companyId: this.binding.companyId, runId: this.binding.runId, contextDigest: digest })
+        .catch(() => null)
+      : null);
+    const contiguous = offset === 0 || expected === offset;
+    if (contiguous && page.nextOffset !== null) {
+      this.#fullContextCoverage.set(digest, page.nextOffset);
+      await recordFullContextProgress(this.db, { companyId: this.binding.companyId, agentId: this.binding.agentId,
+        runId: this.binding.runId, contextDigest: digest, nextOffset: page.nextOffset }).catch(error =>
+        logger.warn({ err: error, runId: this.binding.runId }, "could not save full context read progress"));
+    }
+    const messages = (taskContext.executionContinuation as { messages?: unknown } | undefined)?.messages;
+    if (contiguous && page.nextOffset === null && Array.isArray(messages)) {
+      this.#fullContextCoverage.delete(digest);
+      const comments = (messages as Array<Record<string, unknown>>).flatMap((message) => {
+        const updatedAt = typeof message?.updatedAt === "string" ? new Date(message.updatedAt) : null;
+        return typeof message?.id === "string" && message.deleted !== true && updatedAt && !Number.isNaN(updatedAt.getTime())
+          ? [{ id: message.id, updatedAt }] : [];
+      });
+      await recordTaskHistoryRead(this.db, { companyId: this.binding.companyId, agentId: this.binding.agentId,
+        runId: this.binding.runId, comments }).catch(error =>
+        logger.warn({ err: error, runId: this.binding.runId }, "could not record the continuation a run read"));
+    }
+    return page;
   }
 
   /** #boundContext strips the continuation from its snapshot; the paged full view reads it here. */
