@@ -212,7 +212,7 @@ describePostgres("saved harness account preflight", () => {
 
   it.each([["local", "paperclip"], ["ssh", "paperclip"], ["local", "legacy"]] as const)(
     "selects the supported lifecycle pool member before probing the inherited %s environment with %s profiles", async (driver, runner) => {
-      vi.spyOn(localRunnerPlatform, "localAgentRunnerTarget").mockReturnValue({ driver: "local", platform: runner === "legacy" ? "linux" : "win32", architecture: "x64" });
+      vi.spyOn(localRunnerPlatform, "localAgentRunnerTarget").mockReturnValue({ driver: "local", platform: "linux", architecture: "x64" });
       const envs = environmentService(db);
       const environment = driver === "local" ? await envs.ensureLocalEnvironment(agent.companyId)
         : await envs.create(agent.companyId, { name: randomUUID(), driver: "ssh", status: "active", envVars: {}, config: { host: "verification-fixture.invalid", username: "fixture" } });
@@ -246,7 +246,7 @@ describePostgres("saved harness account preflight", () => {
       }).where(eq(agents.id, agent.id)).returning();
       try {
         await expect(verify()).resolves.toBe("complete");
-        const expectsCodex = driver === "local";
+        const expectsCodex = runner === "legacy";
         const expectedAdapter = runner === "legacy" ? "codex_local" : "paperclip_runner";
         expect(probe).toHaveBeenCalledOnce();
         expect(probe.mock.calls[0][0]).toBe(expectedAdapter);
