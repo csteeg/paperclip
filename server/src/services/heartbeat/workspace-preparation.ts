@@ -1556,6 +1556,7 @@ async function prepareHeartbeatWorkspaceLocked(db: Db, input: HeartbeatWorkspace
     const repositories = await timeWorkspace("workspace_project_repositories", () => prepareProjectRepositoryWorkspaces({
       cwd: executionWorkspace.cwd,
       anchorRepoUrl: projectRootRepositories ? executionWorkspace.repoUrl : null,
+      plainTaskDirectory: Boolean(taskDirectoryProjectId),
       workspaces: repositoryRows,
       repositoryCheckout,
       keepWorkspaceIds: readRequestedProjectRepositoryIds(persistedExecutionWorkspace?.metadata),

@@ -2466,6 +2466,7 @@ describe.skipIf(!support.supported && !externalDatabaseUrl)("heartbeat workspace
     await db.update(issues).set({ projectWorkspaceId: null,
       workspaceSelection: { version: 1, source: "explicit", selection: { kind: "task_directory" } },
     }).where(eq(issues.id, issue.id));
+    input.task.workspaceSelection = { version: 1, source: "explicit", selection: { kind: "task_directory" } };
     input.task.issueRef = await readIssue(issue.id);
     const bind = vi.spyOn(input.services.executionWorkspacesSvc, "bindTaskWorkspace");
     const first = await prepareHeartbeatWorkspace(db, input);
@@ -2473,6 +2474,11 @@ describe.skipIf(!support.supported && !externalDatabaseUrl)("heartbeat workspace
     expect(bind).toHaveBeenCalled();
     expect((await readIssue(issue.id)).executionWorkspaceId).toBe(first.persistedExecutionWorkspace!.id);
     await writeFile(join(first.executionWorkspace.cwd, "retained.txt"), "task files");
+    // Codex's sandbox can leave an empty .git beside independently acquired repositories.
+    await mkdir(join(first.executionWorkspace.cwd, ".git"));
+    const acquired = join(first.executionWorkspace.cwd, ".paperclip-repositories", "task-repo-retained");
+    await mkdir(acquired, { recursive: true });
+    await writeFile(join(acquired, "retained.txt"), "acquired repository files");
     const [organization] = await db.insert(projects).values({ companyId: issue.companyId, name: "New organization" }).returning();
     await db.update(issues).set({ projectId: organization.id }).where(eq(issues.id, issue.id));
     input.task.issueRef = await readIssue(issue.id);
@@ -2481,6 +2487,8 @@ describe.skipIf(!support.supported && !externalDatabaseUrl)("heartbeat workspace
     expect(next.persistedExecutionWorkspace).toMatchObject({ id: first.persistedExecutionWorkspace!.id, projectId: null });
     expect(next.executionWorkspace.cwd).toBe(first.executionWorkspace.cwd);
     expect(await readFile(join(next.executionWorkspace.cwd, "retained.txt"), "utf8")).toBe("task files");
+    expect(await readFile(join(acquired, "retained.txt"), "utf8")).toBe("acquired repository files");
+    expect(await readdir(join(next.executionWorkspace.cwd, ".git"))).toEqual([]);
     expect((await readIssue(issue.id)).projectId).toBe(organization.id);
   });
 

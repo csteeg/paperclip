@@ -537,6 +537,7 @@ async function keepPresentProjectRepositories<T extends { id: string; repoUrl: s
 export async function prepareProjectRepositoryWorkspaces(input: {
   cwd: string;
   anchorRepoUrl: string | null;
+  plainTaskDirectory?: boolean;
   workspaces: Array<Pick<typeof projectWorkspaces.$inferSelect, "id" | "repoUrl" | "repoRef"> & { cwd?: string | null }>;
   resolveGitAuth?: GitRemoteAuthProvider | null;
   beforePublish?: () => Promise<void>;
@@ -563,7 +564,7 @@ export async function prepareProjectRepositoryWorkspaces(input: {
   if (await fs.realpath(root) !== path.join(await fs.realpath(input.cwd), PROJECT_REPOSITORIES_DIR)) {
     throw new Error("Project repositories directory escapes the task workspace");
   }
-  await ensureManagedRepositoriesIgnored(input.cwd);
+  await ensureManagedRepositoriesIgnored(input.cwd, { plainTaskDirectory: input.plainTaskDirectory });
   const results = [];
   for (const workspace of selected) {
     const repoUrl = workspace.repoUrl!;
