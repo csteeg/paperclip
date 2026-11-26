@@ -2594,6 +2594,8 @@ describe("AppsConnect — Connect with a link (M4 frame)", () => {
     expect(container.querySelector('button[aria-label="Set it up with your agent"]')).toBeTruthy();
     expect(container.textContent).toContain("Or do it by hand");
     expect(buttonByText("Test connection")?.disabled).toBe(true);
+    await act(async () => { buttonByText("Or do it by hand")!.click(); });
+    await flushReact();
     await act(async () => { setInputValue(container.querySelector<HTMLInputElement>("#aws-role-arn")!, roleArn); });
     await flushReact();
 
@@ -2671,6 +2673,8 @@ describe("AppsConnect — Connect with a link (M4 frame)", () => {
     expect(connectAppMock).not.toHaveBeenCalled();
     // The guide is generated for the access level the test will submit.
     expect(getAwsSetupMock).toHaveBeenCalledWith("aws-conn", "read_only");
+    await act(async () => { buttonByText("Or do it by hand")!.click(); });
+    await flushReact();
     const input = container.querySelector<HTMLInputElement>("#aws-role-arn")!;
     expect(input.value).toBe(oldArn);
     await act(async () => { setInputValue(input, newArn); });
