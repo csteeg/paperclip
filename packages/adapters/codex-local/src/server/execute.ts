@@ -88,6 +88,7 @@ import {
   pathExists,
   prepareManagedCodexHome,
   resolveManagedCodexHomeDir,
+  resolveCodexSandboxCredentialFile,
   resolveSharedCodexHomeDir,
   seedManagedCodexHome,
   stageCodexHomeForSync,
@@ -1117,12 +1118,19 @@ async function executeWithCleanup(ctx: AdapterExecutionContext): Promise<Adapter
       const biller = managedBilling?.biller ?? resolveCodexBiller(effectiveEnv, billingType);
       const networkScope = parseLocalProcessNetworkScope(config.networkScope);
       const filesystemScope = parseLocalProcessFilesystemScope(config.filesystemScope);
+      const sandboxCredential = filesystemScope === "workspace" && !executionTargetIsRemote
+        && config.managedAiConnection && skillSourceHome
+        ? await resolveCodexSandboxCredentialFile(effectiveCodexHome, skillSourceHome)
+        : null;
       const localProcessSandbox: LocalProcessSandboxOptions | null =
         (filesystemScope || networkScope) && !executionTargetIsRemote
           ? {
               workspaceDir: effectiveExecutionCwd,
               filesystemScope,
-              managedPaths: [{ path: effectiveCodexHome, access: "rw" }],
+              managedPaths: [
+                { path: effectiveCodexHome, access: "rw" },
+                ...(sandboxCredential ? [{ path: sandboxCredential, access: "ro" as const }] : []),
+              ],
               extraPaths: parseLocalProcessSandboxExtraPaths(config.filesystemExtraPaths),
               pathAliases: targetWorkspaceRealization?.mode === "copy"
                 ? targetWorkspaceRealization.pathAliases

@@ -17,6 +17,7 @@ import {
   isManagedCodexHomePath,
   prepareManagedCodexHome,
   reconcileManagedCodexHome,
+  resolveCodexSandboxCredentialFile,
   seedManagedCodexHome,
   stageCodexHomeForSync,
   writeManagedCodexMcpConfig,
@@ -36,6 +37,30 @@ describe("mergeManagedCodexMcpGateways", () => {
       { name: "runtime", endpointPath: "/runtime", bearerToken: "runtime-token" },
       { name: "manual", endpointPath: "/manual", bearerToken: "manual-token" },
     ]);
+  });
+});
+
+describe("Codex sandbox credential file", () => {
+  it.runIf(process.platform === "linux")("resolves only a local alias to the selected regular credential file", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-codex-auth-mount-"));
+    try {
+      const home = path.join(root, "runtime");
+      const selected = path.join(root, "selected");
+      const alias = path.join(home, "auth.json");
+      const credential = path.join(selected, "auth.json");
+      await fs.mkdir(home);
+      await fs.mkdir(selected);
+      await fs.writeFile(credential, "fixture");
+      await fs.symlink(credential, alias);
+      await expect(resolveCodexSandboxCredentialFile(home, selected)).resolves.toBe(credential);
+      await expect(resolveCodexSandboxCredentialFile(home, root)).resolves.toBeNull();
+      await fs.unlink(credential);
+      await fs.writeFile(path.join(root, "other.json"), "unrelated fixture");
+      await fs.symlink(path.join(root, "other.json"), credential);
+      await expect(resolveCodexSandboxCredentialFile(home, selected)).resolves.toBeNull();
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
   });
 });
 
