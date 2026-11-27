@@ -103,6 +103,28 @@ describe("local process sandbox", () => {
     expect(target.args.slice(-3)).toEqual([process.execPath, "-e", "console.log('ok')"]);
   });
 
+  it.runIf(process.platform === "linux")("keeps merged system paths as aliases without mounting them twice", async () => {
+    const target = await buildLocalProcessSandboxSpawnTarget({
+      executable: "/bin/sh",
+      args: ["-c", "true"],
+      cwd: process.cwd(),
+      options: { workspaceDir: process.cwd(), filesystemScope: "workspace" },
+    });
+
+    for (const name of ["bin", "sbin", "lib", "lib64"]) {
+      const alias = `/${name}`;
+      const expected = `/usr/${name}`;
+      const link = await fs.readlink(alias).catch(() => null);
+      if (link && path.resolve("/", link) === expected) {
+        expect(target.args.filter((arg, index) => arg === alias && target.args[index - 2] === "--symlink"))
+          .toEqual([alias]);
+        expect(target.args.some((arg, index) => arg === alias && target.args[index - 2] === "--ro-bind")).toBe(false);
+      } else {
+        expect(target.args.some((arg, index) => arg === alias && target.args[index - 2] === "--symlink")).toBe(false);
+      }
+    }
+  });
+
   it.runIf(process.platform === "linux")("binds a confined absolute alias to the synchronized workspace", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-fs-alias-"));
     cleanup.push(root);
