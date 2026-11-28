@@ -1,4 +1,4 @@
-import { LOCAL_PI_CONFIGURATION_ENV, resolveLocalPiConfiguration, verifyLocalPiInstallation } from "./local-pi-installation.js";
+import { LOCAL_PI_CONFIGURATION_ENV, resolveLocalPiConfiguration } from "./local-pi-installation.js";
 import { retainAcpxCredentialRefresh } from "./credential-refresh.js";
 import type { AcpxTurnDispatchJournal } from "./turn-dispatch-journal.js";
 import { assertAcpxExecutionAdmission, parseAcpxCandidateStartupAdmission, type AcpxCandidateStartupAdmission } from "./candidate-admission.js";
@@ -481,7 +481,6 @@ export class AcpxRuntimeHost {
       () =>
         dependencies.verifyInstallation
           ? dependencies.verifyInstallation(profile)
-          : localPi ? verifyLocalPiInstallation(localPi)
           : swarmRoute
             // The trusted /swarm turn runs the pinned Antigravity CLI, not the registry server.
             ? verifyAntigravitySwarmInstallation(() => {
@@ -491,7 +490,7 @@ export class AcpxRuntimeHost {
             : verifyAcpxProfileInstallation(profile, options.candidateAdmission),
       dependencies.retainAdmissionCleanup,
     ).catch(error => { throw recordAcpxAdmissionFailure(error, "installation"); });
-    if (!swarmRoute && installation.commandDigest !== (localPi ? `sha256:${localPi.sha256}` : profile.commandDigest)) {
+    if (!swarmRoute && installation.commandDigest !== profile.commandDigest) {
       throw new Error("Verified ACPX installation does not match its profile");
     }
     let admissionSucceeded = false;
@@ -545,7 +544,7 @@ export class AcpxRuntimeHost {
             binding,
             agent: options.agent,
             environment: localPi ? { ...options.environment, [LOCAL_PI_CONFIGURATION_ENV]: undefined } : options.environment,
-            localPiProfile: localPi?.profile,
+            localPiProfile: localPi?.environment.PI_CODING_AGENT_DIR,
             tools: options.semanticTools?.tools,
             ...(options.providerPolicy === undefined ? {} : { providerPolicy: {
               ...options.providerPolicy,
@@ -637,6 +636,13 @@ export class AcpxRuntimeHost {
         launchEnvironment = Object.freeze(rest);
       }
       let claudeSkillNamespace: string | undefined;
+      if (localPi) {
+        launchEnvironment = Object.freeze({
+          ...launchEnvironment,
+          PAPERCLIP_PI_LOCAL_EXECUTABLE: localPi.executable,
+          PAPERCLIP_PI_LOCAL_ENVIRONMENT: JSON.stringify(localPi.environment),
+        });
+      }
       if (swarmRoute) {
         swarmStateDirectory = antigravitySwarmStateDirectory(sandbox.agentHomeDirectory);
         await mkdir(swarmStateDirectory, { recursive: true, mode: 0o700 });
