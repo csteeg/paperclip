@@ -166,6 +166,16 @@ function isWorktreeMode(env: NodeJS.ProcessEnv): boolean {
   return TRUTHY_ENV_RE.test(env.PAPERCLIP_IN_WORKTREE ?? "");
 }
 
+/** The skill home may link back to this run's selected subscription credential. */
+export async function resolveCodexSandboxCredentialFile(home: string, selectedHome: string): Promise<string | null> {
+  const alias = path.join(home, "auth.json");
+  const selected = path.join(selectedHome, "auth.json");
+  const link = await fs.readlink(alias).catch(() => null);
+  if (!link || path.resolve(home, link) !== selected) return null;
+  const entry = await fs.lstat(selected).catch(() => null);
+  return entry?.isFile() ? selected : null;
+}
+
 export function resolveManagedCodexHomeDir(
   env: NodeJS.ProcessEnv,
   companyId?: string,
