@@ -6,7 +6,7 @@ export const ACPX_DRIVER_PROTOCOL_VERSION = 1 as const;
 export const ACPX_RELEASE_PROFILE_DIGESTS = {
   "antigravity": "sha256:027131caf0b722f34fc04886ef176ea00d49a742de679ec50f658740f97ed772",
   "grok": "sha256:b0e507ac768a44472e9d70439f02ccf13828bfa06045330e0b0861834327d18e",
-  "pi": "sha256:c3e08f17e436672da69276b664564633040257a722d51117f47d3b3d2be65666",
+  "pi": "sha256:3789ea8c6883f2f1f0a954e69a55c15288930ccc396a6e2c9fd182b150c75daf",
   "cursor": "sha256:d4fff78f5948f257addc7888d45f2b1cd7efa171991ec79705956789cbe7a3b9",
   "copilot": "sha256:13b2b09d4d6ab5e78d1f6b5bddf131f783a6e0fb0bb550b85f7eab59951d9ceb",
   "claude": "sha256:46efbe51efcfff53262af90ff4143b7a6dbffa3600e94d221d3af8cc5b5f418c",

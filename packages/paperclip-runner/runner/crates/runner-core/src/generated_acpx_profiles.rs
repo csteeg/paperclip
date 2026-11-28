@@ -13,7 +13,7 @@ pub const ACPX_RELEASE_PROFILE_DIGESTS: &[(&str, &str)] = &[
     ),
     (
         "pi",
-        "sha256:c3e08f17e436672da69276b664564633040257a722d51117f47d3b3d2be65666",
+        "sha256:3789ea8c6883f2f1f0a954e69a55c15288930ccc396a6e2c9fd182b150c75daf",
     ),
     (
         "cursor",
